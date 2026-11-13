@@ -255,16 +255,16 @@ export const NET = {
   respawnFallback: 5, // s before respawning when there is no portal death screen
 }
 
-// Ad screens declared once after init (bloxity.js). Gameplay and lobby banners stay off: the lobby
-// ad covered the 3D hangar view. Only the results screen keeps its ad.
+// Ad screens declared once after init (bloxity.js). All in-game banners stay off (they covered the
+// 3D hangar view); ads only appear on the Bloxity portal's own loading screen.
 export const AD_SCREENS = {
   lobby: { show: false },
   panel: { show: false },
-  results: {},
+  results: { show: false },
   gameplay: { show: false },
 }
 // Screens that must never show an ad: showAdScreen hides any ad instead of requesting one.
-export const NO_AD_SCREENS = ['lobby', 'panel', 'gameplay']
+export const NO_AD_SCREENS = ['lobby', 'panel', 'results', 'gameplay']
 
 // The base rig, measured from player.glb: origin at the feet, 6.4 units tall at bind pose.
 export const RIG_HEIGHT = 6.4

@@ -15,6 +15,11 @@
 .touch-ui .touch-root {
   display: block;
 }
+/* The move / look pads go under the HUD (z-index 15): its buttons take their own taps and
+   every other touch falls through to a pad. */
+.touch-pads {
+  z-index: 14;
+}
 .touch-root * {
   touch-action: none;
   user-select: none;
@@ -36,6 +41,10 @@
 .touch-right {
   right: 0;
   width: 58%;
+}
+/* The joystick's picture, drawn in the top layer over its pad. */
+.touch-ghost {
+  pointer-events: none;
 }
 
 .joy-base {

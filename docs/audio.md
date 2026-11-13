@@ -1,0 +1,239 @@
+# `src/audio/`: the audio engine
+
+Everything is synthesised at runtime with the Web Audio API; there are no audio files and no music track. The rest of the game imports only `src/audio/index.js`.
+
+| File | Role |
+| --- | --- |
+| `core.js` | The single `AudioContext`, gesture unlock, bus graph, reverb, master volume / mute / ad-break mute, ducking, voice budget. |
+| `synth.js` | Synthesis primitives (`burst`, `tone`, `modal`, ...) that schedule native nodes. |
+| `sfx.js` | Every one-shot sound, one exported function each. |
+| `index.js` | Public entry: re-exports, button click hook, listener pose + `spatial`, ambience. |
+
+Tunables live in `config.js` `AUDIO`: `volume` 0.8, `storageKey` `'free-fire-zone.sound'`, `buses` `{ ui: 0.8, sfx: 0.95, amb: 0.5, engine: 0.4 }`, `duck` 0.45, `maxVoices` 56, `maxVoicesTouch` 28, `latency` 0.04, `latencyTouch` 0.07, `lead` 0.015, `reverb { seconds, preDelay, early, decay, tail, darken, send }`, `hearing` 140 m.
+
+## 1. Public API (`index.js`)
+
+| Export | From | Purpose | Called by |
+| --- | --- | --- | --- |
+| `installAudio()` | `index.js` | `core.installAudio()` + the global button-click listener + `onStart(buildAmbience)`. Call once at boot. | `main.js` |
+| `sfx` | `sfx.js` namespace | All one-shots (section 4). | `main.js`, `combat.js`, `controller.js`, `items.js`, `loot.js`, `online.js`, `results.js`, `lobby.js` |
+| `setListener(x, y, z, yaw)` | `index.js` | Listener pose for `spatial`. | `main.js gameFrame` (camera position, `getYaw()`) every frame |
+| `spatial(x, y, z)` | `index.js` | `{ dist, pan }` of a world point. | `main.js`, `combat.js`, `items.js`, `online.js` |
+| `updateAmbience(dt, level, shore)` | `index.js` | Drives the ambience layers. | `main.js` (`gameFrame`; with `level` 0 in lobby / queue) |
+| `setVolume(v)` | `core.js` | Master volume 0..1. | `main.js` (`master_volume / 100`, saved `ffz.volume` at boot), `lobby.js` slider |
+| `setMuted(on)`, `isMuted()` | `core.js` | Player mute, persisted. | `lobby.js` Settings window |
+| `toggleMuted()` | `core.js` | `setMuted(!muted)`. | no caller |
+| `setBreakMuted(on)` | `core.js` | Silence during a portal ad break. | `main.js` via `bloxity.onAdBreak` |
+| `setDucked(on)` | `core.js` | Lower the world bus while a menu window is open. | `main.js` (`onWindow`, `enterRound`) |
+
+`core.js` also exports `A`, `onStart`, `ready`, `now`, `voice` for the other audio files.
+
+## 2. Engine (`core.js`)
+
+### Context and unlock
+- `installAudio()` adds capture-phase, passive `pointerdown` / `keydown` / `touchend` listeners on `window` that call `unlock()`, and a `visibilitychange` handler that suspends the context when the tab is hidden and resumes it when visible.
+- `unlock()` (every gesture, the listeners are never removed): creates the context on the first gesture via `build()`, calls `ctx.resume()` when it is not running and the tab is visible, then `kick()` plays a one-sample silent buffer straight to the destination (iOS only opens the output for a sound started inside the gesture).
+- `build()` creates the `AudioContext` with `latencyHint` `AUDIO.latencyTouch` on coarse pointers, else `AUDIO.latency` (falls back to no options if the engine rejects a numeric hint; returns false when there is no `AudioContext`). It sets `A.ctx` and defers `buildGraph` with `setTimeout(..., 0)` so the first tap does not stall on about 2 M generated samples.
+- `ready()` is `!!A.master && A.ctx.state === 'running'`. `A.master` is assigned last in `buildGraph`, so between `build()` and `buildGraph()` the context exists but nothing may play.
+- `onStart(fn)` runs `fn(ctx)` once the graph exists (immediately if it already does). A throwing hook is logged and does not block the others.
+- `now()` is `ctx.currentTime + AUDIO.lead` (15 ms ahead), the start time every one-shot uses.
+
+### Graph
+
+```
+ui  ------------------------------+
+sfx --+---------------------------+
+      +-- (per-sound send) verb -> convolver --+
+world (duck) --+-- amb -----------+-- master -> glue compressor -> limiter -> destination
+               +-- engine --------+
+```
+
+| Node (`A.*`) | Initial gain | Notes |
+| --- | --- | --- |
+| `master` | 0, then faded to the level over 0.3 s | Volume and mutes act here. |
+| `ui` | `AUDIO.buses.ui` | Menu and match-flow sounds; unaffected by ducking. |
+| `sfx` | `AUDIO.buses.sfx` | Default bus of the synth primitives. |
+| `world` | 1, or `AUDIO.duck` when ducked | Parent of `amb` and `engine`. |
+| `amb` | `AUDIO.buses.amb` | Ambience layers. |
+| `engine` | `AUDIO.buses.engine` | Created, nothing connects to it. |
+| `verb` | `AUDIO.reverb.send` | Reverb send input -> `ConvolverNode` -> `master`. |
+| `noise` | n/a | Buffers: `white` (2 s), `pink` (4 s), `brown` (4 s) mono; `pinkStereo`, `brownStereo` (6 s). Ends are cross-faded so loops do not click. |
+
+The glue compressor (-18 dB, ratio 2.5) and the limiter (-3 dB, ratio 20) sit after `master`. The reverb impulse response is generated by `makeImpulse` from `AUDIO.reverb`: a pre-delay, the `early` reflections `[ms, gain]` (slightly different times per channel) and a noise tail that decays and darkens.
+
+### Volume, mute, break mute, ducking
+- `level()` is 0 when `muted || breakMuted`, else `volume * volume` (perceptual curve). `applyLevel(t)` eases `master.gain` to it.
+- `setVolume(v)` clamps to 0..1; it is not persisted here. `lobby.js` stores the slider in `localStorage['ffz.volume']` and `main.js` restores it after `installAudio()`. With the SDK, the portal's `master_volume` setting is applied afterwards and wins.
+- `setMuted(on)` persists `'muted'` / `'on'` under `AUDIO.storageKey`; the stored value is read at import time.
+- `setBreakMuted(on)` is a separate flag (fast 0.02 s ramp) so an ad break never changes the player's own mute.
+- `setDucked(on)` eases `world.gain` to `AUDIO.duck` or 1 (time constant 0.12 s). The flag is remembered if called before the graph exists.
+- All setters are safe before the first gesture: they store state and `applyLevel` is a no-op until `A.master` exists.
+
+### Voice budget (no pooling)
+`voice(seconds, priority = 1)` returns false when audio is not `ready()` or when `A.voices > MAX_VOICES * priority`; otherwise it increments `A.voices` and decrements it after `seconds * 1000 + 50` ms. `MAX_VOICES` is `AUDIO.maxVoicesTouch` on coarse pointers, else `AUDIO.maxVoices`.
+
+- `priority` scales the budget: 0.5 plays only below half the budget, 3 to 5 effectively always plays.
+- One `voice` is one `sfx.*` call, however many nodes it schedules. Nodes are created per sound and stopped by their own schedule; there is no node pool and no voice stealing.
+- Every `sfx` function calls `voice` first, which is also what keeps them silent before the first gesture.
+
+## 3. Synth primitives (`synth.js`)
+
+All take an options object, schedule nodes at `t` (default `now()` where noted) and return the end time unless stated.
+
+| Export | Signature (options) | What it makes |
+| --- | --- | --- |
+| `rnd(lo, hi)`, `vary(x, pct)`, `pick(list)` | | Random helpers; `vary` is `x * (1 +/- pct)`. |
+| `route(node, { bus = A.sfx, pan = 0, verb = 0 })` | | Optional `StereoPanner`, connects to `bus`, adds a send of gain `verb` into `A.verb`. The primitives pass their whole options object, so `bus`, `pan`, `verb` work on all of them. |
+| `env(param, t, attack, peak, decay, hold = 0)` | | Linear attack, optional hold, exponential decay to 0.0001; returns the end time. |
+| `burst(o)` | `t, noise ('white' / 'pink' / 'brown'), type (biquad, default 'bandpass'), f (1000), f2, sweep, q (1), a (0.002), d (0.1), hold, gain (0.5), hp, pan, verb, bus` | Filtered noise with an envelope; `f -> f2` exponential sweep over `sweep` seconds (default the whole sound); `hp` adds a highpass. An unknown `noise` falls back to white. |
+| `tone(o)` | `t, type ('sine'), f (required), f2, glide, detune, a (0.003), d (0.2), hold, gain (0.3), lp, lpq, pan, verb, bus` | One oscillator with optional pitch glide and lowpass. |
+| `modal(o)` | `t, f, modes [[ratio, amp, decaySeconds], ...], gain (0.3), spread (0.004), beat (cents), decay (multiplier), strike, pan, verb, bus` | A struck object: one decaying sine per mode (two detuned twins when `beat` is set); modes above 0.45 x sample rate are skipped; `strike` adds a noise click. |
+| `bubble({ t, f, d, gain, rise, pan, verb, bus })` | `t` required | One rising-pitch decaying sine. No return value. |
+| `bubbles({ t, n, dur, f0, f1, gain, d, rise, width, verb, bus })` | `t` required | `n` bubbles, densest at the start, small ones most common. |
+| `crinkle({ t, n, dur, gain, f0, f1, width, bus, verb })` | `t` required | `n` tiny bandpassed noise grains (paper, debris). |
+| `saturation(drive)` | | Soft-clip curve (`Float32Array(1024)`) for a `WaveShaper`. |
+
+`sfx.js` uses `burst`, `tone`, `modal`, `crinkle`, `rnd`, `vary`.
+
+## 4. Sound effects (`sfx.js`)
+
+Private helpers:
+- Mode tables for `modal`: `METAL`, `PLASTIC`, `GLASS`, `BELL`, `COIN`.
+- `limit(name, ms)`: per-name rate limiter (`performance.now()`); false when called again within `ms`.
+- `buzz(pattern)`: `navigator.vibrate` on coarse pointers when not muted.
+- `falloff(dist)` -> `{ gain, lp, verb }` with `k = max(0, 1 - dist / AUDIO.hearing)`: `gain = k^2` (times `0.55 + 0.45 * min(1, 12 / dist)` beyond 3 m), `lp = 900 + 15000 k^2` Hz, `verb = 0.15 + 0.6 (1 - k)`. Callers scale `dist` to shorten the range of small sounds.
+- `GUN`: per kind `{ crack, body, gain, tail, d }` for `rifle`, `smg`, `pistol`, `shotgun`, `lmg`, `dmr`, `sniper`; an unknown kind uses `rifle`.
+
+Columns: `voice(seconds, priority)`, rate limit, trigger (caller found by Grep). Bus is `sfx` unless marked `ui`.
+
+### Guns
+
+| Function | Sound | Voice / limit | Triggered by |
+| --- | --- | --- | --- |
+| `shot(kind, { dist, pan, own })` | Crack + pitched body + muzzle blast + reverberant tail; quieter, duller and wetter with distance; silent when `falloff.gain < 0.01`; vibrates on own sniper / shotgun | (0.6, own ? 3 : 1) | `combat.js` on a local shot (own: `dist 0, pan 0`; skipped while cloaked); `online.js` on the server `shot` event for other players |
+| `bolt(kind)` | Two metal clacks 0.28 s (shotgun) or 0.42 s later | (0.4, 2) | `combat.js`, after the player's sniper / shotgun shot |
+| `dryFire()` | Metal click | (0.1, 2), 160 ms | `combat.js`, player fires with nothing to shoot |
+| `reload(time = 2)` | Mag out, mag in, charging handle spread over `time` | (time, 2) | `combat.js` reload start (player only, `def.reload`) |
+| `swap()` | Cloth whoosh + metal click | (0.3, 2), 80 ms | `combat.js` slot change (player only) |
+| `swing()` | Rising whoosh | (0.3, 2) | `combat.js` melee swing |
+
+### Hits
+
+| Function | Sound | Voice / limit | Triggered by |
+| --- | --- | --- | --- |
+| `hitmarker(head = false)` | Dry tick; bell ping for headshots | (0.3, 3), 35 ms | `combat.js` when the player's shot or melee hit lands |
+| `knock()` | Low drop + bell | (0.6, 3) | no caller |
+| `elimination(streak = 1)` | Two bells (pitch rises with streak, capped) + sub drop; vibrates | (1.2, 4) | no caller |
+| `hurt(heavy = false)` | Body thump + low tone; vibrates when heavy | (0.4, 3), 90 ms | `controller.js` on `damage` to the player (`amount > 40` = heavy); `online.js` when the player is knocked |
+| `impact(material = 'stone', { dist, pan })` | Short noise tick (`wood`, `stone`) or metal ping (`metal`); nothing beyond 30 m | (0.2, 1), 25 ms | `combat.js` bullet hitting the world (always `'stone'`) |
+| `whiz(pan = 0)` | Falling bandpassed hiss | (0.2, 2), 60 ms | `online.js`, an enemy's shot passing within 1.6 m of the player's eye |
+| `punch()` | Thud | (0.3, 2) | `combat.js` melee hit |
+
+### Explosives and utility
+
+| Function | Sound | Voice / limit | Triggered by |
+| --- | --- | --- | --- |
+| `explosion({ dist, pan })` | Low boom + crack + sub + debris crinkle; vibrates within 20 m | (2.5, 4) | `combat.js explodeVisual` |
+| `pinPull()` | Two metal pings | (0.3, 2) | `items.js` throw start (player only) |
+| `bounce({ dist, pan })` | Metal clink; nothing beyond 40 m | (0.2, 1), 70 ms | `items.js` grenade bounce (normal speed > 2) |
+| `frostWall({ dist, pan })` | Hiss + six glass chimes + low thump | (1.2, 3) | `items.js` wall deployed |
+| `iceShatter({ dist, pan })` | Bright noise + ten glass shards | (1, 3) | `items.js` wall destroyed |
+| `heal()` | Rising bell arpeggio + airy noise | (1, 2) | `items.js` medkit finished (player only) |
+| `bandage(time = 2)` | Crinkle for `time` | (time, 1) | `items.js` medkit start (player only) |
+| `dash()` | Rising whoosh | (0.4, 2) | `items.js dash` |
+| `ultimate()` | Saw sweep + noise rise + bell; vibrates | (1.5, 4) | `items.js` ability used by the player or within 30 m |
+
+### Movement
+
+| Function | Sound | Voice / limit | Triggered by |
+| --- | --- | --- | --- |
+| `footstep({ dist, pan, surface = 'grass', own })` | Noise tap + low thud; `surface` in `grass`, `sand`, `wood`, `stone`; nothing beyond 28 m | (0.12, own ? 1 : 0.5) | `controller.js` per stride (own, always `'grass'`); `main.js gameFrame` for other actors within 24 m |
+| `land()` | Low thud | (0.2, 1), 120 ms | `controller.js` on `body.landed` |
+| `jump()` | Soft puff | (0.15, 1) | `controller.js` on `body.jumped` |
+
+### Loot
+
+| Function | Sound | Voice / limit | Triggered by |
+| --- | --- | --- | --- |
+| `crateOpen()` | Wooden knock + creak + three coin chimes | (1, 2) | `loot.js`, crate opened by the player or within 25 m |
+| `pickup()` | Two coin chimes | (0.3, 2), 60 ms | no caller |
+| `airdrop()` | Two-note triangle signal | (2, 3) | `loot.js` when a drop is created |
+
+### Match flow and UI
+
+| Function | Bus | Sound | Voice / limit | Triggered by |
+| --- | --- | --- | --- | --- |
+| `click(pan = 0)` | ui | Plastic button click | (0.1, 2), 30 ms | `index.js onPress` (any button press); `lobby.js` once |
+| `hover()` | ui | Faint blip | (0.05, 0.5), 50 ms | `lobby.js` `pointerenter` on lobby buttons |
+| `purchase()` | ui | Coin shower + bell | (1, 3) | `lobby.js bought(true)` |
+| `deny()` | ui | Two low square buzzes | (0.3, 2), 150 ms | `lobby.js bought(false)`; `controller.js` when an item / dash / ability cannot be used; `main.js` (Respawn pressed too early, `onRevive`) |
+| `equip()` | ui | Two metal clicks | (0.3, 2) | `lobby.js` equip / select actions |
+| `countdown(final = false)` | ui | Tick; a chord with a sub drop for the final one | (1, 4) | `main.js gameFrame` during `countdown` (final on "FIGHT!") |
+| `streak(level = 2)` | ui | Whoosh + rising arpeggio | (1.4, 4) | no caller |
+| `victory()` | ui | Major fanfare + bell | (3, 5) | `results.js` |
+| `defeat()` | ui | Descending notes + low drone | (2.5, 5) | `results.js` |
+| `zoneWarning()` | ui | Two square beeps | (1, 2), 900 ms | `main.js` when a zone phase starts shrinking |
+| `zoneTick()` | sfx | Highpassed hiss | (0.3, 1), 500 ms | `online.js` on zone damage to the player |
+| `heartbeat()` | sfx | Double low thump | (0.5, 1), 700 ms | `controller.js` every frame while alive with `hp < 50` (the limiter sets the rhythm) |
+| `revive()` | sfx | Rising bell arpeggio | (1, 3) | `online.js` on a revive of the player or within 30 m |
+| `coins()` | ui | Eight coin chimes | (1, 2) | `results.js revealSummary` |
+
+## 5. Spatialisation (`index.js`)
+
+There is no `PannerNode` or `AudioListener`. Positioning is computed in JS:
+- `setListener(x, y, z, yaw)` stores the ear position and the right vector `(cos yaw, -sin yaw)` on the XZ plane.
+- `spatial(x, y, z)` returns `{ dist, pan }`: 3D distance, and `pan` = the direction projected on the right vector, clamped to +/-0.85 (0 within 0.5 m).
+- The result is passed to a positional `sfx` function, which applies `falloff(dist)` (gain, lowpass ceiling, reverb send) and a `StereoPanner` through `route`. Positional functions: `shot`, `impact`, `explosion`, `bounce`, `frostWall`, `iceShatter`, `footstep`; `whiz` takes only `pan`.
+- UI clicks are panned by the pointer's screen X (+/-0.6) in `onPress`.
+
+## 6. Ambience (`index.js`)
+
+`buildAmbience(ctx)` runs from `onStart` and creates two looping layers on `A.amb`, each `BufferSource -> BiquadFilter -> Gain`:
+
+| Layer | Buffer | Filter | Driven by `updateAmbience(dt, level, shore)` |
+| --- | --- | --- | --- |
+| `wind` | `pinkStereo` | bandpass, 500 Hz, Q 0.4 | gain = slow gust LFO (about 0.09 +/- 0.08) x `level`; centre frequency wanders 200..640 Hz |
+| `surf` | `brownStereo` | lowpass, 380 Hz, Q 0.7 | gain = `(0.05 + 0.3 x shore x swell) x level`, `swell` a 0..1 LFO |
+
+`main.js` calls it every frame: in a round with `ambLevel` easing toward 1 and `shore` = 0..1 from the focus point's distance to the island edge (`island.radius - 35` to `- 5`); in the lobby / queue with `(dt, 0, 0)`. It is not called during an ad break (the master is muted then). `updateAmbience` returns at once until the layers exist.
+
+## 7. Recipes
+
+### Add a new SFX and trigger it
+1. Add an exported function in `sfx.js`, in the matching section. Start with the guards, in this order: distance cut-off (positional sounds), `limit('name', ms)` if it can repeat quickly, then `voice(seconds, priority)`; return when any fails. `seconds` is roughly the sound's length; use priority 1 for incidental sounds, 2 to 3 for player feedback, 4 to 5 for match events.
+2. Take `const t = now()` once and build the sound from `burst` / `tone` / `modal` / `crinkle` at offsets from `t`. Use `vary` / `rnd` so repeats differ. Route UI and match-flow sounds with `bus: A.ui`.
+3. Positional: accept `{ dist = 0, pan = 0 }`, compute `falloff(dist * scale)`, multiply gains by `f.gain`, pass `pan`, and for long tails `verb: f.verb` and `Math.min(f.lp, freq)`.
+4. Trigger it from game code: `import { sfx, spatial } from '../audio/index.js'`, then `sfx.name()` or `sfx.name(spatial(x, y, z))`. For other players' actions, trigger from the server event handler in `online.js` or by distance, as the existing callers do.
+5. Buttons click automatically; add class `silent` to a button that plays its own sound or must stay quiet.
+6. Try it from the console with `__game.sfx.name()` (dev server or `?debug`), after a click or key press has unlocked audio.
+
+### Add an ambience layer
+1. In `buildAmbience`, add a field to `amb` using `mk(buffer, filterType, frequency, q, initialGain)`; buffers available: `A.noise.pinkStereo`, `A.noise.brownStereo` (or the mono ones). Start at gain 0 if it is conditional.
+2. Drive it in `updateAmbience` with `setTargetAtTime` on `amb.<layer>.g.gain` (and the filter if wanted), multiplied by `level` so menus stay silent.
+3. If it needs a new input (weather, time of day, zone), add a parameter to `updateAmbience` and pass it from both calls in `main.js` (`gameFrame` and the lobby branch of `frame`).
+4. A tonal or non-noise layer needs its own source; create it in `buildAmbience` (it only runs once the graph exists) and connect it to `A.amb` so ducking and the master apply.
+5. A new noise colour or length is a new `makeNoise` call in `core.js buildGraph`.
+
+## 8. Gotchas
+
+- Nothing sounds before the first `pointerdown` / `keydown` / `touchend`; `voice()` returns false until `ready()`. Sounds requested earlier are dropped, not queued.
+- Never create nodes outside `onStart` or a `voice()`-guarded function: `A.ctx` and the buses may not exist yet.
+- `bubble`, `bubbles` and `crinkle` have no default `t`; pass `now()`.
+- `voice` counts with timers, not node end events; an over-long `seconds` holds a slot, an over-short one lets the count drift low.
+- `limit` names are global strings; reusing a name couples two sounds.
+- The master gain is the square of the volume; 0.5 on the slider is 0.25 gain.
+- Mute (`AUDIO.storageKey`) and volume (`ffz.volume`, owned by `lobby.js` / `main.js`) are stored under different keys by different modules; without the SDK `main.js` skips `master_volume` so the saved slider value survives.
+- `buzz` vibrates only on coarse pointers and never while muted; ad-break mute does not stop it.
+- A hidden tab suspends the context; timers behind `voice` keep running.
+- `setDucked` only affects `world` (ambience). One-shots on `sfx` are not ducked by menus.
+
+## Observations
+
+- **`sfx` functions with no caller:** `knock`, `elimination`, `pickup`, `streak`. Knocks and eliminations currently produce no dedicated sound (only `hurt(true)` when the local player is knocked).
+- **`A.engine` bus is unused** (created and gained, nothing connects); the graph comment and `setDucked` comment still mention an engine. The header comments ("the cliffs and stalls", "a stack of rewards", "beach") come from the game this engine was ported from.
+- **Unused exports:** `toggleMuted` (`core.js`, re-exported by `index.js`); `pick`, `bubble`, `bubbles`, `saturation` in `synth.js` (`route` and `env` are exported but only used inside `synth.js`).
+- **`footstep` surfaces are never used:** the only own-step call passes `surface: 'grass'`, and other players' steps pass none. `impact` is always called with `'stone'`.
+- **`spatial`** fills a module-level `out` object and then returns a fresh object anyway; `out` is redundant.
+- **The `index.js` header** lists the import as `{ sfx, installAudio, updateAmbience, spatial }`; `setListener` must also be called every frame or every positional sound is computed from the origin.
+- **`BLOXITY_CODE_METADATA.md`** ("no music track, only SFX and ambience; `master_volume` is supported") and **`CLAUDE.md`** ("audio muted via `setBreakMuted`", "synthesized SFX in `sfx.js`, ambience in `index.js`") match the code.
+- `lobby.js` calls `sfx.click?.()` explicitly on one control in addition to the global click hook.

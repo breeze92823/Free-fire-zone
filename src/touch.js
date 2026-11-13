@@ -35,7 +35,11 @@ function capture(zone, id) {
   }
 }
 
+// Two layers: the move / look pads sit UNDER the HUD, so its buttons (items, weapons, ability,
+// the interact prompt, the map) take their own taps and every other touch falls through to a
+// pad; the buttons and the joystick's picture sit above it.
 let root = null
+let pads = null
 let shown = false
 function setVisible(on) {
   shown = on
@@ -46,18 +50,19 @@ export const touchShown = () => shown
 
 // Show / hide the whole layer (menus hide it).
 export function setTouchActive(on) {
-  if (root) root.style.visibility = on ? 'visible' : 'hidden'
+  for (const layer of [pads, root]) if (layer) layer.style.visibility = on ? 'visible' : 'hidden'
   if (!on) {
     setTouchMove(0, 0)
     inputState.fire = false
   }
 }
 
-function installJoystick(zone) {
+// zone takes the touches; holder (the same rectangle, in the top layer) shows the stick.
+function installJoystick(zone, holder = zone) {
   const base = el('div', 'joy-base')
   const knob = el('div', 'joy-knob')
   base.appendChild(knob)
-  zone.appendChild(base)
+  holder.appendChild(base)
   let id = null
   let cx = 0
   let cy = 0
@@ -146,10 +151,13 @@ function button(className, html, fn) {
 // actions: { reload, crouch(on) }
 export function installTouch(actions) {
   root = el('div', 'touch-root')
+  pads = el('div', 'touch-root touch-pads')
   const left = el('div', 'touch-zone touch-left')
   const right = el('div', 'touch-zone touch-right')
-  installJoystick(left)
+  const stick = el('div', 'touch-zone touch-left touch-ghost')
+  installJoystick(left, stick)
   lookPad(right)
+  pads.append(left, right)
 
   // Fire buttons: held = fire, and they double as look pads.
   let firing = 0
@@ -188,8 +196,8 @@ export function installTouch(actions) {
     }),
     button('reload', ICONS.reload, () => actions.reload?.()),
   )
-  root.append(left, right, fireBtn('left'), cluster)
-  document.body.appendChild(root)
+  root.append(stick, fireBtn('left'), cluster)
+  document.body.append(pads, root)
 
   setVisible(COARSE_POINTER)
   window.addEventListener(

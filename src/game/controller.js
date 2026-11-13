@@ -103,7 +103,8 @@ export function useUlt() {
   if (!useUltimate(G.player)) sfx.deny()
 }
 
-function interactPress() {
+// E, or a tap on the HUD's interact prompt: opens the supplies in reach.
+export function interactPress() {
   const p = G.player
   if (!canAct()) return
   const c = crateNear(p)

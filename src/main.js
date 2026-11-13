@@ -25,7 +25,7 @@ import { initFx, setFxScale, updateFx } from './game/fx.js'
 import { buildLoot } from './game/loot.js'
 import { buildNav } from './game/navgrid.js'
 import { createMatch, initMatchSystems, spawnActor, teardownMatch, updateMatch } from './game/match.js'
-import { bindKeys, playEmote, updateController, useItem, useUlt, view } from './game/controller.js'
+import { bindKeys, interactPress, playEmote, updateController, useItem, useUlt, view } from './game/controller.js'
 import * as combat from './game/combat.js'
 import { selectSlot, startReload } from './game/combat.js'
 import hud, { mapOpen } from './game/hud.js'
@@ -221,6 +221,7 @@ hud.init({
   onReload: () => G.player && startReload(G.player),
   onItem: (id) => useItem(id),
   onUlt: () => useUlt(),
+  onInteract: () => interactPress(), // the prompt as a button (touch): open supplies; revives are a hold
   onLobby: () => leaveMatch(),
   onRevive: () => sfx.deny(),
   // The portal's death screen owns the wait: respawn only when it says go (respawn() === true).
