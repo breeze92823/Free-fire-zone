@@ -1,0 +1,173 @@
+/* Touch controls (touch.js). Hidden unless body.touch-ui. */
+.touch-root {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  font-family: 'Fredoka', system-ui, sans-serif;
+  --pad: clamp(10px, 2.6vmin, 22px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+.touch-ui .touch-root {
+  display: block;
+}
+.touch-root * {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.touch-zone {
+  position: absolute;
+  top: 18%;
+  bottom: 0;
+  pointer-events: auto;
+}
+.touch-left {
+  left: 0;
+  width: 42%;
+}
+.touch-right {
+  right: 0;
+  width: 58%;
+}
+
+.joy-base {
+  --size: clamp(100px, 26vmin, 146px);
+  position: absolute;
+  left: calc(var(--safe-l) + var(--pad) + var(--size) / 2 + 64px);
+  top: calc(100% - var(--safe-b) - var(--pad) - var(--size) / 2 - 10px);
+  width: var(--size);
+  height: var(--size);
+  margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.18));
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  opacity: 0.6;
+  transition: opacity 0.15s, border-color 0.15s;
+}
+.joy-base.active {
+  opacity: 1;
+}
+.joy-base.sprint {
+  border-color: #ffd34d;
+  box-shadow: 0 0 18px rgba(255, 211, 77, 0.6);
+}
+.joy-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44%;
+  height: 44%;
+  margin: -22% 0 0 -22%;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.touch-btn {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  background: rgba(20, 28, 44, 0.45);
+  color: #fff;
+  font-family: inherit;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+}
+.touch-btn:active,
+.touch-btn.on {
+  background: rgba(255, 170, 40, 0.75);
+  border-color: #fff;
+}
+.touch-btn svg {
+  width: 52%;
+  height: 52%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Right thumb cluster */
+.touch-cluster {
+  --fire: clamp(78px, 21vmin, 108px);
+  --side: clamp(48px, 12.5vmin, 64px);
+  position: absolute;
+  right: calc(var(--safe-r) + var(--pad));
+  bottom: calc(var(--safe-b) + var(--pad));
+  width: calc(var(--fire) + var(--side) * 2 + 16px);
+  height: calc(var(--fire) + var(--side) * 2 + 16px);
+  pointer-events: none;
+}
+.touch-cluster .touch-btn {
+  position: absolute;
+}
+.touch-btn.fire {
+  width: var(--fire, 92px);
+  height: var(--fire, 92px);
+  background: rgba(230, 70, 40, 0.5);
+  border-color: rgba(255, 220, 200, 0.85);
+}
+.touch-btn.fire.on {
+  background: rgba(255, 80, 40, 0.85);
+}
+.touch-btn.fire.main {
+  right: 0;
+  bottom: 0;
+}
+/* The second FIRE sits right of the platform's chat area (top-left), above the joystick side. */
+.touch-btn.fire.left {
+  --fire: clamp(58px, 15vmin, 76px);
+  position: absolute;
+  left: calc(var(--safe-l) + 41vw);
+  top: 40%;
+}
+.touch-btn.aim {
+  right: calc(var(--fire) + 10px);
+  bottom: calc(var(--fire) * 0.55);
+  width: var(--side);
+  height: var(--side);
+}
+.touch-btn.jump {
+  right: calc(var(--fire) * 0.15);
+  bottom: calc(var(--fire) + 10px);
+  width: var(--side);
+  height: var(--side);
+}
+.touch-btn.crouch {
+  right: calc(var(--fire) + 10px);
+  bottom: 0;
+  width: calc(var(--side) * 0.86);
+  height: calc(var(--side) * 0.86);
+}
+.touch-btn.reload {
+  right: calc(var(--fire) + var(--side) * 0.75);
+  bottom: calc(var(--fire) + var(--side) * 0.35);
+  width: calc(var(--side) * 0.8);
+  height: calc(var(--side) * 0.8);
+}
+
+/* Portrait phones: smaller cluster. */
+@media (orientation: portrait) {
+  .touch-cluster {
+    --fire: clamp(70px, 19vmin, 92px);
+    --side: clamp(44px, 11vmin, 56px);
+  }
+  .touch-btn.fire.left {
+    top: 52%;
+    left: calc(var(--safe-l) + 64px);
+  }
+}
