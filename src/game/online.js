@@ -3,7 +3,7 @@
 // NET.interpDelay behind their newest pose; the server decides their health, life and score.
 // The local player sends its pose ~NET.poseHz times a second (sendPose).
 import { Vector3 } from 'three'
-import { MAPS, NET, ULT_CHARGE, WEAPONS } from '../config.js'
+import { DEV_MODE, MAPS, NET, ULT_CHARGE, WEAPONS } from '../config.js'
 import { G, emit } from './state.js'
 import { Actor } from './actor.js'
 import { buildCharacter, portrait, randomOutfit } from './characters.js'
@@ -13,8 +13,7 @@ import { remoteThrow, remoteWall, ultVisual } from './items.js'
 import { markOpened, syncCrates, syncDrops } from './loot.js'
 import { mulberry32 } from './zone.js'
 import { spawnActor, updateMvp } from './match.js'
-import { loadBaseCharacter } from '../avatar/character.js'
-import { applyProportions, attachEquippedAccessories } from '../avatar/loader.js'
+import { buildLook, disposeLook, isBloxityRig, lookFromJson } from '../avatar/look.js'
 import { sfx, spatial } from '../audio/index.js'
 import * as fx from './fx.js'
 import * as bloxity from '../bloxity.js'
@@ -46,7 +45,7 @@ function makeRemote(sid, p) {
   a.netId = sid
   a.remote = true
   a.snaps = []
-  a.avatarJson = null
+  a.lookKey = null
   a.avatarGen = 0
   a.portrait = p.pfp || portrait(outfit)
   a.uid = p.uid || ''
@@ -55,7 +54,7 @@ function makeRemote(sid, p) {
   a.facing = p.yaw
   a.addToScene(G.scene)
   G.actors.push(a)
-  loadRemoteAvatar(a, p.avatar)
+  loadRemoteAvatar(a, p)
   return a
 }
 
@@ -66,30 +65,24 @@ function removeActor(a) {
   if (G.spectating === a) G.spectating = null
 }
 
-// Bloxity look (equipped ids + proportions) -> the rig, dressed. Until it loads (or without the
-// SDK) the player wears a blocky outfit seeded by their session id.
-async function loadRemoteAvatar(a, json) {
-  if (a.avatarJson === json) return
-  a.avatarJson = json
-  let look = null
-  try {
-    look = json ? JSON.parse(json) : null
-  } catch {
-    look = null
-  }
-  if (!look?.equipped || !bloxity.hasSdk()) return
+// Another player's Bloxity look -> their character, dressed (avatar/look.js: custom character, the
+// character kit, or skin + parts + accessories by hand). Until it loads they wear a blocky outfit
+// seeded by their session id. Rebuilt whenever their look changes.
+async function loadRemoteAvatar(a, p) {
+  const key = `${p.outfitKey}|${p.avatar}`
+  if (a.lookKey === key) return
+  a.lookKey = key
+  if (DEV_MODE) return // VITE_DEV_MODE: no Bloxity CDN
   const gen = ++a.avatarGen
-  try {
-    const group = await loadBaseCharacter()
-    if (gen !== a.avatarGen || !G.actors.includes(a)) return
-    await attachEquippedAccessories(group, look.equipped, { skinTextureUrl: bloxity.getSkinTextureUrlFor(look.equipped) })
-    if (gen !== a.avatarGen || !G.actors.includes(a)) return
-    applyProportions(group, look.proportions || null)
-    if (!group.nodes?.default_torso) return
-    a.setAvatar(group)
-  } catch (err) {
-    console.warn('[online] remote avatar failed', err)
+  const built = await buildLook(lookFromJson(p.avatar, p.outfitKey))
+  if (gen !== a.avatarGen || !G.actors.includes(a) || !built || !isBloxityRig(built.root)) {
+    disposeLook(built?.root)
+    return
   }
+  const old = a.avatar
+  a.setAvatar(built.root)
+  a.refreshHeld()
+  disposeLook(old)
 }
 
 // Adds / removes remote actors so G.actors matches the players in this round.
@@ -183,7 +176,7 @@ function applyRemote(a, p, dt, now) {
     a.emoteT = 0
   }
   copyStats(a, p)
-  if (p.avatar !== a.avatarJson) loadRemoteAvatar(a, p.avatar)
+  if (`${p.outfitKey}|${p.avatar}` !== a.lookKey) loadRemoteAvatar(a, p)
 }
 
 function copyStats(a, p) {
@@ -466,7 +459,9 @@ export function roster() {
   const st = net.state
   if (!st?.players) return []
   const out = []
-  st.players.forEach((p, sid) => out.push({ id: sid, name: p.name, pfp: p.pfp, inMatch: p.inMatch, team: p.team, primary: p.primary, secondary: p.secondary, me: sid === net.sessionId }))
+  st.players.forEach((p, sid) =>
+    out.push({ id: sid, name: p.name, pfp: p.pfp, inMatch: p.inMatch, team: p.team, primary: p.primary, secondary: p.secondary, avatar: p.avatar, outfitKey: p.outfitKey, me: sid === net.sessionId }),
+  )
   return out
 }
 

@@ -1,8 +1,10 @@
-// Dresses the game's Bloxity base rig (avatar/character.js) with a
-// signed-in player's equipped cosmetics: skin texture, replaced body parts
-// (head/torso/arms/legs) and hat/back .obj items from the avatar CDN. Any
-// slot that 404s or fails to parse is skipped, leaving the rig's own default
-// mesh in place. Framework-free (no React) so it can be reused outside
+// Dresses the game's Bloxity base rig (avatar/character.js) with a player's
+// equipped cosmetics (the local player's or another player's replicated ids):
+// skin texture (face / shirt / pants drawn on), replaced body parts
+// (head/torso/arms/legs) and every bone-attached accessory (hat, back, hair,
+// mask, neck, chest, waist, hands, shoes: the SDK's getAccessorySlots()).
+// Also dresses custom characters' own rigs with accessories. Any slot that
+// 404s or fails to parse is skipped, leaving the rig's own default mesh. Framework-free (no React) so it can be reused outside
 // a framework.
 //
 // Same rule as bloxity.js: nothing here may throw outward. A blocked
@@ -10,9 +12,13 @@
 // Ice-Skate's systems/avatarModel.js, which targets the same base rig.
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import {
   Color,
+  DoubleSide,
   FrontSide,
+  Matrix4,
+  Vector3,
   MeshStandardMaterial,
   NearestFilter,
   NearestMipmapLinearFilter,
@@ -21,8 +27,58 @@ import {
 } from 'three'
 import { MATERIAL_PBR, PLAYER_DIMS, PROPORTIONS, RIG, RIG_HEIGHT, clamp } from '../config.js'
 import { AVATAR_SLOTS, assetUrl, composedSkinUrl, describeItem, isEquipped, itemUrls, partUrl, skinUrl } from './cdn.js'
+import { loadBaseCharacter } from './character.js'
+import { accessorySlots, accessoryUrls, characterAccessoryMatrix } from '../bloxity.js'
 
-const HAT_LIFT = 0.8
+// Bone-attached accessory slots. Origins are model-space points on player.glb (rig units, feet at
+// y 0); an item mesh is authored around its origin and rides on `bone` with the local matrix
+// restInverse(bone) x translate(origin) (docs: not skeleton.boneInverses, 90 deg off on the leaf
+// bones). mirrorBone: the same mesh mirrored onto the other side. inheritScale false: the item keeps
+// its size when the body proportions stretch the limb. The SDK's getAccessorySlots() list wins
+// (new slot types appear without code changes); hat and back are not in it.
+const HAT_BACK_SLOTS = [
+  { field: 'hatId', bone: 'Neck1', dir: 'hats', origin: [0, 5.6, 0], inheritScale: true },
+  { field: 'backId', bone: 'Spine2', dir: 'back', origin: [0, 4.2, 0], inheritScale: true },
+]
+const FALLBACK_SLOTS = [
+  { field: 'hairId', bone: 'Neck1', dir: 'hats', origin: [0, 5.6, 0], inheritScale: true },
+  { field: 'maskId', bone: 'Neck1', dir: 'hats', origin: [0, 5.6, 0], inheritScale: true },
+  { field: 'neckId', bone: 'Spine2', dir: 'neck', origin: [0, 4.8, 0], inheritScale: true },
+  { field: 'chestId', bone: 'Spine2', dir: 'chest', origin: [0, 3.6, 0], inheritScale: true },
+  { field: 'waistId', bone: 'Spine1', dir: 'waist', origin: [0, 2.4, 0], inheritScale: true },
+  { field: 'handId', bone: 'ArmL2_leaf', mirrorBone: 'ArmR2_leaf', dir: 'hand', origin: [0, 0, 0], inheritScale: false },
+  { field: 'shoesId', bone: 'LegL2_leaf', mirrorBone: 'LegR2_leaf', dir: 'shoes', origin: [0, 0, 0], inheritScale: false },
+]
+const itemSlots = () => [...HAT_BACK_SLOTS, ...(accessorySlots() || FALLBACK_SLOTS)]
+
+// player.glb's rest pose in model space: bone name -> inverse world matrix (read once).
+let restPromise = null
+function restInverses() {
+  restPromise ||= loadBaseCharacter().then((root) => {
+    root.position.set(0, 0, 0)
+    root.rotation.set(0, 0, 0)
+    root.scale.set(1, 1, 1)
+    root.updateMatrixWorld(true)
+    const inv = {}
+    root.traverse((o) => {
+      if (o.name) inv[o.name] = o.matrixWorld.clone().invert()
+    })
+    return inv
+  })
+  return restPromise
+}
+
+const MIRROR_X = new Matrix4().makeScale(-1, 1, 1)
+const tmpM = new Matrix4()
+const tmpS = new Vector3()
+
+// rig.anchors[bone] may be a number, [x, y, z] or { x, y, z }.
+function anchorScale(anchor) {
+  if (typeof anchor === 'number' && Number.isFinite(anchor)) return new Matrix4().makeScale(anchor, anchor, anchor)
+  if (Array.isArray(anchor) && anchor.length >= 3) return new Matrix4().makeScale(anchor[0], anchor[1], anchor[2])
+  if (anchor && typeof anchor === 'object' && 'x' in anchor) return new Matrix4().makeScale(anchor.x, anchor.y, anchor.z)
+  return new Matrix4()
+}
 
 const gltfLoader = new GLTFLoader()
 const objLoader = new OBJLoader()
@@ -161,42 +217,80 @@ async function applyPart(root, slot, id) {
   target.geometry = geometry
 }
 
-async function applyItem(root, slot, id) {
-  const anchor = root.nodes[slot.attach]
-  if (!anchor) return
-  const item = await describeItem(id)
-  const fallback = slot.type ? itemUrls(slot, id) : {}
-  const urls = {
-    mesh: assetUrl(item?.assetPaths?.mesh) || fallback.mesh,
-    texture: assetUrl(item?.assetPaths?.texture) || fallback.texture,
+const objectCache = new Map()
+async function loadItemObject(mesh, texture) {
+  let request = objectCache.get(mesh)
+  if (!request) {
+    request = objLoader.loadAsync(mesh).catch((err) => {
+      console.warn('[avatarLoader] accessory failed to load', mesh, err)
+      objectCache.delete(mesh)
+      return null
+    })
+    objectCache.set(mesh, request)
   }
-  if (!urls.mesh) return
-  let object
+  const proto = await request
+  if (!proto) return null
+  let map = null
   try {
-    object = await objLoader.loadAsync(urls.mesh)
-  } catch (err) {
-    console.warn('[avatarLoader] accessory failed to load', urls.mesh, err)
-    return
-  }
-  let texture = null
-  try {
-    if (!urls.texture) throw new Error('no texture')
-    texture = configureItemTexture(await textureLoader.loadAsync(urls.texture))
+    if (texture) map = configureItemTexture(await textureLoader.loadAsync(texture))
   } catch {
     // An untextured accessory still reads better than skipping it outright.
   }
+  const object = proto.clone()
   object.traverse((o) => {
     if (!o.isMesh) return
     o.castShadow = true
-    o.material = new MeshStandardMaterial(
-      texture ? { map: texture, ...MATERIAL_PBR.PLAYER } : { color: '#cccccc', ...MATERIAL_PBR.PLAYER },
-    )
+    o.material = new MeshStandardMaterial(map ? { map, ...MATERIAL_PBR.PLAYER } : { color: '#cccccc', ...MATERIAL_PBR.PLAYER })
   })
-  // Hats are authored for the portal rig, whose renderer parents them to the
-  // head bone lifted 0.8 up; at the bone origin they sink into the head.
-  if (slot.at) object.position.set(...slot.at)
-  else if (slot.key === 'hatId') object.position.set(0, HAT_LIFT, 0)
-  anchor.add(object)
+  return object
+}
+
+async function itemUrlsFor(slot, id) {
+  const item = await describeItem(id)
+  const sdk = accessoryUrls(slot.field, id)
+  const fallback = slot.dir ? itemUrls({ type: slot.dir }, id) : {}
+  return {
+    mesh: assetUrl(item?.assetPaths?.mesh) || sdk?.mesh || fallback.mesh,
+    texture: assetUrl(item?.assetPaths?.texture) || sdk?.texture || fallback.texture,
+  }
+}
+
+// Places one slot's item on the rig. place(boneName, mirrored) -> the item's local Matrix4.
+async function attachSlot(root, slot, id, place) {
+  const urls = await itemUrlsFor(slot, id)
+  if (!urls.mesh) return
+  const object = await loadItemObject(urls.mesh, urls.texture)
+  if (!object) return
+  const targets = [[slot.bone, false]]
+  if (slot.mirrorBone) targets.push([slot.mirrorBone, true])
+  // Copies first: clone() serialises userData, which must not hold the bone yet.
+  const copies = targets.map((_, i) => (i === 0 ? object : object.clone()))
+  targets.forEach(([boneName, mirrored], i) => {
+    const bone = root.nodes?.[boneName]
+    if (!bone) return
+    const obj = copies[i]
+    if (mirrored) {
+      // A mirrored copy turns its faces inside out: draw both sides.
+      obj.traverse((o) => {
+        if (o.isMesh) {
+          o.material = o.material.clone()
+          o.material.side = DoubleSide
+        }
+      })
+    }
+    obj.matrixAutoUpdate = false
+    obj.matrix.copy(place(boneName, mirrored, slot))
+    obj.userData.baseMatrix = obj.matrix.clone()
+    obj.userData.bone = bone
+    if (slot.inheritScale === false) (root.userData.fixedScaleItems ||= []).push(obj)
+    obj.updateMatrixWorld(true)
+    bone.add(obj)
+  })
+}
+
+async function applyItems(root, equipped, place) {
+  const slots = itemSlots().filter((slot) => isEquipped(equipped[slot.field]))
+  await Promise.all(slots.map((slot) => attachSlot(root, slot, equipped[slot.field], place).catch((err) => console.warn('[avatarLoader] slot failed', slot.field, err))))
 }
 
 // A hat can insist on a head ('-1' = the stock one) because it is modelled
@@ -224,14 +318,76 @@ export async function attachEquippedAccessories(root, equipped, { signal, skinTe
     if (signal?.aborted) return
     await applySkin(root, equipped, skinTextureUrl)
     if (signal?.aborted) return
-    // Slots load in parallel; each one swallows its own failure.
-    await Promise.all(
-      AVATAR_SLOTS.filter((slot) => isEquipped(equipped[slot.key])).map((slot) =>
-        slot.kind === 'part' ? applyPart(root, slot, equipped[slot.key]) : applyItem(root, slot, equipped[slot.key]),
-      ),
-    )
+    const rest = await restInverses()
+    if (signal?.aborted) return
+    // Body parts and accessories load in parallel; each one swallows its own failure.
+    const at = (boneName, mirrored, slot) => {
+      const m = (rest[boneName] || new Matrix4()).clone()
+      if (mirrored) m.multiply(MIRROR_X)
+      return m.multiply(tmpM.makeTranslation(slot.origin?.[0] ?? 0, slot.origin?.[1] ?? 0, slot.origin?.[2] ?? 0))
+    }
+    await Promise.all([
+      ...AVATAR_SLOTS.filter((slot) => slot.kind === 'part' && isEquipped(equipped[slot.key])).map((slot) => applyPart(root, slot, equipped[slot.key])),
+      applyItems(root, equipped, at),
+    ])
   } catch (err) {
     console.warn('[avatarLoader] equipping avatar failed', err)
+  }
+}
+
+// --- Custom characters --------------------------------------------------------------------------
+// A character (SDK getCharacterFor) is its own GLB with player.glb's 22 bone names and rest
+// rotations, 6.4 units tall: same scale, same animator, texture embedded (no skin, no body parts,
+// no proportions). Head / torso items use the SDK's characterAccessoryMatrix(character, bone);
+// hands and shoes, and any bone it has no matrix for, scale(rig.anchors[bone]) x the player.glb
+// placement.
+const characterCache = new Map()
+export async function loadCharacterRig(character) {
+  const url = character?.glbUrl
+  if (!url) return null
+  let request = characterCache.get(url)
+  if (!request) {
+    request = gltfLoader.loadAsync(url).catch((err) => {
+      console.warn('[avatarLoader] character failed to load', url, err)
+      characterCache.delete(url)
+      return null
+    })
+    characterCache.set(url, request)
+  }
+  const gltf = await request
+  if (!gltf) return null
+  const root = cloneSkeleton(gltf.scene)
+  root.name = 'character'
+  root.nodes = {}
+  root.traverse((o) => {
+    if (o.isMesh || o.isSkinnedMesh) {
+      o.castShadow = true
+      o.frustumCulled = false
+    }
+    if (o.name) root.nodes[o.name] = o
+  })
+  if (!root.nodes.Rig1 && !root.nodes.Neck1) return null // not a Bloxity rig
+  root.userData.customCharacter = character.id || true
+  root.scale.setScalar(PLAYER_DIMS.height / RIG_HEIGHT)
+  return root
+}
+
+export async function attachCharacterAccessories(root, character, equipped) {
+  if (!root || !character || !equipped) return
+  try {
+    const rest = await restInverses()
+    const anchors = character.rig?.anchors || {}
+    const at = (boneName, mirrored, slot) => {
+      const origin = tmpM.makeTranslation(slot.origin?.[0] ?? 0, slot.origin?.[1] ?? 0, slot.origin?.[2] ?? 0).clone()
+      const fit = !mirrored && (boneName === 'Neck1' || boneName === 'Spine1' || boneName === 'Spine2') ? characterAccessoryMatrix(character, boneName) : null
+      if (fit) return new Matrix4().fromArray(fit).multiply(origin)
+      const m = anchorScale(anchors[boneName]).multiply(rest[boneName] || new Matrix4())
+      if (mirrored) m.multiply(MIRROR_X)
+      return m.multiply(origin)
+    }
+    await applyItems(root, equipped, at)
+  } catch (err) {
+    console.warn('[avatarLoader] character accessories failed', err)
   }
 }
 
@@ -266,4 +422,23 @@ export function applyProportions(root, proportions) {
   // proportionally wider, just taller.
   const unitScale = PLAYER_DIMS.height / RIG_HEIGHT
   root.scale.set(unitScale, unitScale * p.height, unitScale)
+  keepItemSizes(root)
+}
+
+// inheritScale false items (hands, shoes): undo the stretch their bone picked up from the
+// proportions, so a long arm does not make a long glove.
+function keepItemSizes(root) {
+  const items = root.userData.fixedScaleItems
+  if (!items?.length) return
+  const s = root.scale.clone()
+  root.scale.set(1, 1, 1)
+  root.updateMatrixWorld(true)
+  const inv = tmpM.copy(root.matrixWorld).invert()
+  for (const obj of items) {
+    const rel = new Matrix4().multiplyMatrices(inv, obj.userData.bone.matrixWorld)
+    rel.decompose(new Vector3(), new (obj.quaternion.constructor)(), tmpS)
+    obj.matrix.copy(obj.userData.baseMatrix).premultiply(new Matrix4().makeScale(1 / (tmpS.x || 1), 1 / (tmpS.y || 1), 1 / (tmpS.z || 1)))
+  }
+  root.scale.copy(s)
+  root.updateMatrixWorld(true)
 }

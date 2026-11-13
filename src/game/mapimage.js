@@ -1,7 +1,7 @@
 // The map picture used by the minimap and the big map: the real island,
 // rendered once from straight above with an orthographic camera (north up),
 // then dressed with a grid (A-H, 1-8) and district names.
-import { OrthographicCamera, Vector3 } from 'three'
+import { OrthographicCamera, PerspectiveCamera, Vector3 } from 'three'
 import { FONT_FAMILY } from '../config.js'
 
 export function renderMapImage(renderer, scene, lighting, bounds, landmarks = [], size = 1024) {
@@ -82,4 +82,35 @@ export function renderMapImage(renderer, scene, lighting, bounds, landmarks = []
     l.fillText(m.name, x, y)
   }
   return { clean: out, labelled, bounds, span, size }
+}
+
+// A map vote card's picture: the real island around the map's district (map.focus) from the
+// map's camera (map.shot = [dx, dy, dz, fov] from the focus), lit with whatever mood is set.
+// Drawn on the main canvas (scissored, scaled down to fit the window) and copied out as a JPEG.
+export function renderMapShot(renderer, scene, lighting, map, groundHeight, w = 360, h = 416) {
+  const [fx, fz] = map.focus
+  const [dx, dy, dz, fov] = map.shot
+  const gy = groundHeight ? groundHeight(fx, fz) : 0
+  const cam = new PerspectiveCamera(fov, w / h, 0.5, 900)
+  cam.position.set(fx + dx, gy + dy, fz + dz)
+  cam.lookAt(fx, gy + 2, fz)
+  cam.updateProjectionMatrix()
+  lighting.update(0, new Vector3(fx, gy, fz))
+
+  const k = Math.min(1, (window.innerWidth - 1) / w, (window.innerHeight - 1) / h)
+  const cw = Math.max(32, Math.floor(w * k))
+  const ch = Math.max(32, Math.floor(h * k))
+  renderer.setViewport(0, 0, cw, ch)
+  renderer.setScissor(0, 0, cw, ch)
+  renderer.setScissorTest(true)
+  renderer.render(scene, cam)
+  const dpr = renderer.getPixelRatio()
+  const src = renderer.domElement
+  const out = document.createElement('canvas')
+  out.width = w
+  out.height = h
+  out.getContext('2d').drawImage(src, 0, src.height - Math.floor(ch * dpr), Math.floor(cw * dpr), Math.floor(ch * dpr), 0, 0, w, h)
+  renderer.setScissorTest(false)
+  renderer.setViewport(0, 0, window.innerWidth, window.innerHeight)
+  return out.toDataURL('image/jpeg', 0.82)
 }

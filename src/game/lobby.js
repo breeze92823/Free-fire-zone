@@ -55,6 +55,7 @@ export function initLobby(callbacks) {
       <button class="playbtn o">PLAY</button>
     </div>
     <div class="lb-stats"></div>
+    <button class="lb-leave o"><span>Leave the team</span></button>
     <div class="lb-net o"></div>
     <div class="lb-modal"></div>
   `
@@ -63,8 +64,9 @@ export function initLobby(callbacks) {
   root.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => open(b.dataset.open)))
   root.querySelector('.settings').addEventListener('click', () => open('settings'))
   root.querySelector('.lb-mode').addEventListener('click', () => open('mode'))
-  root.querySelector('.playbtn').addEventListener('click', () => cb.onPlay?.())
+  root.querySelector('.playbtn').addEventListener('click', () => (root.classList.contains('queued') ? reopenQueue() : cb.onPlay?.()))
   root.querySelector('.chip.profile').addEventListener('click', () => open('inventory'))
+  root.querySelector('.lb-leave').addEventListener('click', () => cb.onLeaveQueue?.())
   modal.addEventListener('pointerdown', (e) => {
     if (e.target === modal && !modal.dataset.locked) close()
   })
@@ -182,7 +184,11 @@ function frame(title, bodyHtml, tabs = null, activeTab = null) {
 }
 
 export function close() {
-  modal.classList.remove('on')
+  // Closing any window while queued keeps the vote panel shut until the next vote (or the
+  // "Map voting..." button).
+  if (root?.classList.contains('queued')) queueHidden = true
+  if (current?.kind === 'queue') queueState = ''
+  modal.classList.remove('on', 'q')
   modal.innerHTML = ''
   delete modal.dataset.locked
   cb.onWindow?.(false)
@@ -430,41 +436,165 @@ function modeWindow() {
 }
 
 // --- Waiting / map vote (after PLAY) ----------------------------------------------------------------
-// info: { phase, left, ready, need, votes[], mine, maps[] } from the room (main.js queueInfo).
-let queueKey = ''
+// info: { phase, left, ready, need, votes[], voters[][], mine, maps[] } from the room (main.js
+// queueInfo), every frame while queued. The panel is built once per state (waiting / vote / busy)
+// and then patched in place (timer, picks, voter heads) so the map pictures never flicker.
+// The X hides it (still queued: the lobby's "Map voting..." button brings it back); a new vote
+// opens it again unless another window is up. "Leave the team" (bottom centre) leaves the queue.
+const X_SVG = `<svg viewBox="0 0 24 24"><path d="M4 4L20 20M20 4L4 20" stroke="#fff" stroke-width="1.6" stroke-linecap="square"/></svg>`
+const HEX = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="42" height="72.75" viewBox="0 0 42 72.75"><path d="M21 1L40 12v24L21 47 2 36V12zM21 47v26M2 36L-17 47M40 36l19 11M21 1V-25" fill="none" stroke="#ffffff" stroke-opacity="0.05" stroke-width="1.4"/></svg>')}")`
+// The frame: dark plate with bevelled corners, an inner gold line and gold glow bars (viewBox 885 x 525).
+const FRAME_SVG = `<svg class="mv-frame" viewBox="0 0 885 525" preserveAspectRatio="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="mvGold" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7d5f1a"/><stop offset=".5" stop-color="#f7d873"/><stop offset="1" stop-color="#7d5f1a"/></linearGradient>
+    <linearGradient id="mvGoldV" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6e5316"/><stop offset=".5" stop-color="#f2cc5c"/><stop offset="1" stop-color="#6e5316"/></linearGradient>
+    <linearGradient id="mvPlate" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1b1c20"/><stop offset="1" stop-color="#111215"/></linearGradient>
+    <filter id="mvGlow" x="-20%" y="-300%" width="140%" height="700%"><feGaussianBlur stdDeviation="3"/></filter>
+  </defs>
+  <path d="M30 2H330l14 9H541l14-9H855l28 28V495l-28 28H555l-14-9H344l-14 9H30L2 495V30z" fill="url(#mvPlate)" stroke="#4a3f27" stroke-width="4" vector-effect="non-scaling-stroke"/>
+  <path d="M38 16H332l12 7H541l12-7H847l22 22V487l-22 22H553l-12-7H344l-12 7H38l-22-22V38z" fill="none" stroke="url(#mvGold)" stroke-width="2.4" vector-effect="non-scaling-stroke"/>
+  <path d="M344 4H541" stroke="#ffd65a" stroke-width="6" filter="url(#mvGlow)" vector-effect="non-scaling-stroke"/>
+  <path d="M352 5.5H533" stroke="#ffe9a0" stroke-width="3" vector-effect="non-scaling-stroke"/>
+  <path d="M344 521H541" stroke="#ffd65a" stroke-width="6" filter="url(#mvGlow)" vector-effect="non-scaling-stroke"/>
+  <path d="M352 519.5H533" stroke="#ffe9a0" stroke-width="3" vector-effect="non-scaling-stroke"/>
+  <path d="M6 150V450M879 150V450" stroke="url(#mvGoldV)" stroke-width="5" vector-effect="non-scaling-stroke"/>
+</svg>`
+
+let queueState = '' // 'vote' | 'wait' | 'busy' while the panel is built
+let queueHidden = false // closed with X (or another window): stays shut until the next vote
+let queuedPhase = ''
+let lastInfo = null
+const fmtClock = (s) => {
+  const t = Math.max(0, Math.ceil(s))
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`
+}
+
+function queueKindOf(phase) {
+  if (phase === 'vote') return 'vote'
+  if (phase === 'waiting') return 'wait'
+  return 'busy'
+}
+
 function showQueue(info) {
-  const key = JSON.stringify([info.phase, Math.ceil(info.left), info.ready, info.votes, info.mine])
-  if (current?.kind === 'queue' && modal.classList.contains('on') && key === queueKey) return
-  queueKey = key
-  const voting = info.phase === 'vote'
-  const art = (m) => `linear-gradient(180deg, ${m.tint}cc, #0b1222cc), url(${cb.mapThumb?.() || ''})`
-  let body
-  if (voting) {
-    body = `<div class="vote"><div class="maps">${info.maps
-      .map((m, i) => `<button class="map${i === info.mine ? ' sel' : ''}" data-i="${i}"><div class="art" style="background-image:${art(m)}"></div><div class="nm o">${m.name}</div><div class="vc o">${info.votes[i]} vote${info.votes[i] === 1 ? '' : 's'}</div></button>`)
-      .join('')}</div><div class="hint">Vote for the time of day · the round starts in ${Math.max(0, Math.ceil(info.left))} s · ${info.ready} players ready</div></div>`
-  } else if (info.phase === 'results' || info.phase === 'intro' || info.phase === 'countdown' || info.phase === 'playing' || info.phase === 'ending') {
-    body = `<div class="queue"><div class="big o">Next round soon</div><div class="hint">A round is finishing on this server. You'll be in the next one.</div></div>`
-  } else {
-    const missing = Math.max(0, info.need - info.ready)
-    body = `<div class="queue"><div class="spinner"></div><div class="big o">Waiting for players</div><div class="hint">${info.ready} / ${info.need} ready — the round starts as soon as ${missing === 1 ? 'one more player joins' : `${missing} more players join`}. Real players only: invite friends from the Bloxity menu.</div></div>`
+  lastInfo = info
+  const kind = queueKindOf(info.phase)
+  setQueued(true, kind)
+  if (kind !== queuedPhase) {
+    // A new vote opens the panel again (unless the player is in a shop window).
+    if (kind === 'vote') queueHidden = false
+    queuedPhase = kind
   }
+  const otherWindow = modal.classList.contains('on') && current && current.kind !== 'queue'
+  if (otherWindow || queueHidden) return
+  if (current?.kind !== 'queue' || !modal.classList.contains('on') || queueState !== kind) buildQueue(kind, info)
+  patchQueue(info)
+}
+
+function buildQueue(kind, info) {
+  queueState = kind
   current = { kind: 'queue' }
-  const win = frame(voting ? 'Map Voting' : 'Online Match', `${body}<button class="buy owned o leaveq">Back to lobby</button>`)
+  cb.onWindow?.(true)
+  let body
+  if (kind === 'vote') {
+    const shots = cb.mapShots?.() || []
+    body = `<div class="mv-maps">${info.maps
+      .map(
+        (m, i) => `<button class="mv-card" data-i="${i}">
+          <span class="art" style="background-image:url(${shots[i] || cb.mapThumb?.() || ''})"></span>
+          <span class="shade"></span>
+          <span class="voters"></span>
+          <span class="nm">${esc(m.name)}</span>
+        </button>`,
+      )
+      .join('')}</div>`
+  } else {
+    body = `<div class="mv-wait"><div class="spinner"></div><div class="big"></div><div class="sub"></div></div>`
+  }
+  modal.innerHTML = `<div class="mv" style='--hex:${HEX}'>${FRAME_SVG}<div class="mv-in">
+      <div class="mv-time"></div>
+      <div class="mv-t">${kind === 'vote' ? 'Vote for the map' : kind === 'wait' ? 'Waiting for players' : 'Round in progress'}</div>
+      ${body}
+    </div><button class="mv-x" title="Close">${X_SVG}</button></div>`
+  modal.classList.add('on', 'q')
   modal.dataset.locked = '1'
-  win.querySelector('.win-x').style.visibility = 'hidden'
-  win.querySelectorAll('.map').forEach((b) =>
+  modal.querySelector('.mv-x').addEventListener('click', () => {
+    sfx.click?.()
+    close()
+  })
+  modal.querySelectorAll('.mv-card').forEach((b) =>
     b.addEventListener('click', () => {
+      const i = Number(b.dataset.i)
+      if (lastInfo?.mine === i) return
       sfx.equip()
-      cb.onVote?.(Number(b.dataset.i))
+      // Show the pick at once; the server's vote follows in the room state.
+      if (lastInfo) patchQueue({ ...lastInfo, mine: i })
+      cb.onVote?.(i)
     }),
   )
-  win.querySelector('.leaveq').addEventListener('click', () => cb.onLeaveQueue?.())
+}
+
+function patchQueue(info) {
+  const box = modal.querySelector('.mv')
+  if (!box) return
+  const time = box.querySelector('.mv-time')
+  const t = info.phase === 'vote' ? fmtClock(info.left) : ''
+  if (time.textContent !== t) time.textContent = t
+  if (queueState === 'vote') {
+    box.querySelectorAll('.mv-card').forEach((b, i) => {
+      b.classList.toggle('sel', i === info.mine)
+      const list = info.voters?.[i] || []
+      const key = list.map((v) => v.id).join(',')
+      const el = b.querySelector('.voters')
+      if (el.dataset.k === key) return
+      el.dataset.k = key
+      el.innerHTML =
+        list
+          .slice(0, 4)
+          .map((v) => `<img alt="" title="${esc(v.name || 'Player')}" class="${v.me ? 'me' : ''}" src="${v.pfp ? esc(v.pfp) : portrait(outfitFor(v.id))}">`)
+          .join('') + (list.length > 4 ? `<b class="o">+${list.length - 4}</b>` : '')
+    })
+  } else {
+    const missing = Math.max(0, info.need - info.ready)
+    const big = queueState === 'wait' ? `${info.ready} / ${info.need} ready` : 'Next round soon'
+    const sub =
+      queueState === 'wait'
+        ? `The map vote starts as soon as ${missing === 1 ? 'one more player joins' : `${missing} more players join`}. Real players only: invite friends from the Bloxity menu.`
+        : "A round is finishing on this server. You'll vote for the next map with everyone."
+    const b = box.querySelector('.mv-wait .big')
+    const s2 = box.querySelector('.mv-wait .sub')
+    if (b.textContent !== big) b.textContent = big
+    if (s2.textContent !== sub) s2.textContent = sub
+  }
+}
+
+// The lobby's own queue controls: the PLAY button turns into "Map voting..." (reopens the panel)
+// and "Leave the team" shows at the bottom.
+function setQueued(on, kind = '') {
+  if (!root) return
+  root.classList.toggle('queued', on)
+  const label = !on ? 'PLAY' : kind === 'vote' ? 'Map<br>voting...' : kind === 'wait' ? 'Finding<br>players...' : 'Next<br>round...'
+  const btn = root.querySelector('.playbtn')
+  if (btn.dataset.label !== label) {
+    btn.dataset.label = label
+    btn.innerHTML = on ? `<span class="pq">${label}</span>` : label
+  }
+}
+
+function reopenQueue() {
+  if (!lastInfo) return
+  if (modal.classList.contains('on') && current?.kind !== 'queue') close()
+  queueHidden = false
+  queueState = ''
+  showQueue(lastInfo)
 }
 
 function hideQueue() {
   if (current?.kind === 'queue' && modal.classList.contains('on')) close()
-  queueKey = ''
+  queueState = ''
+  queuedPhase = ''
+  queueHidden = false
+  lastInfo = null
+  setQueued(false)
 }
 
 // --- Loading screen ---------------------------------------------------------------------------------

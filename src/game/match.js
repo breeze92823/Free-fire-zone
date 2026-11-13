@@ -55,7 +55,7 @@ export function createMatch({ st, me, map, playerAvatar, playerName, playerPortr
   }
   G.match = m
   G.time = st.clock
-  zone.reset(st.zoneSeed)
+  zone.reset(st.zoneSeed, map?.focus)
   zone.setVisible(true)
   zone.update(G.time, 0)
   resetLoot()

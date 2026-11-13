@@ -11,6 +11,7 @@ import { bakeWeapon } from './merge.js'
 import { buildCharacter, setFlash, setOpacity } from './characters.js'
 import { buildGrenade, buildWeapon } from './weaponModels.js'
 import { G } from './state.js'
+import { disposeLook } from '../avatar/look.js'
 
 const tmpA = new Vector3()
 const tmpB = new Vector3()
@@ -407,6 +408,7 @@ export class Actor {
     this.removeFromScene()
     disposeAnimator(this.animator)
     if (this.isPlayer) return // the player's avatar is reused by the lobby and the next match
+    disposeLook(this.avatar) // a kit-dressed rig gives its outfit back
     // Bots own their merged meshes, outfit textures and name tag: free them (weapons are shared).
     this.avatar.traverse((n) => {
       if (n.isMesh && n.userData.ownGeometry) n.geometry.dispose()

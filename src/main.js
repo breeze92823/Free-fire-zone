@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { ACESFilmicToneMapping, Clock, PCFSoftShadowMap, PerspectiveCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer } from 'three'
-import { CAMERA, graphicsPreset, MATCH, MAPS, NET, RENDER, TIME_OF_DAY, WEAPONS } from './config.js'
+import { CAMERA, DEV_MODE, graphicsPreset, MATCH, MAPS, NET, RENDER, TIME_OF_DAY, WEAPONS } from './config.js'
 import * as bloxity from './bloxity.js'
 import { install as installInput, isLocked, setGameInput, inputState } from './input.js'
 import { installTouch, setTouchActive, touchShown } from './touch.js'
@@ -12,7 +12,8 @@ import { createWorld } from './world.js'
 import { createPostFx } from './postfx.js'
 import { setNeonBloom } from './propkit.js'
 import { loadBaseCharacter } from './avatar/character.js'
-import { applyProportions, attachEquippedAccessories } from './avatar/loader.js'
+import { applyProportions } from './avatar/loader.js'
+import { buildLook, disposeLook, isBloxityRig, lookFromJson, lookToJson } from './avatar/look.js'
 import { buildIsland } from './world/index.js'
 import { installAudio, setBreakMuted, setListener, setVolume, setDucked, sfx, spatial, updateAmbience } from './audio/index.js'
 import { hasEmoteClip, registerEmoteClip } from './avatar/animator.js'
@@ -25,7 +26,7 @@ import { bindKeys, playEmote, updateController, useItem, useUlt, view } from './
 import * as combat from './game/combat.js'
 import { selectSlot, startReload } from './game/combat.js'
 import hud, { mapOpen } from './game/hud.js'
-import { renderMapImage } from './game/mapimage.js'
+import { renderMapImage, renderMapShot } from './game/mapimage.js'
 import { createLobbyScene } from './game/lobbyScene.js'
 import lobby, { initLobby, showLoading } from './game/lobby.js'
 import { hideResults, showResults, updateResults } from './game/results.js'
@@ -160,6 +161,12 @@ const mapThumb = (() => {
   c.getContext('2d').drawImage(mapImg.clean, 0, 0, 256, 256)
   return c.toDataURL('image/jpeg', 0.8)
 })()
+// The map vote's cards: each map's district in its own mood, rendered once.
+const mapShots = MAPS.map((m) => {
+  setMood(m)
+  return renderMapShot(renderer, scene, lighting, m, island.groundHeight)
+})
+setMood(MAPS[0])
 
 // --- UI ------------------------------------------------------------------------------
 hud.init({
@@ -215,6 +222,7 @@ initLobby({
   getSensitivity: () => getCameraSensitivity(),
   setSensitivity: (v) => setCameraSensitivity(v),
   mapThumb: () => mapThumb,
+  mapShots: () => mapShots,
 })
 
 // Lock hint for desktop: the first click grabs the mouse.
@@ -238,19 +246,27 @@ function loadoutForActor() {
 function placeAvatarInLobby() {
   if (G.phase === 'lobby' || G.phase === 'queue' || G.phase === 'boot') lobbyScene.setPlayerAvatar(avatar, loadoutForActor())
 }
+// The local player's Bloxity look (signed in or guest): equipped ids, proportions, outfit key.
+function localLook() {
+  if (!bloxity.hasSdk()) return {}
+  return { equipped: bloxity.getEquippedAvatar(), proportions: bloxity.getProportions(), outfitKey: bloxity.getOutfitKey(), skinTextureUrl: bloxity.getSkinTextureUrl() }
+}
 async function loadAvatar() {
   const mine = ++generation
   try {
-    const group = await loadBaseCharacter()
-    if (mine !== generation) return
-    const equipped = bloxity.authState.user ? bloxity.getEquippedAvatar() : null
-    await attachEquippedAccessories(group, equipped, { skinTextureUrl: bloxity.getSkinTextureUrl() })
-    if (mine !== generation) return
-    applyProportions(group, bloxity.authState.user ? bloxity.getProportions() : null)
+    const built = bloxity.hasSdk() ? await buildLook(localLook()) : { root: await loadBaseCharacter(), kind: 'manual' }
+    if (mine !== generation || !built) return
     // player.glb failed and the loader fell back to its plain procedural figure: keep our outfit.
-    if (!group.nodes?.default_torso) return
-    avatar = group
+    if (!isBloxityRig(built.root)) return
+    const old = avatar
+    avatar = built.root
     placeAvatarInLobby()
+    // Mid-round look change: the player's actor wears it at once.
+    if (G.player && G.player.avatar === old) {
+      G.player.setAvatar(avatar)
+      G.player.refreshHeld()
+    }
+    if (old !== avatar) disposeLook(old)
     sendAvatar()
   } catch (err) {
     console.warn('[avatar] load failed, keeping the default outfit', err)
@@ -258,20 +274,16 @@ async function loadAvatar() {
     if (mine === generation) avatarReady = true
   }
 }
-// The look the others draw: equipped ids + proportions only (never asset URLs).
+// The look the others draw: the whole equipped object (ids, incl. characterId), proportions and the
+// outfit key; never asset URLs.
 function lookJson() {
-  const equipped = bloxity.authState.user ? bloxity.getEquippedAvatar() : null
-  if (!equipped) return ''
-  try {
-    return JSON.stringify({ equipped, proportions: bloxity.getProportions() || null }).slice(0, 4000)
-  } catch {
-    return ''
-  }
+  const { equipped, proportions, outfitKey } = localLook()
+  return lookToJson({ equipped, proportions, outfitKey })
 }
 function sendAvatar() {
-  send('avatar', { avatar: lookJson() })
+  send('avatar', { avatar: lookJson(), outfitKey: bloxity.getOutfitKey() || '' })
 }
-setJoinOptions(() => ({ name: bloxity.displayName() === 'Offline' ? 'Guest' : bloxity.displayName(), pfp: bloxity.getPfp(), avatar: lookJson() }))
+setJoinOptions(() => ({ name: bloxity.displayName() === 'Offline' ? 'Guest' : bloxity.displayName(), pfp: bloxity.getPfp(), avatar: lookJson(), outfitKey: bloxity.getOutfitKey() || undefined }))
 
 let signedIn = null
 let userKey = null
@@ -294,7 +306,11 @@ bloxity.subscribeAuth((s) => {
   }
 })
 bloxity.onAvatarChanged(loadAvatar)
-bloxity.onProportionsChanged(() => applyProportions(avatar, bloxity.getProportions()))
+bloxity.onProportionsChanged(() => {
+  // Custom characters keep their own shape (docs: no proportion sliders on them).
+  if (!avatar.userData?.customCharacter) applyProportions(avatar, bloxity.getProportions())
+  sendAvatar()
+})
 // The portal menu's "Respawn" button: in a match, a stuck player is moved to a fresh spawn point.
 bloxity.onRespawnRequest(() => {
   if (G.phase === 'playing' && G.player?.life === 'alive') spawnActor(G.player)
@@ -363,13 +379,17 @@ async function startMatchFlow() {
 function queueInfo() {
   const st = net.state
   const votes = MAPS.map(() => 0)
+  const voters = MAPS.map(() => []) // who picked each map (their heads show on its card)
   let ready = 0
-  st?.players?.forEach((p) => {
+  st?.players?.forEach((p, sid) => {
     if (!p.inMatch) return
     ready++
-    if (p.vote >= 0 && p.vote < votes.length) votes[p.vote]++
+    if (p.vote >= 0 && p.vote < votes.length) {
+      votes[p.vote]++
+      voters[p.vote].push({ id: sid, name: p.name, pfp: p.pfp, me: sid === net.sessionId })
+    }
   })
-  return { phase: st?.phase ?? 'waiting', left: st?.phaseLeft ?? 0, ready, need: NET.minPlayers, votes, mine: me()?.vote ?? -1, maps: MAPS }
+  return { phase: st?.phase ?? 'waiting', left: st?.phaseLeft ?? 0, ready, need: NET.minPlayers, votes, voters, mine: me()?.vote ?? -1, maps: MAPS }
 }
 
 // The server put this player in a running round: build it here.
@@ -482,6 +502,7 @@ function nextRound() {
   G.phase = 'queue'
   lobbyScene.rebuildSquad(loadoutForActor())
   lobbyScene.setPlayerAvatar(avatar, loadoutForActor())
+  lobby.show(true) // the vote panel lives in the lobby UI (hidden during the round)
   lobby.showQueue(queueInfo())
   bloxity.showAdScreen('lobby')
 }
@@ -542,10 +563,17 @@ function backToLobby() {
 let matesKey = ''
 function showMates(list) {
   const others = list.filter((m) => !m.me).slice(0, 3)
-  const key = others.map((m) => `${m.id}:${m.primary}`).join(',')
+  const key = others.map((m) => `${m.id}:${m.primary}:${m.outfitKey}:${(m.avatar || '').length}`).join(',')
   if (key === matesKey || (G.phase !== 'lobby' && G.phase !== 'queue')) return
   matesKey = key
   lobbyScene.rebuildSquad(loadoutForActor(), others.map((m) => ({ outfit: outfitForId(m.id), primary: m.primary, secondary: m.secondary })))
+  if (DEV_MODE) return // no Bloxity CDN
+  others.forEach((m, i) => {
+    buildLook(lookFromJson(m.avatar, m.outfitKey)).then((built) => {
+      if (matesKey !== key || !built || !isBloxityRig(built.root)) return disposeLook(built?.root)
+      lobbyScene.setMateAvatar(i, built.root)
+    })
+  })
 }
 
 function cycleSpectate(dir) {
@@ -701,7 +729,9 @@ function gameFrame(dt) {
   const watching = p && p.life === 'dead' && G.spectating ? G.spectating : p
   if (G.phase === 'intro') {
     const k = introT / MATCH.introFlyover
-    introLook.set(p.pos.x * k, 0, p.pos.z * k)
+    // The flyover opens on the voted map's district and sweeps in to the player.
+    const [fx, fz] = currentMap.focus ?? [0, 0]
+    introLook.set(fx + (p.pos.x - fx) * k, 0, fz + (p.pos.z - fz) * k)
     updateCamera(camera, dt, { mode: 'orbit', time: introT * 2 + 1, distance: 150 - 110 * k, height: 95 - 70 * k, lookAt: introLook })
   } else if (G.phase === 'results') {
     const pose = updateResults(dt, camera)

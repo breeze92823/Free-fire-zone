@@ -327,6 +327,13 @@ export function createLobbyScene() {
     })
     if (playerAvatar) setPlayerAvatar(playerAvatar, loadout)
   }
+  // Another player's Bloxity look on platform spot i (avatar/look.js).
+  function setMateAvatar(i, root) {
+    const a = squad[i]
+    if (!a || !root) return
+    a.setAvatar(root)
+    a.refreshHeld()
+  }
   function setPlayerAvatar(avatar, loadout) {
     playerAvatar = avatar
     if (playerActor) playerActor.dispose()
@@ -343,6 +350,7 @@ export function createLobbyScene() {
     scene,
     camera,
     rebuildSquad,
+    setMateAvatar,
     setPlayerAvatar,
     get playerActor() {
       return playerActor

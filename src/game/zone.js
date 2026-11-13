@@ -73,12 +73,18 @@ export function createZone(scene) {
   }
 
   let rand = Math.random
+  const focus = new Vector2()
   function planNext(i) {
     const p = ZONE.phases[i]
     const slack = Math.max(0, z.radius - p.radius)
+    // Head for the map's district (jittered), never leaving the last circle: same as zone.ts.
     const a = rand() * Math.PI * 2
-    const d = Math.sqrt(rand()) * slack * 0.85
-    z.next.set(z.center.x + Math.cos(a) * d, z.center.y + Math.sin(a) * d)
+    const j = Math.sqrt(rand()) * p.radius * 0.45
+    const tx = focus.x + Math.cos(a) * j - z.center.x
+    const tz = focus.y + Math.sin(a) * j - z.center.y
+    const len0 = Math.hypot(tx, tz)
+    const d = Math.min(len0, slack * 0.85)
+    z.next.set(z.center.x + (len0 > 0 ? (tx / len0) * d : 0), z.center.y + (len0 > 0 ? (tz / len0) * d : 0))
     // Keep the zone over land.
     const maxC = Math.max(0, (G.island?.radius ?? 125) - p.radius * 0.6) // server: ISLAND_RADIUS 125
     if (z.next.length() > maxC) z.next.setLength(maxC)
@@ -87,9 +93,11 @@ export function createZone(scene) {
 
   return {
     state: z,
-    // seed: the round's zoneSeed from the server, so every client agrees on the circles.
-    reset(seed) {
+    // seed: the round's zoneSeed from the server, so every client agrees on the circles;
+    // at: the voted map's focus [x, z] (MAPS[i].focus = the server's MAP_FOCUS[i]).
+    reset(seed, at = [0, 0]) {
       rand = seed === undefined ? Math.random : mulberry32(seed)
+      focus.set(at[0], at[1])
       z.center.set(0, 0)
       z.radius = ZONE.start
       z.phase = -1

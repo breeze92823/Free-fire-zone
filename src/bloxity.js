@@ -610,6 +610,71 @@ export function playerInRoom(name) {
   }
 }
 
+// --- Looks (avatar/look.js) -------------------------------------------------------------------
+// Each returns null when the SDK (or that call) is missing, so the caller falls back.
+const avatarApi = () => sdk()?.avatar ?? null
+
+// The local player's outfit key (the character kit draws a whole look from it).
+export function getOutfitKey() {
+  try {
+    const k = avatarApi()?.getOutfitKey?.()
+    return typeof k === 'string' && k ? k : null
+  } catch {
+    return null
+  }
+}
+// The outfit key for another player's replicated equipped ids.
+export function getOutfitKeyFor(equipped) {
+  try {
+    const k = avatarApi()?.getOutfitKeyFor?.(equipped)
+    return typeof k === 'string' && k ? k : null
+  } catch {
+    return null
+  }
+}
+// The Bloxity character kit, when this game has it switched on: { canDress, dress, ... }.
+export function characterKit() {
+  try {
+    const kit = sdk()?.character
+    return kit && typeof kit.dress === 'function' && typeof kit.canDress === 'function' ? kit : null
+  } catch {
+    return null
+  }
+}
+// A custom character for these equipped ids: { id, name, glbUrl, textureUrl, rig: { joints, anchors, height, fit } } | null.
+export async function getCharacterFor(equipped) {
+  try {
+    return (await avatarApi()?.getCharacterFor?.(equipped)) ?? null
+  } catch {
+    return null
+  }
+}
+// Column-major 4x4 placing a head/torso accessory on a custom character's bone, or null.
+export function characterAccessoryMatrix(character, bone) {
+  try {
+    const m = avatarApi()?.characterAccessoryMatrix?.(character, bone)
+    return Array.isArray(m) && m.length === 16 ? m : null
+  } catch {
+    return null
+  }
+}
+// The bone-attached accessory slots ([{ field, bone, dir, origin, inheritScale, mirrorBone? }]) or null.
+export function accessorySlots() {
+  try {
+    const s = avatarApi()?.getAccessorySlots?.()
+    return Array.isArray(s) && s.length ? s : null
+  } catch {
+    return null
+  }
+}
+export function accessoryUrls(field, id) {
+  try {
+    return avatarApi()?.getAccessoryUrls?.(field, id) ?? null
+  } catch {
+    return null
+  }
+}
+
 // Another player's composed skin texture (their equipped face / shirt / pants), or null.
 export function getSkinTextureUrlFor(equipped) {
   try {

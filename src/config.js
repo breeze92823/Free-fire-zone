@@ -223,8 +223,9 @@ export const NET = {
   respawnFallback: 5, // s before respawning when there is no portal death screen
 }
 
-// Ad screens declared once after init (bloxity.js). Gameplay banners stay off.
-export const AD_SCREENS = { lobby: {}, panel: {}, results: {}, gameplay: { show: false } }
+// Ad screens declared once after init (bloxity.js). Gameplay and lobby banners stay off: the lobby
+// ad covered the 3D hangar view. Panels (shops) and results keep theirs.
+export const AD_SCREENS = { lobby: { show: false }, panel: {}, results: {}, gameplay: { show: false } }
 
 // The base rig, measured from player.glb: origin at the feet, 6.4 units tall at bind pose.
 export const RIG_HEIGHT = 6.4
@@ -396,15 +397,18 @@ export const MATCH_MODES = {
 export const MATCH = {
   countdown: 4, // s frozen at the start (3, 2, 1, FIGHT)
   introFlyover: 3.2, // s of camera sweep before the countdown
-  voteTime: 8, // s of map voting (the server's PHASES.vote)
+  voteTime: 15, // s of map voting (the server's PHASES.vote)
   spawnSafeDistance: 38, // m from any enemy a respawn point must be
   endSlowmo: 2.4, // s of slow motion after the final elimination / time up
   streakWindow: 6, // s between eliminations that still count as a streak
 }
+// The maps players vote for: a district of Coral Key at a time of day. The safe zone closes in on
+// `focus` (same planner + MAP_FOCUS on the server, same order); `shot` is the vote card's camera
+// (offset from focus: [x, y, z], fov) rendered once at boot.
 export const MAPS = [
-  { id: 'day', name: 'Coral Key · Day', mood: 'day', tint: '#3fb6ff' },
-  { id: 'sunset', name: 'Coral Key · Sunset', mood: 'sunset', tint: '#ff9a3c' },
-  { id: 'night', name: 'Coral Key · Night', mood: 'night', tint: '#5866ff' },
+  { id: 'villa', name: 'THE VILLA', mood: 'day', tint: '#3fb6ff', focus: [0, 0], shot: [34, 30, 46, 50] },
+  { id: 'farm', name: 'Old Farm', mood: 'sunset', tint: '#ff9a3c', focus: [-66, 34], shot: [40, 42, 52, 52] },
+  { id: 'dock', name: 'Dockyard', mood: 'night', tint: '#5866ff', focus: [-98, -14], shot: [52, 30, 36, 52] },
 ]
 
 // --- Safe zone ---------------------------------------------------------------------

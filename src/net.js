@@ -101,7 +101,8 @@ function joinOptions(party) {
 }
 
 async function resolve() {
-  if (bloxity.canResolveServer()) return bloxity.resolveServerEndpoint(bloxity.userId())
+  // VITE_SERVER_URL wins (local testing with the real SDK loaded); otherwise Bloxity's matchmaker.
+  if (bloxity.canResolveServer() && !NET.devServer) return bloxity.resolveServerEndpoint(bloxity.userId())
   const url = NET.devServer || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname || 'localhost'}:${NET.devPort}`
   return { endpoint: url, relayRoomId: '' }
 }
