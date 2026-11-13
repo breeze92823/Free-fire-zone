@@ -25,7 +25,7 @@ const touch = { x: 0, z: 0, sprint: false }
 export const isLocked = () => !!canvas && document.pointerLockElement === canvas
 export const isHeld = (code) => held.has(code)
 export function requestLock() {
-  if (!canvas || isLocked() || !enabled) return
+  if (!canvas || isLocked() || !enabled || released) return
   const r = canvas.requestPointerLock?.()
   if (r instanceof Promise) r.catch(() => {})
 }
@@ -42,6 +42,25 @@ export function setGameInput(on) {
   }
 }
 export const gameInputEnabled = () => enabled
+
+// Dead / spectating: the camera and shooting controls let go (the cursor is freed, no look,
+// no fire / aim, no re-grabbing the pointer on click) so the death panel can be clicked.
+// Keys still work (G respawns).
+let released = false
+export function setControlsReleased(on) {
+  if (released === on) return
+  released = on
+  if (on) {
+    releaseLock()
+    orbiting = false
+    inputState.fire = false
+    inputState.aim = false
+    inputState.jump = false
+    inputState.look.dx = 0
+    inputState.look.dy = 0
+  }
+}
+export const controlsReleased = () => released
 
 export function onKey(code, fn) {
   keyActions.set(code, fn)
@@ -98,7 +117,7 @@ export function install(showMenu, canvasEl) {
     }
     held.add(e.code)
     if (enabled) {
-      if (e.code === 'Space') inputState.jump = true
+      if (e.code === 'Space' && !released) inputState.jump = true
       keyActions.get(e.code)?.()
     } else if (e.code === 'KeyM' || e.code === 'Tab') keyActions.get(e.code)?.()
     recomputeMove()
@@ -110,7 +129,7 @@ export function install(showMenu, canvasEl) {
   window.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'mouse') return
     const onWorld = e.target === canvas
-    if (!enabled || !onWorld) return
+    if (!enabled || !onWorld || released) return
     if (e.button === 0) {
       if (isLocked()) inputState.fire = true
       else {
@@ -127,7 +146,7 @@ export function install(showMenu, canvasEl) {
     } else if (e.button === 2) inputState.aim = false
   })
   window.addEventListener('pointermove', (e) => {
-    if (!enabled || e.pointerType !== 'mouse') return
+    if (!enabled || released || e.pointerType !== 'mouse') return
     if (!orbiting && !isLocked()) return
     inputState.look.dx += e.movementX || 0
     inputState.look.dy += e.movementY || 0

@@ -4,12 +4,12 @@
 // tinted per building by vertex colour, which keeps the material count, and
 // so the draw calls, low after batching.
 import { AdditiveBlending, CanvasTexture, Color, DoubleSide, MeshBasicMaterial, MeshStandardMaterial, SRGBColorSpace, Vector2 } from 'three'
-import { paintCrate, paintPavement, paintRock, paintTiles, paintWaterNormal, toTexture } from '../textures.js'
+import { paintCrate, paintPavement, paintRock, paintTiles, paintWaterNormal, toTexture, trackTexture } from '../textures.js'
 import { fontReady } from '../propkit.js'
 import * as P from './paint.js'
 
 function tex(canvas, tile, srgb = true) {
-  const t = toTexture(canvas, { repeat: 1, srgb, anisotropy: 8 })
+  const t = toTexture(canvas, { repeat: 1, srgb })
   t.repeat.set(1 / tile, 1 / tile)
   return t
 }
@@ -159,7 +159,7 @@ export function initMaterials() {
     const s = P.paintSign(text, opts)
     const t = new CanvasTexture(s.canvas)
     t.colorSpace = SRGBColorSpace
-    t.anisotropy = 8
+    trackTexture(t)
     fontReady.then(() => {
       s.draw()
       t.needsUpdate = true
@@ -174,7 +174,7 @@ export function initMaterials() {
     const s = P.paintPoster(kind)
     const t = new CanvasTexture(s.canvas)
     t.colorSpace = SRGBColorSpace
-    t.anisotropy = 8
+    trackTexture(t)
     fontReady.then(() => {
       s.draw()
       t.needsUpdate = true

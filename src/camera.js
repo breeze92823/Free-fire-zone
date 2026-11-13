@@ -67,7 +67,7 @@ export function update(camera, dt, opts) {
   // Look input (aiming slows it down in proportion to the zoom).
   const zoomScale = opts.aim ? CAMERA.aimSensitivity * (fovNow / CAMERA.fov) : 1
   const k = CAMERA.lookSensitivity * sensitivity * zoomScale
-  if (mode !== 'look' && mode !== 'orbit') {
+  if (mode !== 'look' && mode !== 'orbit' && !opts.noLook) {
     state.yaw -= inputState.look.dx * k
     state.pitch += inputState.look.dy * k
   }

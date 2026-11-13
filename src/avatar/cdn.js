@@ -4,6 +4,8 @@
 // it would load. Pure string-building only — avatar/loader.js is the
 // sole consumer. Ported from Clean Leaves for Loot.
 
+import { loadJSON } from './assets.js'
+
 const AVATAR_CDN = 'https://static.bloxity.io/avatars'
 
 // The SDK's own "nothing equipped" sentinels — '' / 'undefined' (as literal
@@ -62,22 +64,12 @@ export function composedSkinUrl(equipped) {
 // somewhere unexpected still loads. Cached by id; a failed lookup resolves to
 // null so callers fall back to the pattern URLs above.
 const AVATAR_API = 'https://api.bloxity.io'
-const catalogue = new Map()
 
-export function describeItem(id) {
+// Timeout + retry + dedupe live in assets.js; a failed lookup is not cached (the next look retries)
+// and resolves null, so callers fall back to the pattern URLs above.
+export function describeItem(id, prio) {
   if (!isEquipped(id)) return Promise.resolve(null)
-  const key = String(id)
-  let request = catalogue.get(key)
-  if (!request) {
-    request = fetch(`${AVATAR_API}/v1/avatar/items/${encodeURIComponent(key)}`)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return res.json()
-      })
-      .catch(() => null)
-    catalogue.set(key, request)
-  }
-  return request
+  return loadJSON(`${AVATAR_API}/v1/avatar/items/${encodeURIComponent(String(id))}`, { prio })
 }
 
 // `assetPaths` entries are host-relative ('/avatars/...') or absolute.

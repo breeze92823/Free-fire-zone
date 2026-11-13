@@ -28,6 +28,7 @@ import {
   Vector3,
 } from 'three'
 import { Actor } from './actor.js'
+import { disposeLook } from '../avatar/look.js'
 import { randomOutfit } from './characters.js'
 import { RANKS } from '../config.js'
 
@@ -331,8 +332,10 @@ export function createLobbyScene() {
   function setMateAvatar(i, root) {
     const a = squad[i]
     if (!a || !root) return
+    const old = a.avatar
     a.setAvatar(root)
     a.refreshHeld()
+    if (old && old !== root) disposeLook(old) // a previous kit outfit gives itself back
   }
   function setPlayerAvatar(avatar, loadout) {
     playerAvatar = avatar

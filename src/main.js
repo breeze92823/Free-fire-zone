@@ -1,8 +1,10 @@
 import * as THREE from 'three'
 import { ACESFilmicToneMapping, Clock, PCFSoftShadowMap, PerspectiveCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer } from 'three'
-import { CAMERA, DEV_MODE, graphicsPreset, MATCH, MAPS, NET, RENDER, TIME_OF_DAY, WEAPONS } from './config.js'
+import { AUTO_GRAPHICS, CAMERA, DEV_MODE, graphicsPreset, MATCH, MAPS, NET, RENDER, TIME_OF_DAY, WEAPONS } from './config.js'
+import { createGovernor } from './perf.js'
+import { setAnisotropy, setTextureQuality } from './textures.js'
 import * as bloxity from './bloxity.js'
-import { install as installInput, isLocked, setGameInput, inputState } from './input.js'
+import { install as installInput, isLocked, setGameInput, setControlsReleased, inputState } from './input.js'
 import { installTouch, setTouchActive, touchShown } from './touch.js'
 import { createPlayerBody, interpolate as interpolatePlayer, player as body, resetPlayer } from './player.js'
 import { getYaw, setCameraSensitivity, getCameraSensitivity, snapFollow, syncYawToPlayer, update as updateCamera, setView } from './camera.js'
@@ -13,7 +15,8 @@ import { createPostFx } from './postfx.js'
 import { setNeonBloom } from './propkit.js'
 import { loadBaseCharacter } from './avatar/character.js'
 import { applyProportions } from './avatar/loader.js'
-import { buildLook, disposeLook, isBloxityRig, lookFromJson, lookToJson } from './avatar/look.js'
+import { PRIO } from './avatar/assets.js'
+import { disposeLook, isBloxityRig, lookFromJson, lookToJson, prewarmLook, streamLook } from './avatar/look.js'
 import { buildIsland } from './world/index.js'
 import { installAudio, setBreakMuted, setListener, setVolume, setDucked, sfx, spatial, updateAmbience } from './audio/index.js'
 import { hasEmoteClip, registerEmoteClip } from './avatar/animator.js'
@@ -44,11 +47,24 @@ let lighting = null
 let renderer = null
 let postfx = null
 let lobbyFx = null
+// Graphics: 'Auto' (the default) or a preset name, chosen in the lobby (saved) or changed live
+// in the portal's menu. Auto = the frame-rate governor's current rung (perf.js).
 let quality = null
 try {
   quality = localStorage.getItem('ffz.quality')
 } catch {
   quality = null
+}
+const qualityChoice = () => quality || 'Auto'
+let bootDone = false // portal graphics values before this are its stored default, not a choice
+const governor = createGovernor(() => {
+  if (qualityChoice() === 'Auto' && renderer) applyGraphics(currentPreset())
+})
+function currentPreset() {
+  const q = qualityChoice()
+  if (q !== 'Auto') return graphicsPreset(q)
+  const r = governor.rung
+  return graphicsPreset(r.tier, r.dpr)
 }
 
 // show_fps: a small frame-rate readout in the bottom-right corner (the top-left belongs to the portal).
@@ -66,17 +82,42 @@ function applySetting(key, value) {
   else if (key === 'show_fps') {
     showFps = !!value
     fpsEl.style.display = showFps ? 'block' : 'none'
-  } else if (key === 'graphics_quality' && renderer) {
-    const next = graphicsPreset(value)
-    G.preset = next
-    renderer.shadowMap.enabled = next.shadows
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, next.dpr))
-    lighting?.setShadows(next)
-    postfx?.configure(next)
-    lobbyFx?.configure(next)
-    setNeonBloom(next.bloom)
-    resize()
+  } else if (key === 'graphics_quality' && renderer && bootDone) {
+    quality = value
+    governor.setEnabled(qualityChoice() === 'Auto')
+    applyGraphics(currentPreset())
   }
+}
+
+// Everything a preset can change while the game runs (texture resolution, model detail,
+// particle pools and antialias stay as the island was built).
+function applyGraphics(next) {
+  G.preset = next
+  renderer.shadowMap.enabled = next.shadows
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, next.dpr))
+  lighting?.setShadows(next)
+  postfx?.configure(next)
+  lobbyFx?.configure(next)
+  setNeonBloom(next.bloom)
+  setAnisotropy(Math.min(next.anisotropy, renderer.capabilities.getMaxAnisotropy()))
+  viewFar = -1 // updateView() re-applies the view distance next frame
+  resize()
+}
+
+// View distance: fog + camera far plane from the preset; the intro flyover always sees the island.
+let viewFar = -1
+function updateView() {
+  const v = G.preset.view
+  const intro = G.phase === 'intro'
+  const far = intro ? Math.max(v.far, AUTO_GRAPHICS.introFar) : v.far
+  if (far === viewFar) return
+  viewFar = far
+  const near = intro ? Math.max(v.near, far * 0.35) : v.near
+  camera.far = intro ? CAMERA.far : Math.min(CAMERA.far, far * 1.05 + 10)
+  camera.updateProjectionMatrix()
+  const skyMax = intro ? Infinity : camera.far * 0.9
+  lighting.setView(near, far, skyMax)
+  world.setViewFit(skyMax / 600) // the farthest cloud is ~600 m from anywhere on the island
 }
 bloxity.onSetting(applySetting)
 // Ad breaks (the portal can start one at any time): audio goes silent here, frame() freezes the game.
@@ -84,8 +125,10 @@ bloxity.onAdBreak((on) => setBreakMuted(on))
 bloxity.init()
 
 // --- Renderer ---------------------------------------------------------------
-const preset = graphicsPreset(quality || bloxity.settings.graphics_quality)
+const preset = currentPreset()
 G.preset = preset
+governor.setEnabled(qualityChoice() === 'Auto')
+console.info(`[graphics] ${qualityChoice()}${qualityChoice() === 'Auto' ? `: ${governor.rung.tier}${governor.remembered ? ' (remembered)' : ''}; device: ${governor.detected.why}` : ''}`)
 renderer = new WebGLRenderer({ antialias: preset.antialias, powerPreference: 'high-performance' })
 renderer.outputColorSpace = SRGBColorSpace
 renderer.toneMapping = ACESFilmicToneMapping
@@ -122,10 +165,13 @@ function resize() {
   camera.updateProjectionMatrix()
   lobbyScene?.resize(w, h)
 }
-window.addEventListener('resize', resize)
+window.addEventListener('resize', () => {
+  resize()
+  governor.hold()
+})
 resize()
 for (const key of Object.keys(bloxity.settings)) {
-  if (key === 'graphics_quality' && quality) continue // the lobby's own choice wins
+  if (key === 'graphics_quality') continue // Auto or the lobby's own choice; later portal changes apply live
   if (key === 'master_volume' && !bloxity.hasSdk()) continue // no portal: keep the lobby slider's saved volume
   applySetting(key, bloxity.settings[key])
 }
@@ -137,7 +183,8 @@ await initPhysics()
 showLoading(true, 'Lighting the island', 0.15)
 lighting = createLighting(scene, renderer, preset)
 G.lighting = lighting
-const world = createWorld(scene) // the sea + clouds
+setTextureQuality({ texScale: preset.texScale, anisotropy: Math.min(preset.anisotropy, renderer.capabilities.getMaxAnisotropy()) })
+const world = createWorld(scene, preset) // the sea + clouds
 showLoading(true, 'Building the island', 0.25)
 bloxity.loadingStep('Building the island')
 await new Promise((r) => setTimeout(r, 0))
@@ -178,7 +225,10 @@ hud.init({
   onRevive: () => sfx.deny(),
   // The portal's death screen owns the wait: respawn only when it says go (respawn() === true).
   onRespawn: (death) => {
-    if (death?.respawn?.()) requestRespawn(true)
+    const p = G.player
+    if (!p || p.life !== 'dead' || G.phase !== 'playing') return
+    // Portal death screen: respawn only when it says go. Without it: once the short timer is up.
+    if (death ? death.respawn?.() : G.time >= p.respawnAt) requestRespawn(true)
     else sfx.deny()
   },
   onSpectate: (dir) => cycleSpectate(dir),
@@ -209,7 +259,9 @@ initLobby({
     if (G.phase === 'lobby') bloxity.showAdScreen(open ? 'panel' : 'lobby')
   },
   onLoadout: () => lobbyScene.setPlayerAvatar(avatar, loadoutForActor()),
-  getQuality: () => quality || bloxity.settings.graphics_quality,
+  getQuality: () => qualityChoice(),
+  // What Auto is running right now (for the lobby's label).
+  getAutoTier: () => governor.rung.tier,
   setQuality: (q) => {
     quality = q
     try {
@@ -217,7 +269,8 @@ initLobby({
     } catch {
       // Storage blocked.
     }
-    applySetting('graphics_quality', q)
+    governor.setEnabled(q === 'Auto')
+    applyGraphics(currentPreset())
   },
   getSensitivity: () => getCameraSensitivity(),
   setSensitivity: (v) => setCameraSensitivity(v),
@@ -251,23 +304,30 @@ function localLook() {
   if (!bloxity.hasSdk()) return {}
   return { equipped: bloxity.getEquippedAvatar(), proportions: bloxity.getProportions(), outfitKey: bloxity.getOutfitKey(), skinTextureUrl: bloxity.getSkinTextureUrl() }
 }
+// Wears a freshly built Bloxity root: the lobby platform and, mid-round, the player's actor.
+function wearAvatar(root) {
+  const old = avatar
+  avatar = root
+  placeAvatarInLobby()
+  if (G.player && G.player.avatar === old) {
+    G.player.setAvatar(avatar)
+    G.player.refreshHeld()
+  }
+  if (old !== avatar) disposeLook(old)
+  avatarReady = true
+}
 async function loadAvatar() {
   const mine = ++generation
+  // The others only need the ids: tell them now, not after our own rig has downloaded (or if it never does).
+  sendAvatar()
   try {
-    const built = bloxity.hasSdk() ? await buildLook(localLook()) : { root: await loadBaseCharacter(), kind: 'manual' }
-    if (mine !== generation || !built) return
-    // player.glb failed and the loader fell back to its plain procedural figure: keep our outfit.
-    if (!isBloxityRig(built.root)) return
-    const old = avatar
-    avatar = built.root
-    placeAvatarInLobby()
-    // Mid-round look change: the player's actor wears it at once.
-    if (G.player && G.player.avatar === old) {
-      G.player.setAvatar(avatar)
-      G.player.refreshHeld()
+    if (!bloxity.hasSdk()) {
+      wearAvatar(await loadBaseCharacter())
+      return
     }
-    if (old !== avatar) disposeLook(old)
-    sendAvatar()
+    // The first usable build is shown at once; streamLook keeps retrying a look with a missing
+    // accessory / skin in the background and swaps in the complete one.
+    await streamLook(localLook(), { prio: PRIO.local, isStale: () => mine !== generation, onBuilt: (built) => wearAvatar(built.root) })
   } catch (err) {
     console.warn('[avatar] load failed, keeping the default outfit', err)
   } finally {
@@ -501,6 +561,7 @@ function nextRound() {
   closeMatch()
   G.phase = 'queue'
   lobbyScene.rebuildSquad(loadoutForActor())
+  resetMates()
   lobbyScene.setPlayerAvatar(avatar, loadoutForActor())
   lobby.show(true) // the vote panel lives in the lobby UI (hidden during the round)
   lobby.showQueue(queueInfo())
@@ -526,6 +587,7 @@ function clearDeath() {
 }
 let portalDeath = false // the portal's death screen is up: it, not the timer, decides when we respawn
 
+let deadControls = false // camera / touch controls are released while dead
 let respawnAskedAt = 0
 function requestRespawn(force = false) {
   const now = performance.now()
@@ -555,25 +617,47 @@ function backToLobby() {
   G.phase = 'lobby'
   lobby.hideQueue()
   lobbyScene.rebuildSquad(loadoutForActor())
+  resetMates()
   lobbyScene.setPlayerAvatar(avatar, loadoutForActor())
   lobby.show(true)
 }
 
-// The lobby platform shows up to three other players in this room.
-let matesKey = ''
+// The lobby platform shows up to three other players in this room. Who stands where (ids + weapons)
+// rebuilds the platform; a look change only redresses that one spot, so nobody else flickers back to
+// a blocky stand-in. Everyone else in the room is prewarmed for the round.
+let matesStruct = ''
+let matesEpoch = 0
+const mateLooks = [] // per spot: the look key being drawn
+function resetMates() {
+  // The platform was rebuilt (round over): the spots hold blocky stand-ins again, redress them.
+  matesStruct = ''
+  mateLooks.length = 0
+  matesEpoch++
+}
 function showMates(list) {
-  const others = list.filter((m) => !m.me).slice(0, 3)
-  const key = others.map((m) => `${m.id}:${m.primary}:${m.outfitKey}:${(m.avatar || '').length}`).join(',')
-  if (key === matesKey || (G.phase !== 'lobby' && G.phase !== 'queue')) return
-  matesKey = key
-  lobbyScene.rebuildSquad(loadoutForActor(), others.map((m) => ({ outfit: outfitForId(m.id), primary: m.primary, secondary: m.secondary })))
+  if (G.phase !== 'lobby' && G.phase !== 'queue') return
+  const others = list.filter((m) => !m.me)
+  const shown = others.slice(0, 3)
+  const struct = shown.map((m) => `${m.id}:${m.primary}:${m.secondary}`).join(',')
+  if (struct !== matesStruct) {
+    matesStruct = struct
+    mateLooks.length = 0
+    matesEpoch++
+    lobbyScene.rebuildSquad(loadoutForActor(), shown.map((m) => ({ outfit: outfitForId(m.id), primary: m.primary, secondary: m.secondary })))
+  }
   if (DEV_MODE) return // no Bloxity CDN
-  others.forEach((m, i) => {
-    buildLook(lookFromJson(m.avatar, m.outfitKey)).then((built) => {
-      if (matesKey !== key || !built || !isBloxityRig(built.root)) return disposeLook(built?.root)
-      lobbyScene.setMateAvatar(i, built.root)
+  const epoch = matesEpoch
+  shown.forEach((m, i) => {
+    const key = `${m.outfitKey}|${m.avatar || ''}`
+    if (mateLooks[i] === key) return
+    mateLooks[i] = key
+    streamLook(lookFromJson(m.avatar, m.outfitKey), {
+      prio: PRIO.normal,
+      isStale: () => epoch !== matesEpoch || mateLooks[i] !== key,
+      onBuilt: (built) => lobbyScene.setMateAvatar(i, built.root),
     })
   })
+  for (const m of others.slice(3)) prewarmLook(lookFromJson(m.avatar, m.outfitKey))
 }
 
 function cycleSpectate(dir) {
@@ -745,10 +829,21 @@ function gameFrame(dt) {
       zoomFov: p.def.zoom,
       crouch: watching.crouch,
       knocked: watching.life === 'knocked',
+      noLook: p.life === 'dead', // dead: camera control exits
     })
   }
   setFxScale(renderer.domElement.height / 2 / Math.tan((camera.fov * Math.PI) / 360))
   setListener(camera.position.x, camera.position.y, camera.position.z, getYaw())
+
+  // Dead: the camera / touch controls exit (cursor freed, touch layer hidden so it can't cover the
+  // Respawn button); they come back when the player respawns.
+  const deadNow = !!p && p.life === 'dead' && G.phase === 'playing'
+  if (deadNow !== deadControls) {
+    deadControls = deadNow
+    setControlsReleased(deadNow)
+    if (deadNow) setTouchActive(false)
+    else if (G.phase === 'playing' || G.phase === 'countdown') setTouchActive(true)
+  }
 
   if (p && (G.phase === 'playing' || G.phase === 'countdown' || G.phase === 'ending')) {
     // Without the portal's death screen a short timer respawns the player; with it, only its button does.
@@ -759,7 +854,8 @@ function gameFrame(dt) {
 
   focus.copy(watching ? watching.pos : camera.position)
   if (G.phase === 'intro') focus.set(0, 0, 0)
-  world.update(dt, clock.elapsedTime)
+  updateView()
+  world.update(dt, clock.elapsedTime, camera.position)
   island.update?.(dt, clock.elapsedTime)
   lighting.update(dt, focus)
   const shore = Math.max(0, Math.min(1, (Math.hypot(focus.x, focus.z) - (island.radius - 35)) / 30))
@@ -768,16 +864,23 @@ function gameFrame(dt) {
   if (!skipRender) postfx.render()
 }
 
+let governedPhase = ''
 function frame(dt) {
   if (showFps && dt > 0) {
     fpsAcc += dt
     fpsFrames++
     if (fpsAcc >= 0.5) {
-      fpsEl.textContent = `${Math.round(fpsFrames / fpsAcc)} FPS`
+      fpsEl.textContent = `${Math.round(fpsFrames / fpsAcc)} FPS${qualityChoice() === 'Auto' ? ` · Auto ${governor.rung.tier}` : ''}`
       fpsAcc = 0
       fpsFrames = 0
     }
   }
+  // Auto graphics: time the frames of a round (not the menus, the intro or the results).
+  if (G.phase !== governedPhase) {
+    governedPhase = G.phase
+    governor.hold()
+  }
+  governor.update(dt, G.phase === 'playing' || G.phase === 'countdown')
   // Ad break: nothing advances (simulation, bots, match clock, audio is muted) until it ends.
   // The room keeps running on the server: only this client's drawing and input pause.
   if (bloxity.isAdBreak()) {
@@ -807,6 +910,7 @@ function frame(dt) {
     }
   }
 }
+bootDone = true
 renderer.setAnimationLoop(() => frame(Math.min(clock.getDelta(), 0.1)))
 
 window.addEventListener('beforeunload', () => {
@@ -817,7 +921,7 @@ window.addEventListener('beforeunload', () => {
 // Dev-only console hook.
 if (import.meta.env.DEV || location.search.includes('debug')) {
   window.__game = {
-    G, scene, renderer, camera, body, island, lobbyScene, WEAPONS, profile, sfx, inputState, setView, useItem, hud, combat,
+    G, scene, renderer, camera, body, governor, applyGraphics, currentPreset, island, lobbyScene, WEAPONS, profile, sfx, inputState, setView, useItem, hud, combat,
     get avatar() {
       return avatar
     },

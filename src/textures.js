@@ -132,12 +132,55 @@ function hexRgb(hex) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
 }
 
+// --- Texture quality (graphics presets: texScale at load, anisotropy live) ---------
+// Painters always draw at full size; with texScale < 1 toTexture() uploads a
+// downscaled copy, which is what saves GPU memory and bandwidth on weak devices.
+const TEX = { scale: 1, anisotropy: 8 }
+const tracked = new Set()
+const shrunk = new WeakMap()
+
+export function setTextureQuality({ texScale = 1, anisotropy = 8 } = {}) {
+  TEX.scale = texScale
+  setAnisotropy(anisotropy)
+}
+
+// Applies an anisotropy level to every world texture (re-uploads the ones that change).
+export function setAnisotropy(n) {
+  TEX.anisotropy = n
+  for (const t of tracked) {
+    if (t.anisotropy === n) continue
+    t.anisotropy = n
+    t.needsUpdate = true
+  }
+}
+
+// Registers a texture whose anisotropy follows the graphics preset.
+export function trackTexture(t) {
+  t.anisotropy = TEX.anisotropy
+  tracked.add(t)
+  return t
+}
+
+function fit(c) {
+  if (TEX.scale >= 1 || !c.width || Math.max(c.width, c.height) < 128) return c
+  let out = shrunk.get(c)
+  if (out) return out
+  out = document.createElement('canvas')
+  out.width = Math.max(32, Math.round(c.width * TEX.scale))
+  out.height = Math.max(32, Math.round(c.height * TEX.scale))
+  const g = out.getContext('2d')
+  g.imageSmoothingQuality = 'high'
+  g.drawImage(c, 0, 0, out.width, out.height)
+  shrunk.set(c, out)
+  return out
+}
+
 // Wraps a canvas as a repeating texture. Colour maps are sRGB; data maps stay linear.
-export function toTexture(c, { repeat = 1, srgb = false, anisotropy = 8 } = {}) {
-  const t = new CanvasTexture(c)
+export function toTexture(c, { repeat = 1, srgb = false } = {}) {
+  const t = new CanvasTexture(fit(c))
   t.wrapS = t.wrapT = RepeatWrapping
   t.repeat.set(repeat, repeat)
-  t.anisotropy = anisotropy
+  trackTexture(t)
   if (srgb) t.colorSpace = SRGBColorSpace
   return t
 }

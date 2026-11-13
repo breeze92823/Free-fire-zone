@@ -46,7 +46,11 @@ export function bindKeys(hud) {
     inputState.crouch = !inputState.crouch
     hud.touch?.syncCrouch(inputState.crouch)
   })
-  onKey('KeyG', () => useItem('frostWall'))
+  // G places a frost wall while alive; while dead it is the Respawn shortcut.
+  onKey('KeyG', () => {
+    if (G.player?.life === 'dead' && G.phase === 'playing') hud.pressRespawn()
+    else useItem('frostWall')
+  })
   onKey('KeyT', () => useItem('frag'))
   onKey('KeyX', () => useItem('medkit'))
   onKey('KeyF', () => useItem('dash'))

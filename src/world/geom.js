@@ -75,8 +75,16 @@ export function boxGeo(w, h, d, ox = 0, oy = 0, oz = 0) {
   return projectUV(new BoxGeometry(w, h, d), ox, oy, oz)
 }
 
+// Model detail (graphics preset `detail`, set before the island is built): round
+// parts with 10+ sides get fewer sides on lighter presets (never under 6).
+let detail = 1
+export function setGeomDetail(k) {
+  detail = Math.max(0.3, Math.min(1, k ?? 1))
+}
+
 // Cylinder/cone with metre UVs (u around the circumference, v up; caps planar).
 export function cylGeo(rTop, rBot, h, seg = 12, open = false) {
+  if (seg >= 10 && detail < 1) seg = Math.max(6, Math.round(seg * detail))
   const g = new CylinderGeometry(rTop, rBot, h, seg, 1, open)
   const uv = g.attributes.uv
   const p = g.attributes.position

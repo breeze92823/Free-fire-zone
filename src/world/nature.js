@@ -316,6 +316,7 @@ export function createNature() {
     },
     build(scene, ground, preset) {
       const meshes = []
+      const smallShadows = (preset?.detail ?? 1) >= 0.9 // rocks and logs only cast on the full-detail presets
       const m4 = new Matrix4()
       const dummy = new Object3D()
       const col = new Color()
@@ -422,7 +423,7 @@ export function createNature() {
         for (let v = 0; v < 2; v++) {
           const list = L.rock.filter((_, i) => i % 2 === v)
           if (!list.length) continue
-          const m = mk(rockGeo(61 + v * 7), mat, list.length, true, `rock${v}`)
+          const m = mk(rockGeo(61 + v * 7), mat, list.length, smallShadows, `rock${v}`)
           list.forEach((r, i) => {
             const y = (r.y ?? ground(r.x, r.z)) - r.s * 0.2
             place(m, i, r.x, y, r.z, r.x * 3 + r.z, r.s, r.s * (0.8 + (i % 3) * 0.15), r.s * (0.9 + (i % 2) * 0.2))
@@ -469,7 +470,7 @@ export function createNature() {
       if (L.log.length) {
         const mat = new MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 })
         mat.name = 'log'
-        const m = mk(logGeo(), mat, L.log.length, true, 'logs')
+        const m = mk(logGeo(), mat, L.log.length, smallShadows, 'logs')
         L.log.forEach((t, i) => {
           const y = ground(t.x, t.z) + 0.25
           place(m, i, t.x, y, t.z, t.yaw, 1)

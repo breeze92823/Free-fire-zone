@@ -10,8 +10,6 @@
 // Same rule as bloxity.js: nothing here may throw outward. A blocked
 // CDN or a failed slot is logged and skipped. Approach ported from
 // Ice-Skate's systems/avatarModel.js, which targets the same base rig.
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import {
   Color,
@@ -23,11 +21,11 @@ import {
   NearestFilter,
   NearestMipmapLinearFilter,
   SRGBColorSpace,
-  TextureLoader,
 } from 'three'
 import { MATERIAL_PBR, PLAYER_DIMS, PROPORTIONS, RIG, RIG_HEIGHT, clamp } from '../config.js'
 import { AVATAR_SLOTS, assetUrl, composedSkinUrl, describeItem, isEquipped, itemUrls, partUrl, skinUrl } from './cdn.js'
 import { loadBaseCharacter } from './character.js'
+import { PRIO, loadGLTF, loadOBJ, loadTexture } from './assets.js'
 import { accessorySlots, accessoryUrls, characterAccessoryMatrix } from '../bloxity.js'
 
 // Bone-attached accessory slots. Origins are model-space points on player.glb (rig units, feet at
@@ -63,6 +61,8 @@ function restInverses() {
     root.traverse((o) => {
       if (o.name) inv[o.name] = o.matrixWorld.clone().invert()
     })
+    // The procedural stand-in (player.glb failed) has the wrong rest pose: do not keep it.
+    if (!root.nodes?.default_torso) restPromise = null
     return inv
   })
   return restPromise
@@ -79,10 +79,6 @@ function anchorScale(anchor) {
   if (anchor && typeof anchor === 'object' && 'x' in anchor) return new Matrix4().makeScale(anchor.x, anchor.y, anchor.z)
   return new Matrix4()
 }
-
-const gltfLoader = new GLTFLoader()
-const objLoader = new OBJLoader()
-const textureLoader = new TextureLoader()
 
 // The bundled player.glb shares one material between every clone of the base
 // rig, so painting a skin onto it would leak onto every other character.
@@ -135,26 +131,32 @@ function configureItemTexture(texture) {
 
 // With no skin equipped the portal still dresses the body in its default skin
 // (skins/0.png), so do the same rather than keeping the rig's embedded map.
-async function applySkin(root, equipped, skinTextureUrl) {
+async function applySkin(root, equipped, skinTextureUrl, ctx) {
   const id = equipped.skinId
   const wanted = isEquipped(id)
   let plain = skinUrl(wanted ? id : 0)
   if (wanted) {
-    const item = await describeItem(id)
+    const item = await describeItem(id, ctx.prio)
     plain = assetUrl(item?.assetPaths?.texture) || plain
   }
   // The portal's composed skin (face/shirt/pants drawn on) first, then the bare one.
-  const candidates = [skinTextureUrl || composedSkinUrl(equipped), plain].filter(Boolean)
+  const composed = skinTextureUrl || composedSkinUrl(equipped)
+  const candidates = [composed, plain].filter(Boolean)
   let texture = null
-  for (const url of candidates) {
+  let used = -1
+  for (let i = 0; i < candidates.length; i++) {
     try {
-      texture = configureSkinTexture(await textureLoader.loadAsync(url))
+      texture = await loadTexture(candidates[i], 'skin', configureSkinTexture, { prio: ctx.prio })
+      used = i
       break
     } catch {
       // try the next candidate
     }
   }
-  if (!texture) return // keep the rig's embedded texture
+  // Incomplete: no skin at all (the rig's embedded texture stays), or the bare one where the face /
+  // shirt / pants were wanted. The caller retries the whole look later; the texture cache makes that cheap.
+  if (!texture || (composed && used > 0)) ctx.failed++
+  if (!texture) return
   root.traverse((o) => {
     if (o.isSkinnedMesh && o.material) {
       o.material.map = texture
@@ -169,14 +171,15 @@ async function applySkin(root, equipped, skinTextureUrl) {
 // and its (skin-painted) material — the part GLB's own material is dropped.
 // The part's skinIndex values are remapped bone-name-by-bone-name into the
 // base skeleton's order first, since its own export order usually differs.
-async function applyPart(root, slot, id) {
-  const item = await describeItem(id)
+async function applyPart(root, slot, id, ctx) {
+  const item = await describeItem(id, ctx.prio)
   const pathKey = slot.side ? `mesh${slot.side}` : 'mesh'
   const url = assetUrl(item?.assetPaths?.[pathKey]) || partUrl(slot, id)
   let gltf
   try {
-    gltf = await gltfLoader.loadAsync(url)
+    gltf = await loadGLTF(url, { prio: ctx.prio })
   } catch {
+    ctx.failed++
     return // slot unavailable: the default_* mesh stays visible
   }
   const target = root.nodes[slot.replaces]
@@ -217,24 +220,23 @@ async function applyPart(root, slot, id) {
   target.geometry = geometry
 }
 
-const objectCache = new Map()
-async function loadItemObject(mesh, texture) {
-  let request = objectCache.get(mesh)
-  if (!request) {
-    request = objLoader.loadAsync(mesh).catch((err) => {
-      console.warn('[avatarLoader] accessory failed to load', mesh, err)
-      objectCache.delete(mesh)
-      return null
-    })
-    objectCache.set(mesh, request)
+async function loadItemObject(mesh, texture, ctx) {
+  let proto = null
+  try {
+    proto = await loadOBJ(mesh, { prio: ctx.prio })
+  } catch (err) {
+    console.warn('[avatarLoader] accessory failed to load', mesh, err)
   }
-  const proto = await request
-  if (!proto) return null
+  if (!proto) {
+    ctx.failed++
+    return null
+  }
   let map = null
   try {
-    if (texture) map = configureItemTexture(await textureLoader.loadAsync(texture))
+    if (texture) map = await loadTexture(texture, 'item', configureItemTexture, { prio: ctx.prio })
   } catch {
-    // An untextured accessory still reads better than skipping it outright.
+    // An untextured accessory still reads better than skipping it outright (but the look is retried).
+    ctx.failed++
   }
   const object = proto.clone()
   object.traverse((o) => {
@@ -245,8 +247,8 @@ async function loadItemObject(mesh, texture) {
   return object
 }
 
-async function itemUrlsFor(slot, id) {
-  const item = await describeItem(id)
+async function itemUrlsFor(slot, id, ctx) {
+  const item = await describeItem(id, ctx.prio)
   const sdk = accessoryUrls(slot.field, id)
   const fallback = slot.dir ? itemUrls({ type: slot.dir }, id) : {}
   return {
@@ -256,10 +258,10 @@ async function itemUrlsFor(slot, id) {
 }
 
 // Places one slot's item on the rig. place(boneName, mirrored) -> the item's local Matrix4.
-async function attachSlot(root, slot, id, place) {
-  const urls = await itemUrlsFor(slot, id)
+async function attachSlot(root, slot, id, place, ctx) {
+  const urls = await itemUrlsFor(slot, id, ctx)
   if (!urls.mesh) return
-  const object = await loadItemObject(urls.mesh, urls.texture)
+  const object = await loadItemObject(urls.mesh, urls.texture, ctx)
   if (!object) return
   const targets = [[slot.bone, false]]
   if (slot.mirrorBone) targets.push([slot.mirrorBone, true])
@@ -288,19 +290,26 @@ async function attachSlot(root, slot, id, place) {
   })
 }
 
-async function applyItems(root, equipped, place) {
+async function applyItems(root, equipped, place, ctx) {
   const slots = itemSlots().filter((slot) => isEquipped(equipped[slot.field]))
-  await Promise.all(slots.map((slot) => attachSlot(root, slot, equipped[slot.field], place).catch((err) => console.warn('[avatarLoader] slot failed', slot.field, err))))
+  await Promise.all(
+    slots.map((slot) =>
+      attachSlot(root, slot, equipped[slot.field], place, ctx).catch((err) => {
+        ctx.failed++
+        console.warn('[avatarLoader] slot failed', slot.field, err)
+      }),
+    ),
+  )
 }
 
 // A hat can insist on a head ('-1' = the stock one) because it is modelled
 // around it; a custom head would poke through. The portal applies this when
 // the hat is equipped, but looks reaching us another way (e.g. a remote
 // player's saved JSON) may predate it, so enforce it here too.
-async function withForcedHead(equipped) {
+async function withForcedHead(equipped, ctx) {
   for (const key of ['hatId', 'hairId', 'maskId']) {
     if (!isEquipped(equipped[key])) continue
-    const item = await describeItem(equipped[key])
+    const item = await describeItem(equipped[key], ctx.prio)
     const forced = item?.forceHeadId
     if (forced !== undefined && forced !== null) return { ...equipped, headId: forced }
   }
@@ -310,16 +319,21 @@ async function withForcedHead(equipped) {
 // `equipped` is the shape SDK.avatar.getEquipped() returns. `root` is a
 // character from avatar/character.js, whose `nodes` map names every rig node.
 // `signal` (optional AbortSignal) lets a caller cancel a stale load.
-export async function attachEquippedAccessories(root, equipped, { signal, skinTextureUrl } = {}) {
-  if (!root || !equipped) return
+// Resolves true when everything equipped loaded, false when some slot / skin did not (it is skipped
+// and the caller may retry the look). Never throws.
+export async function attachEquippedAccessories(root, equipped, { signal, skinTextureUrl, prio = PRIO.normal } = {}) {
+  if (!root || !equipped) return true
+  const ctx = { prio, failed: 0 }
   try {
     ownMaterials(root)
-    equipped = await withForcedHead(equipped)
-    if (signal?.aborted) return
-    await applySkin(root, equipped, skinTextureUrl)
-    if (signal?.aborted) return
-    const rest = await restInverses()
-    if (signal?.aborted) return
+    equipped = await withForcedHead(equipped, ctx)
+    if (signal?.aborted) return false
+    // Skin, body parts and accessories load in parallel (the shared rest pose too); each one swallows
+    // and counts its own failure.
+    const restReady = restInverses()
+    const skinDone = applySkin(root, equipped, skinTextureUrl, ctx)
+    const rest = await restReady
+    if (signal?.aborted) return false
     // Body parts and accessories load in parallel; each one swallows its own failure.
     const at = (boneName, mirrored, slot) => {
       const m = (rest[boneName] || new Matrix4()).clone()
@@ -327,12 +341,15 @@ export async function attachEquippedAccessories(root, equipped, { signal, skinTe
       return m.multiply(tmpM.makeTranslation(slot.origin?.[0] ?? 0, slot.origin?.[1] ?? 0, slot.origin?.[2] ?? 0))
     }
     await Promise.all([
-      ...AVATAR_SLOTS.filter((slot) => slot.kind === 'part' && isEquipped(equipped[slot.key])).map((slot) => applyPart(root, slot, equipped[slot.key])),
-      applyItems(root, equipped, at),
+      skinDone,
+      ...AVATAR_SLOTS.filter((slot) => slot.kind === 'part' && isEquipped(equipped[slot.key])).map((slot) => applyPart(root, slot, equipped[slot.key], ctx)),
+      applyItems(root, equipped, at, ctx),
     ])
   } catch (err) {
+    ctx.failed++
     console.warn('[avatarLoader] equipping avatar failed', err)
   }
+  return ctx.failed === 0
 }
 
 // --- Custom characters --------------------------------------------------------------------------
@@ -341,20 +358,15 @@ export async function attachEquippedAccessories(root, equipped, { signal, skinTe
 // no proportions). Head / torso items use the SDK's characterAccessoryMatrix(character, bone);
 // hands and shoes, and any bone it has no matrix for, scale(rig.anchors[bone]) x the player.glb
 // placement.
-const characterCache = new Map()
-export async function loadCharacterRig(character) {
+export async function loadCharacterRig(character, { prio = PRIO.normal } = {}) {
   const url = character?.glbUrl
   if (!url) return null
-  let request = characterCache.get(url)
-  if (!request) {
-    request = gltfLoader.loadAsync(url).catch((err) => {
-      console.warn('[avatarLoader] character failed to load', url, err)
-      characterCache.delete(url)
-      return null
-    })
-    characterCache.set(url, request)
+  let gltf = null
+  try {
+    gltf = await loadGLTF(url, { prio, tries: 3, timeout: 15000 })
+  } catch (err) {
+    console.warn('[avatarLoader] character failed to load', url, err)
   }
-  const gltf = await request
   if (!gltf) return null
   const root = cloneSkeleton(gltf.scene)
   root.name = 'character'
@@ -372,8 +384,9 @@ export async function loadCharacterRig(character) {
   return root
 }
 
-export async function attachCharacterAccessories(root, character, equipped) {
-  if (!root || !character || !equipped) return
+export async function attachCharacterAccessories(root, character, equipped, { prio = PRIO.normal } = {}) {
+  if (!root || !character || !equipped) return true
+  const ctx = { prio, failed: 0 }
   try {
     const rest = await restInverses()
     const anchors = character.rig?.anchors || {}
@@ -385,10 +398,12 @@ export async function attachCharacterAccessories(root, character, equipped) {
       if (mirrored) m.multiply(MIRROR_X)
       return m.multiply(origin)
     }
-    await applyItems(root, equipped, at)
+    await applyItems(root, equipped, at, ctx)
   } catch (err) {
+    ctx.failed++
     console.warn('[avatarLoader] character accessories failed', err)
   }
+  return ctx.failed === 0
 }
 
 function prop(proportions, key) {

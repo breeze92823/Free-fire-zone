@@ -13,8 +13,8 @@
 // matter for its skin weights), so a parent-space X swing is still the
 // forward/back flexion axis, as animator.js assumes.
 import { Bone, BoxGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial } from 'three'
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js'
+import { PRIO, loadGLTF } from './assets.js'
 import { CHARACTER_COLORS, MATERIAL_PBR, PLAYER_DIMS, RIG_HEIGHT } from '../config.js'
 
 const { skin: SKIN, suit: SUIT, hair: HAIR } = CHARACTER_COLORS
@@ -131,11 +131,10 @@ export function buildDefaultCharacter() {
 // The shared Bloxity default character, bundled in public/avatars/player.glb
 // so it never depends on the CDN. Same return shape as buildDefaultCharacter().
 // Falls back to the procedural character if the file fails to load.
-let basePromise = null
 export async function loadBaseCharacter() {
   try {
-    basePromise ||= new GLTFLoader().loadAsync(`${import.meta.env.BASE_URL}avatars/player.glb`)
-    const gltf = await basePromise
+    // Cached + retried by assets.js (a failure is not cached, so a later look tries again).
+    const gltf = await loadGLTF(`${import.meta.env.BASE_URL}avatars/player.glb`, { prio: PRIO.local, tries: 3, timeout: 15000 })
     const root = cloneSkeleton(gltf.scene)
     root.name = 'character'
     root.traverse((o) => {
@@ -152,7 +151,6 @@ export async function loadBaseCharacter() {
     root.scale.setScalar(PLAYER_DIMS.height / RIG_HEIGHT)
     return root
   } catch (err) {
-    basePromise = null
     console.warn('[defaultCharacter] player.glb failed to load, using procedural character', err)
     return buildDefaultCharacter()
   }

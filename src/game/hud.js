@@ -39,6 +39,7 @@ const el = {}
 let cb = {}
 let death = null // the portal's death handle while the player is eliminated (hud.setDeath)
 let deathOff = null
+let hudCb = null
 const cache = {}
 let mapImg = null // { clean, labelled, bounds, span, size }
 const pings = [] // enemy gunfire pings { x, z, t }
@@ -182,6 +183,7 @@ export function initHud(callbacks) {
   })
   q('.hud-spectate .lobby').addEventListener('click', () => cb.onLobby?.())
   q('.hud-spectate .revive').addEventListener('click', () => cb.onRevive?.())
+  hudCb = cb
   q('.hud-spectate .respawn').addEventListener('click', () => cb.onRespawn?.(death))
   q('.hud-spectate .prev').addEventListener('pointerdown', () => cb.onSpectate?.(-1))
   q('.hud-spectate .next').addEventListener('pointerdown', () => cb.onSpectate?.(1))
@@ -642,6 +644,10 @@ export function showBoard(on) {
 const hud = {
   interactHeld: false,
   init: initHud,
+  // Respawn shortcut (G): same as pressing the panel's Respawn button.
+  pressRespawn() {
+    hudCb.onRespawn?.(death)
+  },
   begin,
   announce,
   toast,
@@ -662,7 +668,7 @@ const hud = {
     try {
       const off = death.onCountdown?.((n) => {
         btn.disabled = n > 0
-        btn.querySelector('span').textContent = n > 0 ? String(n) : 'RESPAWN'
+        btn.querySelector('span').textContent = n > 0 ? String(n) : document.body.classList.contains('touch-ui') ? 'RESPAWN' : 'RESPAWN (G)'
       })
       if (typeof off === 'function') deathOff = off
     } catch {

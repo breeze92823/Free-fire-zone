@@ -5,7 +5,7 @@
 // Also the waiting / map-vote panel after PLAY (the room's server runs the
 // rounds: real players only) and the loading screen.
 import './lobby.css'
-import { MATCH_MODES, NET, OPERATIVES, SKINS, STORE, WEAPONS, GAME_TITLE, GRAPHICS_PRESETS } from '../config.js'
+import { MATCH_MODES, NET, OPERATIVES, SKINS, STORE, WEAPONS, GAME_TITLE, QUALITY_OPTIONS } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { sfx, setVolume, isMuted, setMuted } from '../audio/index.js'
 import { SVG, svgData, weaponIcon } from './icons.js'
@@ -383,12 +383,12 @@ function inventoryWindow() {
 }
 
 function settingsWindow() {
-  const q = cb.getQuality?.() ?? 'High'
+  const q = cb.getQuality?.() ?? 'Auto'
   const sens = cb.getSensitivity?.() ?? 1
   const vol = Number(localStorage.getItem('ffz.volume') ?? 0.8)
   const body = `
     <div class="setting"><span>Sound</span><div class="row"><input type="range" min="0" max="1" step="0.05" value="${vol}" data-k="vol"><button class="pill o${isMuted() ? ' on' : ''}" data-k="mute">${isMuted() ? 'Muted' : 'Mute'}</button></div></div>
-    <div class="setting"><span>Graphics</span><div class="pillsel">${Object.keys(GRAPHICS_PRESETS).map((k) => `<button class="pill o${k === q ? ' on' : ''}" data-q="${k}">${k}</button>`).join('')}</div></div>
+    <div class="setting"><span>Graphics</span><div><div class="pillsel">${QUALITY_OPTIONS.map((k) => `<button class="pill o${k === q ? ' on' : ''}" data-q="${k}">${k}</button>`).join('')}</div><div class="qnote">${q === 'Auto' ? `Matches view distance, textures and detail to this device and keeps the game smooth. Running: <b>${cb.getAutoTier?.() ?? 'High'}</b>` : 'Fixed quality. Texture and detail changes apply after a reload.'}</div></div></div>
     <div class="setting"><span>Look sensitivity</span><input type="range" min="0.2" max="3" step="0.05" value="${sens}" data-k="sens"></div>
     <div class="section-t o">Controls</div>
     <div class="keys">

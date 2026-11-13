@@ -637,6 +637,12 @@
   border-color: var(--gold);
   background: #3a4766;
 }
+.qnote {
+  margin: -4px 0 0;
+  font-size: 12px;
+  line-height: 1.35;
+  opacity: 0.75;
+}
 .section-t {
   font-size: 18px;
   font-weight: 700;

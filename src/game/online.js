@@ -13,7 +13,7 @@ import { remoteThrow, remoteWall, ultVisual } from './items.js'
 import { markOpened, syncCrates, syncDrops } from './loot.js'
 import { mulberry32 } from './zone.js'
 import { spawnActor, updateMvp } from './match.js'
-import { buildLook, disposeLook, isBloxityRig, lookFromJson } from '../avatar/look.js'
+import { disposeLook, lookFromJson, streamLook } from '../avatar/look.js'
 import { sfx, spatial } from '../audio/index.js'
 import * as fx from './fx.js'
 import * as bloxity from '../bloxity.js'
@@ -74,15 +74,18 @@ async function loadRemoteAvatar(a, p) {
   a.lookKey = key
   if (DEV_MODE) return // VITE_DEV_MODE: no Bloxity CDN
   const gen = ++a.avatarGen
-  const built = await buildLook(lookFromJson(p.avatar, p.outfitKey))
-  if (gen !== a.avatarGen || !G.actors.includes(a) || !built || !isBloxityRig(built.root)) {
-    disposeLook(built?.root)
-    return
-  }
-  const old = a.avatar
-  a.setAvatar(built.root)
-  a.refreshHeld()
-  disposeLook(old)
+  // The first usable build is worn at once; a look with a missing accessory / skin is retried in the
+  // background (asset caches make that cheap) and swapped for the complete one. Stale = the look
+  // changed again or the player left.
+  await streamLook(lookFromJson(p.avatar, p.outfitKey), {
+    isStale: () => gen !== a.avatarGen || !G.actors.includes(a),
+    onBuilt: (built) => {
+      const old = a.avatar
+      a.setAvatar(built.root)
+      a.refreshHeld()
+      disposeLook(old)
+    },
+  })
 }
 
 // Adds / removes remote actors so G.actors matches the players in this round.

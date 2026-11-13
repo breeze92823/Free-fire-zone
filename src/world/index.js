@@ -7,7 +7,7 @@
 import { Group } from 'three'
 import { initMaterials, M } from './materials.js'
 import { buildBoundary, buildShore, buildTerrain, groundHeight } from './terrain.js'
-import { flushColliders } from './geom.js'
+import { flushColliders, setGeomDetail } from './geom.js'
 import { world } from '../physics.js'
 import { buildRoads } from './roads.js'
 import { createNature, updateNature } from './nature.js'
@@ -53,7 +53,10 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
  * }>}
  */
 export async function buildIsland(scene, { lighting, preset = {}, maxLamps } = {}) {
-  const MAX_LAMPS = maxLamps ?? ((preset.particles ?? 1) < 0.5 ? 8 : 16)
+  // Model detail: the preset's `detail` (falls back to its particle level).
+  const detail = Math.max(0.2, Math.min(1, preset.detail ?? preset.particles ?? 1))
+  setGeomDetail(detail)
+  const MAX_LAMPS = maxLamps ?? (detail < 0.5 ? 8 : 16)
   const root = new Group()
   root.name = 'island'
   scene.add(root)
@@ -70,7 +73,7 @@ export async function buildIsland(scene, { lighting, preset = {}, maxLamps } = {
     root,
     M,
     preset,
-    q: Math.max(0.2, Math.min(1, preset.particles ?? 1)),
+    q: detail,
     nature,
     ground: groundHeight,
     loot: (p, y, z) => lootSpots.push(typeof p === 'object' ? { x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2) } : { x: p, y, z }),

@@ -110,12 +110,42 @@ export const MATERIAL_PBR = {
   GROUND: { roughness: 0.95, metalness: 0 },
 }
 
-// --- Graphics presets, picked by the Bloxity graphics_quality setting ----------
+// --- Graphics presets, picked by the lobby / Bloxity graphics_quality setting ----
+// Live (any time): shadows, shadowMap, shadowRange (m, half-width of the sun's shadow
+// box), dpr, bloom, view (fog near/far in m; the camera draws no further than far),
+// anisotropy. Load time (the island is built once): antialias, particles (effect
+// pools), texScale (world texture resolution), detail (vegetation density, curve
+// segments, lamp lights, small-prop shadows).
 export const GRAPHICS_PRESETS = {
-  Low: { shadows: false, shadowMap: 512, antialias: false, dpr: 1, bloom: false, particles: 0.35 },
-  Medium: { shadows: true, shadowMap: 1024, antialias: false, dpr: 1.25, bloom: false, particles: 0.6 },
-  High: { shadows: true, shadowMap: 2048, antialias: true, dpr: 2, bloom: true, particles: 1 },
-  Ultra: { shadows: true, shadowMap: 4096, antialias: true, dpr: 2, bloom: true, particles: 1 },
+  Low: { shadows: false, shadowMap: 512, shadowRange: 30, antialias: false, dpr: 1, bloom: false, particles: 0.35, view: { near: 70, far: 240 }, anisotropy: 1, texScale: 0.5, detail: 0.4 },
+  Medium: { shadows: true, shadowMap: 1024, shadowRange: 35, antialias: false, dpr: 1.25, bloom: false, particles: 0.6, view: { near: 110, far: 380 }, anisotropy: 4, texScale: 1, detail: 0.65 },
+  High: { shadows: true, shadowMap: 2048, shadowRange: 45, antialias: true, dpr: 2, bloom: true, particles: 1, view: { near: 160, far: 620 }, anisotropy: 8, texScale: 1, detail: 1 },
+  Ultra: { shadows: true, shadowMap: 4096, shadowRange: 60, antialias: true, dpr: 2, bloom: true, particles: 1, view: { near: 200, far: 800 }, anisotropy: 16, texScale: 1, detail: 1 },
+}
+// What the lobby's Graphics row offers; 'Auto' is the default.
+export const QUALITY_OPTIONS = ['Auto', ...Object.keys(GRAPHICS_PRESETS)]
+
+// Auto graphics (perf.js): a starting level guessed from the device, then a frame-rate
+// governor that walks LADDER (best first) one rung at a time during a round.
+export const AUTO_GRAPHICS = {
+  // tier + an optional pixel-ratio cap on top of the tier's own dpr.
+  ladder: [
+    { tier: 'Ultra' },
+    { tier: 'High' },
+    { tier: 'High', dpr: 1.5 },
+    { tier: 'Medium' },
+    { tier: 'Medium', dpr: 1 },
+    { tier: 'Low' },
+    { tier: 'Low', dpr: 0.85 },
+    { tier: 'Low', dpr: 0.7 },
+  ],
+  window: 3, // s of frames averaged per decision
+  settle: 2.5, // s ignored after a change / a phase change (shader compiles hitch)
+  down: { desktop: 45, touch: 28 }, // average FPS below this: one rung down
+  up: { desktop: 57, touch: 50 }, // at or above this for upAfter seconds: one rung up
+  upAfter: 12,
+  cooldown: 45, // s before retrying a rung the governor had to leave (doubles each time)
+  introFar: 460, // m the intro flyover always sees, whatever the tier
 }
 
 // Bloom (postfx.js): only HDR-bright pixels (above threshold, linear, before
@@ -129,14 +159,16 @@ export const NEON = { k: 3.5, plainMax: 1.2 }
 // and any preset is capped there.
 export const COARSE_POINTER = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 export const DEFAULT_GRAPHICS = COARSE_POINTER ? 'Medium' : 'High'
-export const MOBILE_GRAPHICS_CAP = { dpr: 1.5, shadowMap: 1024, particles: 0.6 }
+export const MOBILE_GRAPHICS_CAP = { dpr: 1.5, shadowMap: 1024, particles: 0.6, anisotropy: 4 }
 
-// The preset to render with on this device.
-export function graphicsPreset(name) {
-  const p = GRAPHICS_PRESETS[name] ?? GRAPHICS_PRESETS[DEFAULT_GRAPHICS]
-  if (!COARSE_POINTER) return p
-  const cap = MOBILE_GRAPHICS_CAP
-  return { ...p, dpr: Math.min(p.dpr, cap.dpr), shadowMap: Math.min(p.shadowMap, cap.shadowMap), bloom: false, particles: Math.min(p.particles, cap.particles) }
+// The preset to render with on this device. dprCap: an extra pixel-ratio cap (Auto's lower rungs).
+export function graphicsPreset(name, dprCap = Infinity) {
+  let p = GRAPHICS_PRESETS[name] ?? GRAPHICS_PRESETS[DEFAULT_GRAPHICS]
+  if (COARSE_POINTER) {
+    const cap = MOBILE_GRAPHICS_CAP
+    p = { ...p, dpr: Math.min(p.dpr, cap.dpr), shadowMap: Math.min(p.shadowMap, cap.shadowMap), bloom: false, particles: Math.min(p.particles, cap.particles), anisotropy: Math.min(p.anisotropy, cap.anisotropy) }
+  }
+  return dprCap < p.dpr ? { ...p, dpr: dprCap } : p
 }
 
 // --- Touch controls (touch.js) --------------------------------------------------
@@ -190,7 +222,7 @@ export const AUDIO = {
 
 // --- Bloxity (bloxity.js, avatar/) -------------------------------------------------
 export const SETTINGS = {
-  graphics_quality: { def: DEFAULT_GRAPHICS, type: 'enum', values: ['Low', 'Medium', 'High', 'Ultra'] },
+  graphics_quality: { def: 'Auto', type: 'enum', values: QUALITY_OPTIONS },
   camera_sensitivity: { def: '1', type: 'number', min: 0.1, max: 5 },
   show_fps: { def: 'false', type: 'bool' },
   fullscreen: { def: 'false', type: 'bool' },
@@ -224,8 +256,15 @@ export const NET = {
 }
 
 // Ad screens declared once after init (bloxity.js). Gameplay and lobby banners stay off: the lobby
-// ad covered the 3D hangar view. Panels (shops) and results keep theirs.
-export const AD_SCREENS = { lobby: { show: false }, panel: {}, results: {}, gameplay: { show: false } }
+// ad covered the 3D hangar view. Only the results screen keeps its ad.
+export const AD_SCREENS = {
+  lobby: { show: false },
+  panel: { show: false },
+  results: {},
+  gameplay: { show: false },
+}
+// Screens that must never show an ad: showAdScreen hides any ad instead of requesting one.
+export const NO_AD_SCREENS = ['lobby', 'panel', 'gameplay']
 
 // The base rig, measured from player.glb: origin at the feet, 6.4 units tall at bind pose.
 export const RIG_HEIGHT = 6.4

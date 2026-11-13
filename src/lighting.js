@@ -108,7 +108,7 @@ export function createLighting(scene, renderer, preset) {
   const sun = new DirectionalLight(D.sunColor, D.sunIntensity)
   sun.castShadow = preset.shadows
   sun.shadow.mapSize.set(preset.shadowMap, preset.shadowMap)
-  const r = LIGHT.shadowRange
+  const r = preset.shadowRange ?? LIGHT.shadowRange
   Object.assign(sun.shadow.camera, { left: -r, right: r, top: r, bottom: -r, near: 1, far: 220 })
   sun.shadow.bias = -0.0004
   sun.shadow.normalBias = 0.03
@@ -200,6 +200,21 @@ export function createLighting(scene, renderer, preset) {
         sun.shadow.map?.dispose()
         sun.shadow.map = null
       }
+      const range = next.shadowRange ?? LIGHT.shadowRange
+      const cam = sun.shadow.camera
+      if (cam.right !== range) {
+        Object.assign(cam, { left: -range, right: range, top: range, bottom: -range })
+        cam.updateProjectionMatrix()
+      }
+    },
+    // View distance: fog from near to far (m); the sky dome shrinks to fit inside skyMax
+    // (it sits on the viewer and is drawn by direction, so its size does not show).
+    setView(near, far, skyMax = Infinity) {
+      scene.fog.near = near
+      scene.fog.far = far
+      const s = Math.min(1, skyMax / SKY_RADIUS)
+      sky.scale.setScalar(s)
+      stars.scale.setScalar(s)
     },
     // Called every frame with the player's position so the sun's shadow box and the sky follow them.
     update(dt, focus) {

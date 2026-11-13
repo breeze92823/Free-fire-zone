@@ -2,7 +2,7 @@
 // here may throw when the SDK is missing: a blocked sdk.bloxity.io leaves the
 // game fully playable on the default avatar and keyboard controls.
 // Docs: https://docs.bloxity.io/#html5
-import { AD_SCREENS, GAME_SLUG, GAME_TITLE, LEADERBOARDS, NET, SETTINGS, DEV_MODE, coerceSetting } from './config.js'
+import { AD_SCREENS, NO_AD_SCREENS, GAME_SLUG, GAME_TITLE, LEADERBOARDS, NET, SETTINGS, DEV_MODE, coerceSetting } from './config.js'
 
 export function sdk() {
   if (DEV_MODE) return null
@@ -308,7 +308,7 @@ export function showAdScreen(type) {
   adScreenType = type || ''
   try {
     const ads = sdk()?.ads
-    if (type) ads?.screen?.(type)
+    if (type && !NO_AD_SCREENS.includes(type)) ads?.screen?.(type)
     else ads?.hideScreen?.()
   } catch {
     // Non-fatal.
