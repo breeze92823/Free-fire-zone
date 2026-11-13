@@ -1,7 +1,8 @@
 // The lobby's 3D room: a briefing hangar with a glowing hex floor, ribbed
 // walls with light strips, a big bay window onto the sea, crates and weapon
 // racks, a rotating rank shield on a pedestal, and the squad platform where
-// the player and three squadmates stand with their weapons.
+// the player and up to three other players from this server room stand with
+// their weapons (an empty platform when nobody else is online).
 import {
   AmbientLight,
   BoxGeometry,
@@ -297,7 +298,7 @@ export function createLobbyScene() {
   star.position.set(0, 0.05, 0.12)
   shield.add(star)
 
-  // Squad: the player in the middle, three squadmates.
+  // Squad: the player in the middle, up to three other players in the room.
   const squad = []
   const spots = [
     [-2.1, -0.8, 0.3],
@@ -308,18 +309,22 @@ export function createLobbyScene() {
   const playerGroup = new Group()
   scene.add(playerGroup)
   let playerActor = null
-  function rebuildSquad(loadout) {
+  // mates: [{ outfit, primary, secondary }] for the other players shown (at most 3).
+  let mates = []
+  function rebuildSquad(loadout, nextMates = mates) {
+    mates = nextMates || []
     for (const a of squad) a.dispose()
     squad.length = 0
-    for (const [x, z, yaw] of spots) {
-      const a = new Actor({ name: '', team: 'blue', noTag: true, outfit: randomOutfit(), scene, loadout: { primary: ['striker', 'tempest', 'thunder', 'marksman'][Math.floor(Math.random() * 4)], secondary: 'viper', skins: {} } })
+    spots.slice(0, mates.length).forEach(([x, z, yaw], i) => {
+      const m = mates[i]
+      const a = new Actor({ name: '', team: 'blue', noTag: true, outfit: m.outfit || randomOutfit(), scene, loadout: { primary: m.primary || 'striker', secondary: m.secondary || 'viper', skins: {} } })
       a.addToScene(scene)
       a.pos.set(x, 0.32, z)
       a.facing = yaw
       a.ready = 0.2
       a.grounded = true
       squad.push(a)
-    }
+    })
     if (playerAvatar) setPlayerAvatar(playerAvatar, loadout)
   }
   function setPlayerAvatar(avatar, loadout) {

@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { ACESFilmicToneMapping, Clock, PCFSoftShadowMap, PerspectiveCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer } from 'three'
-import { CAMERA, graphicsPreset, MATCH, MAPS, RENDER, TIME_OF_DAY, WEAPONS } from './config.js'
+import { CAMERA, graphicsPreset, MATCH, MAPS, NET, RENDER, TIME_OF_DAY, WEAPONS } from './config.js'
 import * as bloxity from './bloxity.js'
 import { install as installInput, isLocked, setGameInput, inputState } from './input.js'
 import { installTouch, setTouchActive, touchShown } from './touch.js'
@@ -20,23 +20,25 @@ import { G, on } from './game/state.js'
 import { initFx, setFxScale, updateFx } from './game/fx.js'
 import { buildLoot } from './game/loot.js'
 import { buildNav } from './game/navgrid.js'
-import { createMatch, heartsAvailable, initMatchSystems, matchRewards, respawnPlayer, spawnActor, teardownMatch, updateMatch } from './game/match.js'
-import { botAimDir, updateBots } from './game/bots.js'
-import { bindKeys, updateController, useItem, useUlt, view } from './game/controller.js'
+import { createMatch, initMatchSystems, spawnActor, teardownMatch, updateMatch } from './game/match.js'
+import { bindKeys, playEmote, updateController, useItem, useUlt, view } from './game/controller.js'
 import * as combat from './game/combat.js'
 import { selectSlot, startReload } from './game/combat.js'
 import hud, { mapOpen } from './game/hud.js'
 import { renderMapImage } from './game/mapimage.js'
 import { createLobbyScene } from './game/lobbyScene.js'
-import lobby, { initLobby, mapVote, showLoading } from './game/lobby.js'
+import lobby, { initLobby, showLoading } from './game/lobby.js'
 import { hideResults, showResults, updateResults } from './game/results.js'
-import { applyMatchResult, profile } from './game/save.js'
+import { profile } from './game/save.js'
+import { connect, disconnect, me, net, onNet, online, reportRoom, send, setJoinOptions } from './net.js'
+import { applyState, initOnline, outfitForId, reconcile, remoteAimDir, roster, sendPose, setThree, syncClock, syncLoot, trackRoster } from './game/online.js'
 import { buildCharacter, portrait, randomOutfit } from './game/characters.js'
 
 // Boot: Bloxity SDK -> renderer -> Rapier -> lighting, sea, island, loot, nav
-// grid, effects, map picture -> HUD + lobby -> avatar (async) -> loop.
-// Phases (G.phase): lobby -> vote -> intro (flyover) -> countdown -> playing
-// -> ending (slow motion) -> results -> lobby.
+// grid, effects, map picture -> HUD + lobby -> avatar (async) -> game server -> loop.
+// Online: the room's server runs the rounds. Phases (G.phase): lobby (menus) -> queue (pressed
+// Play: waiting for players / map vote) -> intro (flyover) -> countdown -> playing -> ending (slow
+// motion) -> results -> queue (next round, same room) | lobby (left).
 let lighting = null
 let renderer = null
 let postfx = null
@@ -166,13 +168,11 @@ hud.init({
   onItem: (id) => useItem(id),
   onUlt: () => useUlt(),
   onLobby: () => leaveMatch(),
-  onRevive: () => {
-    if (!respawnPlayer(true)) sfx.deny()
-  },
+  onRevive: () => sfx.deny(),
   // The portal's death screen owns the wait: respawn only when it says go (respawn() === true).
   onRespawn: (death) => {
-    if (death?.respawn?.() && respawnPlayer(false, true)) return
-    sfx.deny()
+    if (death?.respawn?.()) requestRespawn(true)
+    else sfx.deny()
   },
   onSpectate: (dir) => cycleSpectate(dir),
   onMapOpen: (open) => {
@@ -188,16 +188,18 @@ hud.touch = installTouch({
 bindKeys(hud)
 
 lobbyScene = createLobbyScene()
-lobbyScene.rebuildSquad(null)
+lobbyScene.rebuildSquad(null, [])
 lobbyFx = createPostFx(renderer, lobbyScene.scene, lobbyScene.camera)
 lobbyFx.configure(G.preset)
 resize()
 initLobby({
   onPlay: () => startMatchFlow(),
+  onLeaveQueue: () => leaveMatch(),
+  onVote: (map) => send('vote', { map }),
   onRank: (i) => lobbyScene.setRank(i),
   onWindow: (open) => {
     setDucked(open)
-    if (G.phase === 'lobby' || G.phase === 'vote') bloxity.showAdScreen(open ? 'panel' : 'lobby')
+    if (G.phase === 'lobby') bloxity.showAdScreen(open ? 'panel' : 'lobby')
   },
   onLoadout: () => lobbyScene.setPlayerAvatar(avatar, loadoutForActor()),
   getQuality: () => quality || bloxity.settings.graphics_quality,
@@ -234,7 +236,7 @@ function loadoutForActor() {
   return { primary: lo.primary, secondary: lo.secondary, skins: { [lo.primary]: lo.skin[lo.primary] || 'standard', [lo.secondary]: lo.skin[lo.secondary] || 'standard' } }
 }
 function placeAvatarInLobby() {
-  if (G.phase === 'lobby' || G.phase === 'vote' || G.phase === 'boot') lobbyScene.setPlayerAvatar(avatar, loadoutForActor())
+  if (G.phase === 'lobby' || G.phase === 'queue' || G.phase === 'boot') lobbyScene.setPlayerAvatar(avatar, loadoutForActor())
 }
 async function loadAvatar() {
   const mine = ++generation
@@ -249,19 +251,46 @@ async function loadAvatar() {
     if (!group.nodes?.default_torso) return
     avatar = group
     placeAvatarInLobby()
+    sendAvatar()
   } catch (err) {
     console.warn('[avatar] load failed, keeping the default outfit', err)
   } finally {
     if (mine === generation) avatarReady = true
   }
 }
+// The look the others draw: equipped ids + proportions only (never asset URLs).
+function lookJson() {
+  const equipped = bloxity.authState.user ? bloxity.getEquippedAvatar() : null
+  if (!equipped) return ''
+  try {
+    return JSON.stringify({ equipped, proportions: bloxity.getProportions() || null }).slice(0, 4000)
+  } catch {
+    return ''
+  }
+}
+function sendAvatar() {
+  send('avatar', { avatar: lookJson() })
+}
+setJoinOptions(() => ({ name: bloxity.displayName() === 'Offline' ? 'Guest' : bloxity.displayName(), pfp: bloxity.getPfp(), avatar: lookJson() }))
+
 let signedIn = null
+let userKey = null
 bloxity.subscribeAuth((s) => {
   const now = !!s.user
   if (now !== signedIn) {
     signedIn = now
     loadAvatar()
     lobby.refresh()
+  }
+  if (!s.ready) return
+  // Connect once auth has settled; a later sign-in / sign-out switches the server-side profile.
+  const key = s.user?._id || ''
+  if (userKey === null) {
+    userKey = key
+    connect()
+  } else if (key !== userKey) {
+    userKey = key
+    send('auth', { token: bloxity.getToken(), name: bloxity.displayName(), pfp: bloxity.getPfp() })
   }
 })
 bloxity.onAvatarChanged(loadAvatar)
@@ -276,16 +305,17 @@ bloxity.onRespawnRequest(() => {
 async function playPortalEmote(id) {
   const p = G.player
   if (id === null) {
-    if (p?.emote?.startsWith('portal:')) p.emote = null
+    if (p?.emote?.startsWith('portal:')) playEmote('')
     return
   }
   if (!p || G.phase !== 'playing' || p.life !== 'alive') return
   if (!hasEmoteClip(id)) registerEmoteClip(id, await bloxity.getEmoteClip(id))
   if (!hasEmoteClip(id) || G.player !== p || p.life !== 'alive' || G.phase !== 'playing') return
-  p.emote = `portal:${id}`
-  p.emoteT = 0
+  playEmote(`portal:${id}`)
 }
 bloxity.onPortalEmote(playPortalEmote)
+initOnline()
+setThree(THREE)
 
 // The portal draws the chat; the player's own messages also float over their head in a match.
 let chatBubble = null
@@ -297,61 +327,168 @@ bloxity.onChatMessage((m) => {
 })
 placeAvatarInLobby()
 
-// --- Match flow -------------------------------------------------------------------------
+// --- Match flow (online) ----------------------------------------------------------------
 let introT = 0
 let countdownT = 0
 let lastCount = 0
-let endT = 0
 let lastZonePhase = -1
 let currentMap = MAPS[0]
+let rewards = null // this round's rewards from the server
+let resultsShown = false
+let queuedAt = 0 // when PLAY was sent: the server's answer (inMatch) takes a moment
+const RUNNING = new Set(['intro', 'countdown', 'playing', 'ending'])
 
 function setMood(map) {
   lighting.setMoods({ day: TIME_OF_DAY[map.mood] ?? TIME_OF_DAY.day, night: TIME_OF_DAY.night })
 }
 
-async function startMatchFlow(skipVote = null) {
+// PLAY: join the room's next round (or the running one). The server waits for NET.minPlayers.
+async function startMatchFlow() {
   if (G.phase !== 'lobby') return
-  G.phase = 'vote'
-  const map = skipVote ?? (await mapVote())
-  currentMap = map
-  lobby.show(false)
-  showLoading(true, `Dropping into ${map.name}`, 0.4)
-  await new Promise((r) => setTimeout(r, 30))
-  setMood(map)
-  lobbyScene.releasePlayer()
-  const name = bloxity.displayName()
-  createMatch({
-    modeId: profile.mode,
-    map,
-    playerAvatar: avatar,
-    playerName: name === 'Offline' || name === 'Guest' ? 'You' : name,
-    playerPortrait: bloxity.getPfp() || portrait(playerOutfit),
+  if (!online()) {
+    lobby.status('Connecting to the game server…')
+    if (!(await connect())) {
+      lobby.status('Could not reach the game server — try again.')
+      return
+    }
+  }
+  lobby.status('')
+  G.phase = 'queue'
+  queuedAt = performance.now()
+  send('play', { mode: profile.mode })
+  lobby.showQueue(queueInfo())
+}
+
+// What the waiting / vote panel shows.
+function queueInfo() {
+  const st = net.state
+  const votes = MAPS.map(() => 0)
+  let ready = 0
+  st?.players?.forEach((p) => {
+    if (!p.inMatch) return
+    ready++
+    if (p.vote >= 0 && p.vote < votes.length) votes[p.vote]++
   })
-  showLoading(true, 'Warming up the shaders', 0.8)
-  await new Promise((r) => setTimeout(r, 30))
+  return { phase: st?.phase ?? 'waiting', left: st?.phaseLeft ?? 0, ready, need: NET.minPlayers, votes, mine: me()?.vote ?? -1, maps: MAPS }
+}
+
+// The server put this player in a running round: build it here.
+function enterRound() {
+  const st = net.state
+  const mine = me()
+  currentMap = MAPS[st.map] ?? MAPS[0]
+  lobby.hideQueue()
+  lobby.show(false)
+  setMood(currentMap)
+  lobbyScene.releasePlayer()
+  createMatch({ st, me: mine, map: currentMap, playerAvatar: avatar, playerName: mine.name || 'You', playerPortrait: bloxity.getPfp() || portrait(playerOutfit), netId: net.sessionId })
+  reconcile()
+  syncLoot()
   renderer.compile(scene, camera)
-  hud.begin(map.name)
+  hud.begin(currentMap.name)
   hud.show(true)
   bloxity.showAdScreen('gameplay') // gameplay banners are declared off; this just reports the screen
   setGameInput(true)
   setTouchActive(true)
   setDucked(false)
-  introT = 0
   lastZonePhase = -1
-  G.phase = 'intro'
   G.slowmo = 1
-  showLoading(false)
+  rewards = null
+  resultsShown = false
+  if (st.phase === 'intro') {
+    G.phase = 'intro'
+    introT = Math.max(0, MATCH.introFlyover - st.phaseLeft)
+  } else if (st.phase === 'countdown') {
+    G.phase = 'countdown'
+    countdownT = st.phaseLeft
+    lastCount = 0
+  } else {
+    G.phase = 'playing'
+    bloxity.gameplayStart()
+  }
+  reportRoom(mine.team)
   hud.announce(G.match.mode.name.toUpperCase(), `${G.match.mode.desc}`, 3000)
 }
 
-function leaveMatch() {
+// Follows the server's round: phase changes, the end, the next round, leaving.
+function syncFlow() {
+  trackRoster()
+  const st = net.state
+  const mine = me()
+  if (!st || !mine) {
+    if (G.phase === 'queue') backToLobby()
+    return
+  }
+  if (G.phase === 'queue') {
+    if (!mine.inMatch) {
+      if (performance.now() - queuedAt > 3000) backToLobby()
+      return
+    }
+    if (RUNNING.has(st.phase) && mine.team) return enterRound()
+    lobby.showQueue(queueInfo())
+    return
+  }
   if (!G.match) return
-  const r = matchRewards()
-  r.won = false
-  r.coins = Math.round(r.coins * 0.5)
-  r.rp = Math.min(r.rp, -12)
-  applyMatchResult(r)
-  bloxity.submitMatchScores(r)
+  if (!mine.inMatch) return backToLobby()
+  const sp = st.phase
+  if (G.phase === 'intro' && sp === 'countdown') {
+    G.phase = 'countdown'
+    countdownT = st.phaseLeft
+    lastCount = 0
+    snapFollow()
+    setView(G.player.facing + Math.PI, CAMERA.startPitch)
+  } else if ((G.phase === 'intro' || G.phase === 'countdown') && (sp === 'playing' || sp === 'ending')) {
+    if (G.phase === 'intro') {
+      snapFollow()
+      setView(G.player.facing + Math.PI, CAMERA.startPitch)
+    }
+    G.phase = 'playing'
+    bloxity.gameplayStart()
+  }
+  if (sp === 'ending' && G.phase === 'playing') {
+    G.phase = 'ending'
+    G.slowmo = 0.3
+  }
+  if (sp === 'results' && G.phase !== 'results') toResults()
+  else if ((sp === 'vote' || sp === 'waiting') && G.phase === 'results') nextRound()
+  else if ((sp === 'vote' || sp === 'waiting') && RUNNING.has(G.phase)) nextRound()
+}
+
+function toResults() {
+  G.phase = 'results'
+  G.slowmo = 1
+  endGameplay()
+  hud.show(false)
+  setTouchActive(false)
+  setGameInput(false)
+  bloxity.showAdScreen('results')
+  if (rewards) showRoundResults()
+}
+
+function showRoundResults() {
+  if (resultsShown || !G.match) return
+  resultsShown = true
+  showResults(net.state?.winner || G.player.team, rewards, leaveMatch)
+}
+
+onNet('rewards', (r) => {
+  rewards = r
+  if (G.phase === 'results') showRoundResults()
+})
+
+// The round is over and this player stays for the next one.
+function nextRound() {
+  closeMatch()
+  G.phase = 'queue'
+  lobbyScene.rebuildSquad(loadoutForActor())
+  lobbyScene.setPlayerAvatar(avatar, loadoutForActor())
+  lobby.showQueue(queueInfo())
+  bloxity.showAdScreen('lobby')
+}
+
+// Back to the menus (Lobby buttons): costs half the round's coins if it is still running.
+function leaveMatch() {
+  send('leave')
   backToLobby()
 }
 
@@ -368,23 +505,47 @@ function clearDeath() {
 }
 let portalDeath = false // the portal's death screen is up: it, not the timer, decides when we respawn
 
-function backToLobby() {
+let respawnAskedAt = 0
+function requestRespawn(force = false) {
+  const now = performance.now()
+  if (!force && now - respawnAskedAt < 1000) return
+  respawnAskedAt = now
+  send('respawn')
+}
+
+function closeMatch() {
   endGameplay()
-  bloxity.showAdScreen('lobby')
   hideResults()
   hud.show(false)
-  teardownMatch()
+  if (G.match) teardownMatch()
   setGameInput(false)
   setTouchActive(false)
   setMood(MAPS[0])
   inputState.crouch = false
   inputState.aim = false
-  G.phase = 'lobby'
   G.slowmo = 1
+  lockHint.style.display = 'none'
+  reportRoom()
+}
+
+function backToLobby() {
+  closeMatch()
+  bloxity.showAdScreen('lobby')
+  G.phase = 'lobby'
+  lobby.hideQueue()
   lobbyScene.rebuildSquad(loadoutForActor())
   lobbyScene.setPlayerAvatar(avatar, loadoutForActor())
   lobby.show(true)
-  lockHint.style.display = 'none'
+}
+
+// The lobby platform shows up to three other players in this room.
+let matesKey = ''
+function showMates(list) {
+  const others = list.filter((m) => !m.me).slice(0, 3)
+  const key = others.map((m) => `${m.id}:${m.primary}`).join(',')
+  if (key === matesKey || (G.phase !== 'lobby' && G.phase !== 'queue')) return
+  matesKey = key
+  lobbyScene.rebuildSquad(loadoutForActor(), others.map((m) => ({ outfit: outfitForId(m.id), primary: m.primary, secondary: m.secondary })))
 }
 
 function cycleSpectate(dir) {
@@ -396,6 +557,16 @@ function cycleSpectate(dir) {
   const i = mates.indexOf(G.spectating)
   G.spectating = mates[(i + dir + mates.length) % mates.length]
 }
+
+// Lost the room mid-round (the SDK's own reconnect failed): back to the menus; net.js reconnects.
+onNet('left', () => {
+  if (G.phase !== 'lobby') backToLobby()
+  lobby.status('Reconnecting to the game server…')
+})
+onNet('status', (st) => {
+  if (st === 'online') lobby.status('')
+  else if (st === 'offline') lobby.status(net.error || 'Offline')
+})
 
 on('spawn', ({ actor, pos, facing }) => {
   if (!actor.isPlayer) return
@@ -421,18 +592,22 @@ on('elimination', ({ target }) => {
   if (G.spectating === target) cycleSpectate(1)
 })
 on('matchEnd', ({ winner }) => {
-  endT = 0
   G.slowmo = 0.3
+  if (G.phase === 'playing') G.phase = 'ending'
   endGameplay()
   hud.announce(winner === G.player.team ? 'VICTORY!' : 'TIME!', winner === G.player.team ? 'Your squad wins the clash' : 'The other squad takes it', 2400)
 })
 on('announce', ({ big, small }) => hud.announce(big, small))
+let fellAt = 0
 body.onFellOut = () => {
-  if (G.player && G.player.life !== 'dead') G.player.fellOut = true
+  if (!G.player || G.player.life === 'dead' || G.phase !== 'playing' || performance.now() - fellAt < 1000) return
+  fellAt = performance.now()
+  send('fell')
 }
 
 // --- Loop -----------------------------------------------------------------------------------
 const clock = new Clock()
+let rosterT = 0
 let shownLoading = true
 let readySince = 0
 const aimDir = new Vector3()
@@ -454,14 +629,7 @@ function gameFrame(dt) {
   const p = G.player
   const gdt = dt * G.slowmo
   if (phase === 'intro') {
-    introT += dt
-    if (introT >= MATCH.introFlyover) {
-      G.phase = 'countdown'
-      countdownT = MATCH.countdown
-      lastCount = 0
-      snapFollow()
-      setView(p.facing + Math.PI, CAMERA.startPitch)
-    }
+    introT = Math.min(MATCH.introFlyover, introT + dt)
   } else if (phase === 'countdown') {
     countdownT -= dt
     const n = Math.ceil(countdownT - 1)
@@ -475,27 +643,14 @@ function gameFrame(dt) {
         sfx.countdown(true)
       }
     }
-    if (countdownT <= 1) {
-      G.phase = 'playing'
-      bloxity.gameplayStart()
-    }
-  } else if (phase === 'ending') {
-    endT += dt
-    if (endT >= MATCH.endSlowmo) {
-      G.phase = 'results'
-      G.slowmo = 1
-      hud.show(false)
-      setTouchActive(false)
-      setGameInput(false)
-      const reward = matchRewards()
-      applyMatchResult(reward)
-      bloxity.submitMatchScores(reward)
-      bloxity.showAdScreen('results')
-      showResults(G.match.winner, reward, backToLobby)
-    }
   }
 
-  // Player input -> physics -> bots -> rules
+  // The server's view of everyone (other players, health, score, clock) first.
+  reconcile()
+  applyState(dt)
+  syncClock(dt)
+
+  // Player input -> physics -> our pose to the server -> local timers
   if (p && G.phase !== 'results') updateController(gdt, hud)
   if (G.phase === 'intro' || G.phase === 'countdown' || G.phase === 'results') body.frozen = true
   stepPhysics(gdt)
@@ -507,7 +662,7 @@ function gameFrame(dt) {
     p.grounded = body.grounded
     if (p.life !== 'dead' && G.phase !== 'results') p.facing = body.facing
   }
-  updateBots(gdt)
+  if (p && G.phase !== 'results') sendPose(dt)
   if (G.phase === 'playing' || G.phase === 'ending') updateMatch(gdt)
 
   // Zone phase announcements
@@ -528,7 +683,7 @@ function gameFrame(dt) {
     if (a.isPlayer) {
       dir = aimDir.subVectors(view.aimPoint, a.chest(focus)).normalize()
       a.group.visible = !view.scoped
-    } else dir = botAimDir(a, aimDir)
+    } else dir = remoteAimDir(a, aimDir)
     const speed = Math.hypot(a.vel.x, a.vel.z)
     a.updateModel(gdt, dir, speed)
     // Footsteps of others nearby.
@@ -566,9 +721,9 @@ function gameFrame(dt) {
   setListener(camera.position.x, camera.position.y, camera.position.z, getYaw())
 
   if (p && (G.phase === 'playing' || G.phase === 'countdown' || G.phase === 'ending')) {
-    // Without the portal's death screen the old timer respawns the player; with it, only its button does.
-    if (p.life === 'dead' && G.phase === 'playing' && !portalDeath && G.time >= p.respawnAt) respawnPlayer(false)
-    hud.update(dt, camera, { scoped: view.scoped && G.phase === 'playing', spread: view.spread, onEnemy: view.onEnemy, prompt: view.prompt, yaw: getYaw(), hearts: heartsAvailable(), touch: touchShown() })
+    // Without the portal's death screen a short timer respawns the player; with it, only its button does.
+    if (p.life === 'dead' && G.phase === 'playing' && !portalDeath && G.time >= p.respawnAt) requestRespawn()
+    hud.update(dt, camera, { scoped: view.scoped && G.phase === 'playing', spread: view.spread, onEnemy: view.onEnemy, prompt: view.prompt, yaw: getYaw(), hearts: 0, touch: touchShown() })
   }
   lockHint.style.display = G.phase === 'playing' && !isLocked() && !touchShown() && p?.life !== 'dead' && !mapOpen() ? 'block' : 'none'
 
@@ -594,11 +749,20 @@ function frame(dt) {
     }
   }
   // Ad break: nothing advances (simulation, bots, match clock, audio is muted) until it ends.
+  // The room keeps running on the server: only this client's drawing and input pause.
   if (bloxity.isAdBreak()) {
-    if (!skipRender) (G.phase === 'lobby' || G.phase === 'vote' ? lobbyFx : postfx).render()
+    if (!skipRender) (G.phase === 'lobby' || G.phase === 'queue' ? lobbyFx : postfx).render()
     return
   }
-  if (G.phase === 'lobby' || G.phase === 'vote') {
+  syncFlow()
+  rosterT -= dt
+  if (rosterT <= 0) {
+    rosterT = 1
+    const list = roster()
+    lobby.setRoster(list, net.status)
+    showMates(list)
+  }
+  if (G.phase === 'lobby' || G.phase === 'queue') {
     lobbyScene.update(dt)
     lobbyFx.render()
     ambLevel = 0
@@ -615,7 +779,10 @@ function frame(dt) {
 }
 renderer.setAnimationLoop(() => frame(Math.min(clock.getDelta(), 0.1)))
 
-window.addEventListener('beforeunload', bloxity.teardown)
+window.addEventListener('beforeunload', () => {
+  disconnect() // a deliberate leave: the server drops the seat at once instead of holding it
+  bloxity.teardown()
+})
 
 // Dev-only console hook.
 if (import.meta.env.DEV || location.search.includes('debug')) {
@@ -637,7 +804,9 @@ if (import.meta.env.DEV || location.search.includes('debug')) {
       }
       return G.phase
     },
-    quickStart: (mapIndex = 0) => startMatchFlow(MAPS[mapIndex]),
+    // Press Play (the round starts once a second player has too).
+    play: () => startMatchFlow(),
+    net,
     teleport: (x, z, facing = 0) => {
       resetPlayer({ x, y: island.groundHeight(x, z) + 0.3, z }, facing)
       if (G.player) G.player.pos.set(x, island.groundHeight(x, z), z)
@@ -653,7 +822,7 @@ if (import.meta.env.DEV || location.search.includes('debug')) {
         const o = cam.rel && G.player ? G.player.pos : { x: 0, y: 0, z: 0 }
         camera.position.set(o.x + cam.from[0], o.y + cam.from[1], o.z + cam.from[2])
         camera.lookAt(o.x + cam.at[0], o.y + cam.at[1], o.z + cam.at[2])
-        if (G.phase === 'lobby') lobbyFx.render()
+        if (G.phase === 'lobby' || G.phase === 'queue') lobbyFx.render()
         else postfx.render()
       }
       const src = renderer.domElement

@@ -326,6 +326,61 @@
   white-space: nowrap;
 }
 
+/* Connection line above the stats (online / connecting / offline). */
+.lb-net {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--safe-b) + var(--pad) + clamp(26px, 4.4vmin, 34px));
+  transform: translateX(-50%);
+  font-size: clamp(11px, 1.8vmin, 14px);
+  color: #9ff0b8;
+  white-space: nowrap;
+  max-width: 92vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.lb-net:empty {
+  display: none;
+}
+.lb-net.warn {
+  color: #ffd27a;
+}
+.lb-squad .mate.more {
+  justify-content: center;
+}
+
+/* Waiting for players (after PLAY). */
+.queue {
+  text-align: center;
+  padding: 18px 8px 6px;
+}
+.queue .big {
+  font-size: clamp(20px, 4vmin, 30px);
+  font-weight: 700;
+  margin: 10px 0 4px;
+}
+.queue .spinner {
+  width: 46px;
+  height: 46px;
+  margin: 0 auto;
+  border-radius: 50%;
+  border: 5px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #ffcf3d;
+  animation: qspin 0.9s linear infinite;
+}
+@keyframes qspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.win .leaveq {
+  display: block;
+  margin: 14px auto 2px;
+  min-width: 180px;
+  min-height: 44px;
+}
+
 /* --- Modal windows --------------------------------------------------------------------------- */
 .lb-modal {
   position: absolute;

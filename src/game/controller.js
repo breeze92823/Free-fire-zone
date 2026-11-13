@@ -10,11 +10,12 @@ import { player as body } from '../player.js'
 import { aimRay, addRecoil, addShake } from '../camera.js'
 import { sfx } from '../audio/index.js'
 import { G, on } from './state.js'
-import { castWorld, currentSpread, fire, resolveMelee, revive, selectSlot, startReload } from './combat.js'
+import { castWorld, currentSpread, fire, resolveMelee, selectSlot, startReload } from './combat.js'
 import { dash, deployWall, startHeal, startThrow, useUltimate } from './items.js'
 import { crateNear, openCrate } from './loot.js'
 import * as fx from './fx.js'
 import { profile } from './save.js'
+import { send } from '../net.js'
 
 const aimPoint = new Vector3()
 const aimDir = new Vector3()
@@ -80,9 +81,17 @@ export function useItem(id) {
     if (d) body.push = d
     else sfx.deny()
   } else if (id === 'emote') {
-    p.emote = profile.loadout.emote || 'wave'
-    p.emoteT = 0
+    playEmote(profile.loadout.emote || 'wave')
   }
+}
+
+// Plays an emote on the player and shows it to everyone (name, or 'portal:<id>').
+export function playEmote(name) {
+  const p = G.player
+  if (!p || p.life !== 'alive') return
+  p.emote = name
+  p.emoteT = 0
+  send('emote', { emote: name })
 }
 
 export function useUlt() {
@@ -118,7 +127,10 @@ export function updateController(dt, hud) {
 
   // Movement speed + state
   const moving = Math.hypot(inputState.move.x, inputState.move.z) > 0.1
-  if (p.emote && (moving || inputState.fire)) p.emote = null
+  if (p.emote && (moving || inputState.fire)) {
+    p.emote = null
+    send('emote', { emote: '' })
+  }
   p.aiming = alive && playing && inputState.aim && isGun && p.reloadT < 0 && p.healT < 0
   p.crouch = alive && inputState.crouch && !p.emote
   const sprint = alive && inputState.sprint && inputState.move.z > 0.3 && !p.aiming && !inputState.fire && !p.crouch && p.healT < 0
@@ -195,11 +207,20 @@ export function updateController(dt, hud) {
       reviveTarget = best
       const holding = isHeld('KeyE') || hud.interactHeld
       if (holding) {
+        // The server checks the hold: `reviving` when it starts, `revive` when it is done.
+        if (best.reviveProgress === 0 || best.revivedBy !== p) send('reviving', { t: best.netId })
         best.reviveProgress += dt
         best.revivedBy = p
         p.crouch = true
         body.moveSpeed = 0
-        if (best.reviveProgress >= HEALTH.reviveTime) revive(best, p)
+        if (best.reviveProgress >= HEALTH.reviveTime && !best.reviveSent) {
+          best.reviveSent = true
+          send('revive', { t: best.netId })
+        }
+      } else if (best.revivedBy === p) {
+        best.reviveProgress = 0
+        best.revivedBy = null
+        best.reviveSent = false
       }
       view.prompt = { t1: holding ? 'Reviving…' : 'Hold', t2: `Revive ${best.name}`, progress: best.reviveProgress / HEALTH.reviveTime }
     } else {

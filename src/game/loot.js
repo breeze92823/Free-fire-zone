@@ -1,7 +1,9 @@
 // Supply crates (open with E: ammo, meds, utility, armour) spread over the
 // island's loot spots, drawn as instanced parts so ~45 detailed crates cost a
 // handful of draw calls; plus supply drops that parachute in mid-match under
-// a light beam and hold the good stuff.
+// a light beam and hold the good stuff. Online, the server owns which crates are
+// open (and refills them), where drops land, and the armour a crate gives; the
+// ammo and utility inside are this client's.
 import {
   BoxGeometry,
   CanvasTexture,
@@ -22,11 +24,12 @@ import {
   Vector3,
   DoubleSide,
 } from 'three'
-import { HEALTH, ITEMS, LOOT } from '../config.js'
+import { ITEMS, LOOT } from '../config.js'
 import { solidBox } from '../propkit.js'
 import { sfx } from '../audio/index.js'
 import { G, emit } from './state.js'
 import * as fx from './fx.js'
+import { send } from '../net.js'
 
 const m1 = new Matrix4()
 const m2 = new Matrix4()
@@ -186,10 +189,7 @@ function grant(actor, rich) {
     add('frag', 3, 'Frag')
     add('frostWall', 3, 'Frost Wall')
     add('medkit', 2, 'Medkit')
-    if (actor.vest < 3) got.push('Vest Lv.3')
-    if (actor.helmet < 3) got.push('Helmet Lv.3')
-    actor.vest = actor.helmet = 3
-    actor.vestDur = actor.helmetDur = HEALTH.armorDurability[3]
+    if (actor.vest < 3 || actor.helmet < 3) got.push('Vest + Helmet Lv.3')
     actor.ult = actor.operativeDef.charge
     got.push('Ability charged')
   } else {
@@ -197,17 +197,7 @@ function grant(actor, rich) {
     else if (r < 0.6) add('frostWall', 2, 'Frost Wall')
     else if (r < 0.8) add('frag', 1, 'Frag')
     else actor.ult = Math.min(actor.operativeDef.charge, actor.ult + 20)
-    if (Math.random() < 0.45) {
-      if (actor.vest <= actor.helmet && actor.vest < 3) {
-        actor.vest++
-        actor.vestDur = HEALTH.armorDurability[actor.vest]
-        got.push(`Vest Lv.${actor.vest}`)
-      } else if (actor.helmet < 3) {
-        actor.helmet++
-        actor.helmetDur = HEALTH.armorDurability[actor.helmet]
-        got.push(`Helmet Lv.${actor.helmet}`)
-      }
-    }
+    // A chance of armour: rolled by the server, which then raises vest / helmet.
   }
   return got
 }
@@ -216,6 +206,7 @@ export function openCrate(actor, c) {
   if (!c || c.opened) return false
   c.opened = true
   c.refillAt = G.time + LOOT.respawn
+  if (actor.isPlayer) send('open', c.rich ? { d: c.id } : { c: c.i })
   const got = grant(actor, !!c.rich)
   fx.poof(v1.copy(c.pos).setY(c.pos.y + 0.6), c.rich ? fx.FX_COLORS.gold : fx.FX_COLORS.ice, 16)
   if (actor.isPlayer || c.pos.distanceTo(G.player?.pos ?? c.pos) < 25) sfx.crateOpen()
@@ -271,9 +262,11 @@ function buildDropModel() {
   return g
 }
 
-export function spawnDrop(at) {
+// at: landing point; id: the server's drop id; age: s since it was dropped (late joiners).
+export function spawnDrop(at, id = 0, age = 0) {
   const model = buildDropModel()
-  const d = { pos: at.clone(), y: at.y + 80, landed: false, opened: false, rich: true, model, beam: fx.makeLootBeam('#ff6a3d', 60, 0.6), t: 0 }
+  const y = Math.max(at.y, at.y + 80 - (80 / LOOT.airdropFall) * age)
+  const d = { id, pos: at.clone(), y, landed: false, opened: false, rich: true, model, beam: fx.makeLootBeam('#ff6a3d', 60, 0.6), t: 0 }
   model.position.set(at.x, d.y, at.z)
   d.beam.position.set(at.x, at.y, at.z)
   G.scene.add(model, d.beam)
@@ -321,6 +314,51 @@ export function updateLoot(dt, t) {
       drops.splice(i, 1)
     }
   }
+}
+
+// Another player opened a crate (index c) or a drop (id d).
+export function markOpened(c, d) {
+  if (typeof c === 'number') {
+    const crate = crates[c]
+    if (crate && !crate.opened) {
+      crate.opened = true
+      crate.refillAt = G.time + LOOT.respawn
+      fx.poof(v1.copy(crate.pos).setY(crate.pos.y + 0.6), fx.FX_COLORS.ice, 10)
+    }
+  } else if (typeof d === 'number') {
+    const drop = drops.find((x) => x.id === d)
+    if (drop && !drop.opened) {
+      drop.opened = true
+      drop.removeAt = G.time + 2.5
+    }
+  }
+}
+
+// The room's opened crates (index -> round clock they refill) on joining a round.
+export function syncCrates(map) {
+  if (!map) return
+  map.forEach((at, key) => {
+    const crate = crates[Number(key)]
+    if (crate) {
+      crate.opened = true
+      crate.refillAt = at
+    }
+  })
+}
+
+// The room's supply drops: spawns any this client has not drawn yet.
+export function syncDrops(list) {
+  if (!list || !G.island) return
+  list.forEach((s) => {
+    let d = drops.find((x) => x.id === s.id)
+    if (!d && !s.opened) {
+      d = spawnDrop(new Vector3(s.x, G.island.groundHeight(s.x, s.z), s.z), s.id, Math.max(0, G.time - s.at))
+    }
+    if (d && s.opened && !d.opened) {
+      d.opened = true
+      d.removeAt = G.time + 2.5
+    }
+  })
 }
 
 export const activeDrops = () => drops

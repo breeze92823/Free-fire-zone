@@ -2,14 +2,15 @@
 // Store, Store, Characters and Inventory on the left; the squad and the
 // mode + PLAY button on the right; and the windows behind them. Everything
 // is bought with coins earned in matches (never premium currency).
-// Also the map vote before a match and the loading screen.
+// Also the waiting / map-vote panel after PLAY (the room's server runs the
+// rounds: real players only) and the loading screen.
 import './lobby.css'
-import { MAPS, MATCH, MATCH_MODES, OPERATIVES, SKINS, STORE, WEAPONS, GAME_TITLE, GRAPHICS_PRESETS } from '../config.js'
+import { MATCH_MODES, NET, OPERATIVES, SKINS, STORE, WEAPONS, GAME_TITLE, GRAPHICS_PRESETS } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { sfx, setVolume, isMuted, setMuted } from '../audio/index.js'
 import { SVG, svgData, weaponIcon } from './icons.js'
 import { portrait, randomOutfit } from './characters.js'
-import { buyOperative, buySkin, buyStoreItem, buyWeapon, equipEmote, equipOperative, equipSkin, equipWeapon, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
+import { account, buyOperative, buySkin, buyStoreItem, buyWeapon, equipEmote, equipOperative, equipSkin, equipWeapon, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
 
 const h = (tag, cls = '', html = '') => {
   const e = document.createElement(tag)
@@ -26,7 +27,9 @@ const RANK_SVG = (color) => `<svg viewBox="0 0 24 28" xmlns="http://www.w3.org/2
 let root = null
 let modal = null
 let cb = {}
-let squadMates = []
+let roomPlayers = [] // everyone in this server room: [{ id, name, pfp, inMatch, team, me }]
+let netStatus = 'idle'
+let statusText = ''
 const statLimits = { damage: 165, rate: 14, range: 400, mag: 60 }
 
 export function initLobby(callbacks) {
@@ -52,6 +55,7 @@ export function initLobby(callbacks) {
       <button class="playbtn o">PLAY</button>
     </div>
     <div class="lb-stats"></div>
+    <div class="lb-net o"></div>
     <div class="lb-modal"></div>
   `
   document.body.appendChild(root)
@@ -98,8 +102,47 @@ export function initLobby(callbacks) {
 }
 
 function newSquad() {
-  const names = ['Kai_The_Great', 'Pebbles_04', 'Zippy_Zoe', 'MegaMelon', 'ChillPenguin', 'Ace_Hunter', 'DinoDan', 'Glitchy'].sort(() => Math.random() - 0.5)
-  squadMates = [0, 1, 2].map((i) => ({ name: names[i], outfit: randomOutfit(), level: 3 + Math.floor(Math.random() * 30) }))
+  // The squad panel lists the real players in this room (setRoster).
+}
+
+// Everyone in the room (online.js roster()) and the connection state, about once a second.
+function setRoster(list, status) {
+  roomPlayers = list || []
+  netStatus = status || netStatus
+  if (!root) return
+  const others = roomPlayers.filter((m) => !m.me)
+  const sq = root.querySelector('.lb-squad')
+  const html = others.length
+    ? others
+        .slice(0, 5)
+        .map((m) => `<div class="mate"><img alt="" src="${m.pfp ? esc(m.pfp) : portrait(outfitFor(m.id))}"><div><b class="o">${esc(m.name || 'Player')}</b><small>${m.inMatch ? (m.team ? 'In a round' : 'Ready') : 'In the lobby'}</small></div></div>`)
+        .join('') + (others.length > 5 ? `<div class="mate more"><small class="o">+${others.length - 5} more</small></div>` : '')
+    : `<div class="mate"><div><b class="o">${netStatus === 'online' ? 'No one else here yet' : 'Connecting…'}</b><small>${netStatus === 'online' ? 'Invite friends from the menu' : 'Joining a server'}</small></div></div>`
+  if (sq.dataset.html !== html) {
+    sq.dataset.html = html
+    sq.innerHTML = html
+  }
+  paintNet()
+}
+
+const outfits = new Map()
+function outfitFor(id) {
+  if (!outfits.has(id)) outfits.set(id, randomOutfit())
+  return outfits.get(id)
+}
+
+function paintNet() {
+  if (!root) return
+  const el = root.querySelector('.lb-net')
+  const n = roomPlayers.length
+  const text = statusText || (netStatus === 'online' ? `Online · ${n} player${n === 1 ? '' : 's'} in this server` : netStatus === 'connecting' ? 'Connecting to the game server…' : netStatus === 'offline' ? 'Offline — PLAY retries' : '')
+  el.textContent = text
+  el.classList.toggle('warn', netStatus !== 'online')
+}
+
+function setStatus(text) {
+  statusText = text || ''
+  paintNet()
 }
 
 function refresh() {
@@ -118,10 +161,9 @@ function refresh() {
   root.querySelector('.lb-mode .md').textContent = mode.desc
   root.querySelector('.lb-mode .mi').textContent = `${mode.teamSize}v${mode.teamSize}`
   const s = profile.stats
-  root.querySelector('.lb-stats').innerHTML = `<span class="o">Matches ${s.matches} · Wins ${s.wins} · Eliminations ${s.eliminations} · Best ${s.best} · Hearts ${profile.hearts}</span>`
-  const sq = root.querySelector('.lb-squad')
-  sq.innerHTML = squadMates.map((m) => `<div class="mate"><img alt="" src="${portrait(m.outfit)}"><div><b class="o">${esc(m.name)}</b><small>Lv. ${m.level} · Ready</small></div></div>`).join('')
+  root.querySelector('.lb-stats').innerHTML = `<span class="o">Matches ${s.matches} · Wins ${s.wins} · Eliminations ${s.eliminations} · Best ${s.best}</span>`
   cb.onRank?.(r.index)
+  if (modal.classList.contains('on') && current && current.kind !== 'queue') reopen()
 }
 
 let fixedOutfit = null
@@ -165,7 +207,10 @@ function bought(ok) {
   if (ok) {
     sfx.purchase()
     reopen()
-  } else sfx.deny()
+  } else {
+    sfx.deny()
+    if (netStatus !== 'online' || !account.loaded) setStatus('The shop needs the game server — reconnecting…')
+  }
 }
 
 function statRow(label, v, max) {
@@ -253,7 +298,7 @@ function wireTabs(win) {
   )
 }
 
-const STORE_ICON = { heart: SVG.heart, medkit: SVG.medkit, wall: SVG.wall, frag: SVG.frag, armor: SVG.vest, emote: SVG.emote }
+const STORE_ICON = { medkit: SVG.medkit, wall: SVG.wall, frag: SVG.frag, armor: SVG.vest, emote: SVG.emote }
 function storeWindow() {
   const cards = STORE.map((it) => {
     let state = ''
@@ -265,10 +310,9 @@ function storeWindow() {
     }
     if (it.type === 'emote' && owns('emotes', it.emote)) btn = `<button class="buy equipped o" disabled>Owned</button>`
     if (!btn) btn = `<button class="buy ${profile.coins >= it.price ? 'price' : 'cant'} o" data-buy="${it.id}">${coinImg()}${fmtN(it.price)}</button>`
-    const tag = it.type === 'hearts' ? `<span class="tag">You have ${profile.hearts}</span>` : ''
-    return `<div class="card">${tag}<div class="pic"><img class="icon" alt="" src="${svgData(STORE_ICON[it.icon] || SVG.coin)}"></div><div class="nm o">${it.name}</div><div class="desc">${it.desc}</div>${state}${btn}</div>`
+    return `<div class="card"><div class="pic"><img class="icon" alt="" src="${svgData(STORE_ICON[it.icon] || SVG.coin)}"></div><div class="nm o">${it.name}</div><div class="desc">${it.desc}</div>${state}${btn}</div>`
   }).join('')
-  const win = frame('Store', `<div class="grid">${cards}</div><div class="hint">Everything here is bought with coins you earn by playing. Each match also gives ${MATCH.hearts} free revive hearts.</div>`)
+  const win = frame('Store', `<div class="grid">${cards}</div><div class="hint">Everything here is bought with coins you earn by playing.</div>`)
   win.querySelectorAll('[data-buy]').forEach((b) => b.addEventListener('click', () => bought(buyStoreItem(b.dataset.buy))))
 }
 
@@ -316,7 +360,7 @@ function inventoryWindow() {
     </div>
     <div class="section-t o">Emote (Z)</div><div class="pillsel">${emotes}</div>
     <div class="section-t o">Supplies</div>
-    <div class="kv"><div><span>Revive hearts</span><b class="o">${profile.hearts}</b></div>${ups}</div>
+    <div class="kv">${ups}</div>
     <div class="section-t o">Career</div>
     <div class="kv"><div><span>Rank</span><b class="o" style="color:${r.color}">${r.name}</b></div><div><span>Rank points</span><b class="o">${profile.rp}</b></div><div><span>Matches</span><b class="o">${st.matches}</b></div><div><span>Wins</span><b class="o">${st.wins}</b></div><div><span>Eliminations</span><b class="o">${st.eliminations}</b></div><div><span>Damage</span><b class="o">${fmtN(st.damage)}</b></div><div><span>Best match</span><b class="o">${st.best}</b></div><div><span>K/D</span><b class="o">${(st.eliminations / Math.max(1, st.deaths)).toFixed(2)}</b></div></div>
   `
@@ -348,7 +392,7 @@ function settingsWindow() {
       <div><kbd>F</kbd>Dash</div><div><kbd>Q</kbd>Ability</div><div><kbd>E</kbd>Open / hold to revive</div><div><kbd>Z</kbd>Emote</div>
       <div><kbd>M</kbd>Map</div><div><kbd>Tab</kbd>Scoreboard</div><div><kbd>Esc</kbd>Free the cursor / menu</div>
     </div>
-    <div class="hint">On phones: left thumb moves, drag on the right to look, hold FIRE (drag it to aim while shooting). Progress is saved in this browser.</div>`
+    <div class="hint">On phones: left thumb moves, drag on the right to look, hold FIRE (drag it to aim while shooting). ${account.saved ? 'Progress is saved to your Bloxity account.' : 'Sign in to Bloxity to keep your progress.'}</div>`
   const win = frame('Settings', body)
   win.querySelector('[data-k="vol"]').addEventListener('input', (e) => {
     setVolume(Number(e.target.value))
@@ -385,58 +429,42 @@ function modeWindow() {
   )
 }
 
-// --- Map vote -------------------------------------------------------------------------------------
-// Resolves with the winning MAPS entry.
-export function mapVote() {
-  return new Promise((resolve) => {
-    cb.onWindow?.(true)
-    const votes = MAPS.map(() => 0)
-    let mine = -1
-    const total = (MATCH_MODES[profile.mode] ?? MATCH_MODES.clash).teamSize * 2 - 1
-    const art = (m) => `linear-gradient(180deg, ${m.tint}cc, #0b1222cc), url(${cb.mapThumb?.() || ''})`
-    const body = `<div class="vote"><div class="maps">${MAPS.map((m, i) => `<button class="map" data-i="${i}"><div class="art" style="background-image:${art(m)}"></div><div class="nm o">${m.name}</div><div class="vc o">0 votes</div></button>`).join('')}</div><div class="timer"><i style="width:100%"></i></div><div class="hint">Vote for the time of day. Bots are voting too&hellip;</div></div>`
-    const win = frame('Map Voting', body)
-    modal.dataset.locked = '1'
-    win.querySelector('.win-x').style.visibility = 'hidden'
-    const paint = () => {
-      win.querySelectorAll('.map').forEach((b, i) => {
-        b.classList.toggle('sel', i === mine)
-        b.querySelector('.vc').textContent = `${votes[i]} vote${votes[i] === 1 ? '' : 's'}`
-      })
-    }
-    win.querySelectorAll('.map').forEach((b) =>
-      b.addEventListener('click', () => {
-        const i = Number(b.dataset.i)
-        if (mine >= 0) votes[mine]--
-        mine = i
-        votes[i]++
-        sfx.equip()
-        paint()
-      }),
-    )
-    const start = performance.now()
-    const dur = MATCH.voteTime * 1000
-    let botVotes = 0
-    const timer = setInterval(() => {
-      const t = performance.now() - start
-      win.querySelector('.timer i').style.width = `${Math.max(0, 100 - (t / dur) * 100)}%`
-      const due = Math.floor((t / dur) * total * 1.1)
-      while (botVotes < Math.min(total, due)) {
-        votes[Math.floor(Math.random() * MAPS.length)]++
-        botVotes++
-      }
-      paint()
-      if (t >= dur) {
-        clearInterval(timer)
-        let best = 0
-        votes.forEach((v, i) => {
-          if (v > votes[best] || (v === votes[best] && i === mine)) best = i
-        })
-        close()
-        resolve(MAPS[best])
-      }
-    }, 100)
-  })
+// --- Waiting / map vote (after PLAY) ----------------------------------------------------------------
+// info: { phase, left, ready, need, votes[], mine, maps[] } from the room (main.js queueInfo).
+let queueKey = ''
+function showQueue(info) {
+  const key = JSON.stringify([info.phase, Math.ceil(info.left), info.ready, info.votes, info.mine])
+  if (current?.kind === 'queue' && modal.classList.contains('on') && key === queueKey) return
+  queueKey = key
+  const voting = info.phase === 'vote'
+  const art = (m) => `linear-gradient(180deg, ${m.tint}cc, #0b1222cc), url(${cb.mapThumb?.() || ''})`
+  let body
+  if (voting) {
+    body = `<div class="vote"><div class="maps">${info.maps
+      .map((m, i) => `<button class="map${i === info.mine ? ' sel' : ''}" data-i="${i}"><div class="art" style="background-image:${art(m)}"></div><div class="nm o">${m.name}</div><div class="vc o">${info.votes[i]} vote${info.votes[i] === 1 ? '' : 's'}</div></button>`)
+      .join('')}</div><div class="hint">Vote for the time of day · the round starts in ${Math.max(0, Math.ceil(info.left))} s · ${info.ready} players ready</div></div>`
+  } else if (info.phase === 'results' || info.phase === 'intro' || info.phase === 'countdown' || info.phase === 'playing' || info.phase === 'ending') {
+    body = `<div class="queue"><div class="big o">Next round soon</div><div class="hint">A round is finishing on this server. You'll be in the next one.</div></div>`
+  } else {
+    const missing = Math.max(0, info.need - info.ready)
+    body = `<div class="queue"><div class="spinner"></div><div class="big o">Waiting for players</div><div class="hint">${info.ready} / ${info.need} ready — the round starts as soon as ${missing === 1 ? 'one more player joins' : `${missing} more players join`}. Real players only: invite friends from the Bloxity menu.</div></div>`
+  }
+  current = { kind: 'queue' }
+  const win = frame(voting ? 'Map Voting' : 'Online Match', `${body}<button class="buy owned o leaveq">Back to lobby</button>`)
+  modal.dataset.locked = '1'
+  win.querySelector('.win-x').style.visibility = 'hidden'
+  win.querySelectorAll('.map').forEach((b) =>
+    b.addEventListener('click', () => {
+      sfx.equip()
+      cb.onVote?.(Number(b.dataset.i))
+    }),
+  )
+  win.querySelector('.leaveq').addEventListener('click', () => cb.onLeaveQueue?.())
+}
+
+function hideQueue() {
+  if (current?.kind === 'queue' && modal.classList.contains('on')) close()
+  queueKey = ''
 }
 
 // --- Loading screen ---------------------------------------------------------------------------------
@@ -465,13 +493,15 @@ export function showLoading(on, step = '', progress = 0) {
 const lobby = {
   show(on) {
     root.classList.toggle('on', on)
-    if (on) {
-      newSquad()
-      refresh()
-    } else if (modal.classList.contains('on')) close()
+    if (on) refresh()
+    else if (modal.classList.contains('on')) close()
   },
   refresh,
   close,
-  squad: () => squadMates,
+  showQueue,
+  hideQueue,
+  setRoster,
+  status: setStatus,
+  squad: () => roomPlayers.filter((m) => !m.me),
 }
 export default lobby

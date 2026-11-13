@@ -207,6 +207,22 @@ export const LEADERBOARDS = [
   { id: 'weekly_elims', label: 'Eliminations this week', order: 'desc', mode: 'sum', format: 'compact', reset: 'weekly' },
 ]
 
+// Online play (net.js, online.js). The game server is the backend repo's MatchRoom ("match").
+// Keep roomSize / teamMax / minPlayers / respawn in step with its src/constants.ts.
+export const NET = {
+  room: 'match',
+  roomSize: 18, // players per room (two teams of teamMax)
+  teamMax: 9,
+  minPlayers: 2, // a round starts once this many have pressed Play
+  // Local development without the Bloxity SDK: the backend's `npm start`.
+  devServer: import.meta.env.VITE_SERVER_URL || '',
+  devPort: 2567,
+  poseHz: 20, // pose messages per second
+  interpDelay: 0.1, // s other players are drawn behind their newest pose
+  connectTimeout: 60, // s of retrying before giving up (cold start can take ~45 s)
+  respawnFallback: 5, // s before respawning when there is no portal death screen
+}
+
 // Ad screens declared once after init (bloxity.js). Gameplay banners stay off.
 export const AD_SCREENS = { lobby: {}, panel: {}, results: {}, gameplay: { show: false } }
 
@@ -373,19 +389,17 @@ export const HEALTH = {
 
 // --- Match modes ---------------------------------------------------------------------
 export const MATCH_MODES = {
-  clash: { name: 'Team Clash', desc: '6 v 6 · respawns · most eliminations wins', teamSize: 6, duration: 240, scoreToWin: 45, respawn: true },
-  squad: { name: 'Squad Showdown', desc: '4 v 4 · respawns · first to 25', teamSize: 4, duration: 180, scoreToWin: 25, respawn: true },
+  // Online: up to NET.teamMax per side, real players only. The round's mode is voted by the players.
+  clash: { name: 'Team Clash', desc: 'Up to 9 v 9 · respawns · most eliminations wins', teamSize: 9, duration: 240, scoreToWin: 45, respawn: true },
+  squad: { name: 'Squad Showdown', desc: 'Up to 9 v 9 · respawns · first to 25', teamSize: 9, duration: 180, scoreToWin: 25, respawn: true },
 }
 export const MATCH = {
   countdown: 4, // s frozen at the start (3, 2, 1, FIGHT)
   introFlyover: 3.2, // s of camera sweep before the countdown
-  voteTime: 6, // s of map voting
-  botRespawn: 7, // s an eliminated bot waits
-  playerAutoRespawn: 10, // s before an eliminated player respawns on their own (Revive skips it)
+  voteTime: 8, // s of map voting (the server's PHASES.vote)
   spawnSafeDistance: 38, // m from any enemy a respawn point must be
   endSlowmo: 2.4, // s of slow motion after the final elimination / time up
   streakWindow: 6, // s between eliminations that still count as a streak
-  hearts: 3, // free revive hearts every match (owned hearts add to these); not used on Bloxity (the portal's death screen sets the respawn wait)
 }
 export const MAPS = [
   { id: 'day', name: 'Coral Key · Day', mood: 'day', tint: '#3fb6ff' },
@@ -415,7 +429,7 @@ export const LOOT = {
   airdropFall: 9, // s from the sky to the ground
 }
 
-// --- Bots --------------------------------------------------------------------------
+// --- Navigation grid (navgrid.js: spawn points); the rest is unused since bots were removed ---
 export const BOTS = {
   viewRange: 90, // m
   sniperRange: 160,
@@ -434,12 +448,6 @@ export const BOTS = {
   grenadeChance: 0.18,
   navCell: 1.25, // m per nav grid cell
 }
-export const BOT_NAMES = [
-  'BlazeRunner', 'nova_kid22', 'PixelSniper', 'TacoTactics', 'Zyrox', 'MintyMango', 'ColdBrewCarl', 'StormRider_7', 'LuckyLlama', 'xXViperXx',
-  'Captain_Crunch', 'NoScopeNina', 'Bunny_Hop', 'IronMarta', 'Quickscope_Q', 'ToastyBoi', 'Mr_Wobbles', 'FrostByte', 'Kai_The_Great', 'SpicyNoodle',
-  'RocketRaccoon9', 'Lil_Thunder', 'PotatoAim', 'GhostPanda', 'Sir_Sneaks', 'MegaMelon', 'Dr_Pickles', 'Zippy_Zoe', 'BigBoss_Bob', 'Turbo_Tina',
-  'ShadowFox', 'WaffleWizard', 'ChillPenguin', 'Ace_Hunter', 'Pebbles_04', 'NightOwl_X', 'SaltyCrab', 'Vortex_V', 'DinoDan', 'Glitchy',
-]
 
 // Bot outfits (characters.js): mixed at random.
 export const OUTFITS = {
@@ -481,17 +489,15 @@ export const RANKS = [
 export const START_PROFILE = {
   coins: 600,
   rp: 0,
-  hearts: 0, // bought revive hearts (each match also grants MATCH.hearts)
   owned: { weapons: ['striker', 'viper', 'knife', 'fists'], skins: ['standard'], operatives: ['rook'], emotes: ['wave'] },
   loadout: { primary: 'striker', secondary: 'viper', operative: 'rook', emote: 'wave', skin: { striker: 'standard', viper: 'standard' } },
   upgrades: {}, // id -> level
   stats: { matches: 0, wins: 0, eliminations: 0, deaths: 0, damage: 0, best: 0 },
   mode: 'clash',
 }
-// Store: consumables and permanent upgrades, all priced in coins.
+// Store: permanent upgrades and emotes, all priced in coins. The server (backend catalog.ts) holds
+// the same prices and decides every purchase; keep the two in step.
 export const STORE = [
-  { id: 'hearts3', type: 'hearts', amount: 3, name: '3 Revive Hearts', desc: 'Revive instantly after an elimination.', price: 450, icon: 'heart' },
-  { id: 'hearts10', type: 'hearts', amount: 10, name: '10 Revive Hearts', desc: 'Best value pack of revives.', price: 1300, icon: 'heart' },
   { id: 'medkits', type: 'upgrade', max: 2, name: 'Field Medic Kit', desc: '+1 medkit at every match start (per level).', price: 900, icon: 'medkit' },
   { id: 'walls', type: 'upgrade', max: 2, name: 'Frost Wall Pack', desc: '+2 frost walls at every match start (per level).', price: 1000, icon: 'wall' },
   { id: 'frags', type: 'upgrade', max: 2, name: 'Grenadier Belt', desc: '+1 frag grenade at every match start (per level).', price: 1100, icon: 'frag' },
@@ -501,7 +507,6 @@ export const STORE = [
   { id: 'emote_flex', type: 'emote', emote: 'flex', name: 'Emote: Flex', desc: 'Pure confidence (Z).', price: 650, icon: 'emote' },
   { id: 'emote_cheer', type: 'emote', emote: 'cheer', name: 'Emote: Cheer', desc: 'Celebrate the team (Z).', price: 450, icon: 'emote' },
 ]
-export const SAVE_KEY = 'free-fire-zone.profile.v1'
 
 export function clamp(n, min, max) {
   return n < min ? min : n > max ? max : n

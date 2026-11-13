@@ -29,6 +29,19 @@ const FRAG = /* glsl */ `
     gl_FragColor = vec4(color * (1.1 + scan * 1.8 + base * 2.2), a);
   }`
 
+// Seeded random numbers: the server (backend zone.ts) plans the same circles from the round's
+// zoneSeed with this exact generator and call order (angle, then distance, per phase).
+export function mulberry32(seed) {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
 export function createZone(scene) {
   const mat = new ShaderMaterial({
     uniforms: { time: { value: 0 }, circ: { value: 900 }, color: { value: new Color(ZONE.color) } },
@@ -59,21 +72,24 @@ export function createZone(scene) {
     damage: ZONE.damage[0],
   }
 
+  let rand = Math.random
   function planNext(i) {
     const p = ZONE.phases[i]
     const slack = Math.max(0, z.radius - p.radius)
-    const a = Math.random() * Math.PI * 2
-    const d = Math.sqrt(Math.random()) * slack * 0.85
+    const a = rand() * Math.PI * 2
+    const d = Math.sqrt(rand()) * slack * 0.85
     z.next.set(z.center.x + Math.cos(a) * d, z.center.y + Math.sin(a) * d)
     // Keep the zone over land.
-    const maxC = Math.max(0, (G.island?.radius ?? 120) - p.radius * 0.6)
+    const maxC = Math.max(0, (G.island?.radius ?? 125) - p.radius * 0.6) // server: ISLAND_RADIUS 125
     if (z.next.length() > maxC) z.next.setLength(maxC)
     z.nextR = p.radius
   }
 
   return {
     state: z,
-    reset() {
+    // seed: the round's zoneSeed from the server, so every client agrees on the circles.
+    reset(seed) {
+      rand = seed === undefined ? Math.random : mulberry32(seed)
       z.center.set(0, 0)
       z.radius = ZONE.start
       z.phase = -1

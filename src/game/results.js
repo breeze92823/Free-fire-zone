@@ -87,7 +87,7 @@ export function showResults(winner, reward, done) {
     if (a.isPlayer) {
       resetPlayer({ x: p.x, y: p.y, z: p.z }, toMid)
       syncYawToPlayer(toMid)
-    } else a.bot?.spawn(p.clone(), toMid)
+    } else a.snaps && (a.snaps.length = 0)
     a.emote = won || !a.isPlayer || a.team === winner ? emotes[i] : null
     a.emoteT = 0
     a.refreshHeld()

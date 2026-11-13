@@ -1,0 +1,474 @@
+// The online match, client side: turns the server's room state (net.state) and broadcasts into
+// the game's actors and event bus. Other players are Actors with `remote` set, drawn
+// NET.interpDelay behind their newest pose; the server decides their health, life and score.
+// The local player sends its pose ~NET.poseHz times a second (sendPose).
+import { Vector3 } from 'three'
+import { MAPS, NET, ULT_CHARGE, WEAPONS } from '../config.js'
+import { G, emit } from './state.js'
+import { Actor } from './actor.js'
+import { buildCharacter, portrait, randomOutfit } from './characters.js'
+import { me, net, onNet, send } from '../net.js'
+import { muzzleOf, explodeVisual } from './combat.js'
+import { remoteThrow, remoteWall, ultVisual } from './items.js'
+import { markOpened, syncCrates, syncDrops } from './loot.js'
+import { mulberry32 } from './zone.js'
+import { spawnActor, updateMvp } from './match.js'
+import { loadBaseCharacter } from '../avatar/character.js'
+import { applyProportions, attachEquippedAccessories } from '../avatar/loader.js'
+import { sfx, spatial } from '../audio/index.js'
+import * as fx from './fx.js'
+import * as bloxity from '../bloxity.js'
+
+// Pose flags (server MatchState FLAG).
+export const FLAG = { crouch: 1, aim: 2, grounded: 4, reload: 8, heal: 16, throw: 32, swing: 64, sprint: 128 }
+
+const tmp = new Vector3()
+const tmp2 = new Vector3()
+const TAU = Math.PI * 2
+
+export const byNet = (id) => (id ? G.actors.find((a) => a.netId === id) : null) || null
+
+function hash(s) {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
+  return h >>> 0
+}
+
+const loadoutOf = (p) => ({ primary: p.primary, secondary: p.secondary, skins: { [p.primary]: p.skinPrimary || 'standard', [p.secondary]: p.skinSecondary || 'standard' } })
+
+// --- Roster -> actors ---------------------------------------------------------------------------
+// The blocky look a player wears without a Bloxity avatar: the same on every client.
+export const outfitForId = (sid) => randomOutfit(mulberry32(hash(sid)))
+
+function makeRemote(sid, p) {
+  const outfit = outfitForId(sid)
+  const a = new Actor({ name: p.name || 'Player', team: p.team, outfit, operative: p.operative, loadout: loadoutOf(p) })
+  a.netId = sid
+  a.remote = true
+  a.snaps = []
+  a.avatarJson = null
+  a.avatarGen = 0
+  a.portrait = p.pfp || portrait(outfit)
+  a.uid = p.uid || ''
+  a.life = p.life
+  a.pos.set(p.x, p.y, p.z)
+  a.facing = p.yaw
+  a.addToScene(G.scene)
+  G.actors.push(a)
+  loadRemoteAvatar(a, p.avatar)
+  return a
+}
+
+function removeActor(a) {
+  a.dispose()
+  const i = G.actors.indexOf(a)
+  if (i >= 0) G.actors.splice(i, 1)
+  if (G.spectating === a) G.spectating = null
+}
+
+// Bloxity look (equipped ids + proportions) -> the rig, dressed. Until it loads (or without the
+// SDK) the player wears a blocky outfit seeded by their session id.
+async function loadRemoteAvatar(a, json) {
+  if (a.avatarJson === json) return
+  a.avatarJson = json
+  let look = null
+  try {
+    look = json ? JSON.parse(json) : null
+  } catch {
+    look = null
+  }
+  if (!look?.equipped || !bloxity.hasSdk()) return
+  const gen = ++a.avatarGen
+  try {
+    const group = await loadBaseCharacter()
+    if (gen !== a.avatarGen || !G.actors.includes(a)) return
+    await attachEquippedAccessories(group, look.equipped, { skinTextureUrl: bloxity.getSkinTextureUrlFor(look.equipped) })
+    if (gen !== a.avatarGen || !G.actors.includes(a)) return
+    applyProportions(group, look.proportions || null)
+    if (!group.nodes?.default_torso) return
+    a.setAvatar(group)
+  } catch (err) {
+    console.warn('[online] remote avatar failed', err)
+  }
+}
+
+// Adds / removes remote actors so G.actors matches the players in this round.
+export function reconcile() {
+  const st = net.state
+  if (!st?.players || !G.match) return
+  const seen = new Set()
+  st.players.forEach((p, sid) => {
+    if (sid === net.sessionId || !p.inMatch || (p.team !== 'blue' && p.team !== 'orange')) return
+    seen.add(sid)
+    const a = byNet(sid)
+    if (!a) makeRemote(sid, p)
+    else if (a.team !== p.team) {
+      a.team = p.team
+      a.tagState = ''
+    }
+  })
+  for (const a of [...G.actors]) if (a.remote && !seen.has(a.netId)) removeActor(a)
+}
+
+// --- Server state -> actors, every frame -----------------------------------------------------------
+function angleLerp(a, b, k) {
+  let d = (b - a) % TAU
+  if (d > Math.PI) d -= TAU
+  if (d < -Math.PI) d += TAU
+  return a + d * k
+}
+
+function applyRemote(a, p, dt, now) {
+  // Pose snapshots in arrival order; draw interpDelay behind the newest.
+  const last = a.snaps[a.snaps.length - 1]
+  if (!last || last.x !== p.x || last.y !== p.y || last.z !== p.z || last.yaw !== p.yaw) {
+    if (last && Math.hypot(p.x - last.x, p.z - last.z) > 15) a.snaps.length = 0 // teleport (respawn)
+    a.snaps.push({ t: now, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch })
+    if (a.snaps.length > 12) a.snaps.shift()
+  }
+  const rt = now - NET.interpDelay * 1000
+  const s = a.snaps
+  let from = s[0]
+  let to = s[s.length - 1]
+  for (let i = s.length - 1; i > 0; i--) {
+    if (s[i - 1].t <= rt) {
+      from = s[i - 1]
+      to = s[i]
+      break
+    }
+  }
+  const k = to === from ? 1 : Math.max(0, Math.min(1, (rt - from.t) / (to.t - from.t || 1)))
+  const px = a.pos.x
+  const pz = a.pos.z
+  a.pos.set(from.x + (to.x - from.x) * k, from.y + (to.y - from.y) * k, from.z + (to.z - from.z) * k)
+  a.facing = angleLerp(from.yaw, to.yaw, k)
+  a.pitch = from.pitch + (to.pitch - from.pitch) * k
+  if (dt > 0) a.vel.set((a.pos.x - px) / dt, 0, (a.pos.z - pz) / dt)
+  if (a.vel.lengthSq() > 30 * 30) a.vel.set(0, 0, 0)
+
+  a.name = p.name || a.name
+  a.uid = p.uid || ''
+  a.life = p.life
+  a.hp = p.hp
+  a.downHp = p.downHp
+  a.vest = p.vest
+  a.helmet = p.helmet
+  a.protectedUntil = p.protectedUntil
+  const f = p.flags
+  a.crouch = !!(f & FLAG.crouch)
+  a.aiming = !!(f & FLAG.aim)
+  a.grounded = !!(f & FLAG.grounded) || p.flags === 0
+  const timer = (on, t, max) => (on ? Math.min(max, t < 0 ? 0 : t + dt) : -1)
+  a.reloadT = timer(f & FLAG.reload, a.reloadT, (a.def.reload || 1) * 0.98)
+  a.healT = timer(f & FLAG.heal, a.healT, 10)
+  a.throwT = timer(f & FLAG.throw, a.throwT, 0.54)
+  if (f & FLAG.swing && a.swingT < 0) a.swingT = 0
+  a.ready += ((a.aiming || G.time - a.lastShotAt < 1.4 ? 1 : 0.35) - a.ready) * Math.min(1, dt * 8)
+  if (a.slots[0].id !== p.primary || a.slots[1].id !== p.secondary || a.slots[0].skin !== p.skinPrimary || a.slots[1].skin !== p.skinSecondary) {
+    const lo = loadoutOf(p)
+    a.slots[0] = { id: lo.primary, def: WEAPONS[lo.primary] || WEAPONS.striker, ammo: 0, reserve: 0, skin: lo.skins[lo.primary] }
+    a.slots[1] = { id: lo.secondary, def: WEAPONS[lo.secondary] || WEAPONS.viper, ammo: 0, reserve: 0, skin: lo.skins[lo.secondary] }
+    a.buildWeapons()
+  }
+  if (a.slot !== p.slot) {
+    a.slot = Math.min(3, p.slot)
+    a.refreshHeld()
+  }
+  a.operative = p.operative
+  if (p.operative === 'shade') a.cloakUntil = p.ultUntil
+  else a.ultActiveUntil = p.ultUntil
+  const emote = p.emote || null
+  if (emote !== a.emote) {
+    a.emote = emote
+    a.emoteT = 0
+  }
+  copyStats(a, p)
+  if (p.avatar !== a.avatarJson) loadRemoteAvatar(a, p.avatar)
+}
+
+function copyStats(a, p) {
+  a.stats.eliminations = p.kills
+  a.stats.deaths = p.deaths
+  a.stats.assists = p.assists
+  a.stats.knocks = p.knocks
+  a.stats.damage = p.damage
+  a.stats.headshots = p.headshots
+}
+
+let mvpT = 0
+// Mirrors the server onto the actors; skipped during the results lineup (staged locally).
+export function applyState(dt) {
+  const st = net.state
+  const m = G.match
+  if (!st?.players || !m) return
+  m.score.blue = st.blue
+  m.score.orange = st.orange
+  m.duration = st.duration
+  if (G.phase === 'results') return
+  const now = performance.now()
+  st.players.forEach((p, sid) => {
+    if (sid === net.sessionId) {
+      const pl = G.player
+      if (!pl) return
+      // Knocks, revives and eliminations follow the server; a respawn arrives with 'spawn' (it moves the player).
+      if (pl.life !== p.life && !(pl.life === 'dead' && p.life === 'alive')) pl.life = p.life
+      pl.hp = p.hp
+      pl.downHp = p.downHp
+      pl.vest = p.vest
+      pl.helmet = p.helmet
+      pl.protectedUntil = p.protectedUntil
+      if (pl.team !== p.team && p.team) pl.team = p.team
+      copyStats(pl, p)
+      return
+    }
+    const a = byNet(sid)
+    if (a) applyRemote(a, p, dt, now)
+  })
+  mvpT -= dt
+  if (mvpT <= 0) {
+    mvpT = 0.5
+    updateMvp()
+  }
+  syncDrops(st.drops)
+}
+
+// The round clock (zone, airdrops, respawn protection) follows the server's.
+export function syncClock(dt) {
+  const st = net.state
+  if (!st) return
+  if (G.phase !== 'playing' && G.phase !== 'ending') {
+    G.time = st.clock
+    return
+  }
+  G.time += dt * (G.phase === 'ending' ? 0 : 1)
+  const err = st.clock - G.time
+  if (Math.abs(err) > 0.4) G.time = st.clock
+  else G.time += err * Math.min(1, dt * 2)
+}
+
+// --- Local player -> server ------------------------------------------------------------------------
+let poseAcc = 0
+export function sendPose(dt) {
+  const p = G.player
+  if (!p || !G.match) return
+  poseAcc += dt
+  if (poseAcc < 1 / NET.poseHz) return
+  poseAcc = 0
+  const f =
+    (p.crouch ? FLAG.crouch : 0) |
+    (p.aiming ? FLAG.aim : 0) |
+    (p.grounded ? FLAG.grounded : 0) |
+    (p.reloadT >= 0 ? FLAG.reload : 0) |
+    (p.healT >= 0 ? FLAG.heal : 0) |
+    (p.throwT >= 0 ? FLAG.throw : 0) |
+    (p.swingT >= 0 ? FLAG.swing : 0)
+  send('pose', {
+    x: round(p.pos.x),
+    y: round(p.pos.y),
+    z: round(p.pos.z),
+    yaw: round(p.facing, 1000),
+    pitch: round(p.pitch, 1000),
+    speed: round(Math.hypot(p.vel.x, p.vel.z)),
+    flags: f,
+    slot: p.slot,
+  })
+}
+const round = (v, k = 100) => Math.round(v * k) / k
+
+// The direction a remote actor's gun points (from its pose yaw + pitch).
+export function remoteAimDir(a, out) {
+  return out.set(Math.sin(a.facing) * Math.cos(a.pitch), -Math.sin(a.pitch), Math.cos(a.facing) * Math.cos(a.pitch))
+}
+
+// --- Server events -> game events -------------------------------------------------------------------
+let wired = false
+export function initOnline() {
+  if (wired) return
+  wired = true
+
+  onNet('dmg', ({ t, a, n, h, z, e }) => {
+    const target = byNet(t) || (t === net.sessionId ? G.player : null)
+    if (!target || !G.match) return
+    const attacker = byNet(a) || (a === net.sessionId ? G.player : null)
+    target.hitFlash()
+    target.emote = null
+    if (attacker) target.lastHitBy = attacker
+    const point = h ? target.head(new Vector3()) : target.chest(new Vector3())
+    const dir = attacker ? tmp2.subVectors(point, attacker.pos).normalize().clone() : null
+    emit('damage', { target, attacker, amount: n, head: !!h, point, dir, zone: !!z, explosive: !!e })
+    if (target === G.player && z) sfx.zoneTick()
+    // Dealing damage charges the ability.
+    if (attacker === G.player && target !== G.player) G.player.ult = Math.min(G.player.operativeDef.charge, G.player.ult + n * ULT_CHARGE.perDamage)
+  })
+  onNet('knock', ({ t, a, w, h }) => {
+    const target = byNet(t) || (t === net.sessionId ? G.player : null)
+    if (!target || !G.match) return
+    target.life = 'knocked'
+    target.reviveProgress = 0
+    target.revivedBy = null
+    target.reviveSent = false
+    target.reloadT = target.healT = target.throwT = -1
+    target.aiming = false
+    emit('knock', { target, attacker: byNet(a) || (a === net.sessionId ? G.player : null), weapon: w, head: !!h })
+    if (target === G.player) sfx.hurt(true)
+  })
+  onNet('elim', ({ t, k, w, h, s }) => {
+    const target = byNet(t) || (t === net.sessionId ? G.player : null)
+    if (!target || !G.match) return
+    const killer = byNet(k) || (k === net.sessionId ? G.player : null)
+    target.life = 'dead'
+    target.aiming = false
+    target.reloadT = -1
+    if (target === G.player) {
+      target.lastKilledBy = killer
+      target.respawnAt = G.time + NET.respawnFallback
+    }
+    fx.poof(target.pos, fx.FX_COLORS.white, 20)
+    emit('elimination', { target, killer, weapon: w || null, head: !!h, streak: s || 0 })
+  })
+  onNet('revive', ({ t, b }) => {
+    const target = byNet(t) || (t === net.sessionId ? G.player : null)
+    if (!target || !G.match) return
+    target.life = 'alive'
+    target.reviveProgress = 0
+    target.revivedBy = null
+    target.reviveSent = false
+    fx.healSparkles(target.pos)
+    fx.ring(target.pos, 0.3, 2.2, 0.6, '#7dffb0')
+    if (target === G.player || target.pos.distanceTo(G.player?.pos ?? target.pos) < 30) sfx.revive()
+    emit('revive', { target, by: byNet(b) || (b === net.sessionId ? G.player : null) })
+  })
+  onNet('spawn', ({ id, first }) => {
+    if (!G.match) return
+    if (id === net.sessionId) {
+      // The round's first spawn is placed by createMatch; respawns pick a safe spot here.
+      if (!first || G.player.life !== 'alive') {
+        G.player.life = 'alive'
+        spawnActor(G.player, !!first)
+      }
+      return
+    }
+    const a = byNet(id)
+    if (a) {
+      a.snaps.length = 0
+      a.life = 'alive'
+    }
+  })
+  onNet('shot', ({ id, w, o, e }) => {
+    const a = byNet(id)
+    if (!a || !G.match || a.life !== 'alive') return
+    const def = WEAPONS[w]
+    if (!def) return
+    const muzzle = muzzleOf(a, new Vector3())
+    a.lastShotAt = G.time
+    a.ready = 1
+    a.kick = 1
+    if (a.slots[a.slot]?.id !== w) {
+      const i = a.slots.findIndex((s) => s.id === w)
+      if (i >= 0) {
+        a.slot = i
+        a.refreshHeld()
+      }
+    }
+    const aim = remoteAimDir(a, tmp)
+    fx.muzzleFlash(muzzle, aim, def.kind === 'shotgun' || def.kind === 'sniper' || def.kind === 'lmg', Math.random() < 0.5)
+    const ends = Array.isArray(e) ? e : []
+    ends.forEach((pt, i) => {
+      if (i < 3 || Math.random() < 0.4) fx.tracer(muzzle, tmp2.set(pt[0], pt[1], pt[2]), def.kind === 'sniper' ? fx.FX_COLORS.white : null)
+    })
+    if (!(G.time < a.cloakUntil)) sfx.shot(def.kind === 'lmg' ? 'lmg' : def.kind, { ...spatial(muzzle.x, muzzle.y, muzzle.z), own: false })
+    if (def.kind === 'knife' || def.kind === 'fists') a.swingT = 0
+    emit('shot', { actor: a, pos: muzzle, recoil: def.recoil })
+    // A near miss whizzes past the player's head.
+    const pl = G.player
+    if (pl && pl.life === 'alive' && a.team !== pl.team && Array.isArray(o) && ends.length) {
+      pl.eye(tmp)
+      const ox = o[0]
+      const oy = o[1]
+      const oz = o[2]
+      const ex = ends[0]
+      const dx = ex[0] - ox
+      const dy = ex[1] - oy
+      const dz = ex[2] - oz
+      const len = Math.hypot(dx, dy, dz) || 1
+      const along = ((tmp.x - ox) * dx + (tmp.y - oy) * dy + (tmp.z - oz) * dz) / len
+      if (along > 0 && along < len) {
+        const cx = ox + (dx / len) * along - tmp.x
+        const cy = oy + (dy / len) * along - tmp.y
+        const cz = oz + (dz / len) * along - tmp.z
+        if (Math.hypot(cx, cy, cz) < 1.6) sfx.whiz(spatial(ox, oy, oz).pan)
+      }
+    }
+  })
+  onNet('throw', ({ id, p, v }) => {
+    const a = byNet(id)
+    if (a && G.match) remoteThrow(a, p, v)
+  })
+  onNet('boom', ({ x, y, z }) => {
+    if (G.match) explodeVisual(new Vector3(x, y, z))
+  })
+  onNet('wall', ({ id, x, y, z, yaw }) => {
+    const a = byNet(id)
+    if (a && G.match) remoteWall(new Vector3(x, y, z), yaw, a)
+  })
+  onNet('ult', ({ id, op }) => {
+    const a = byNet(id)
+    if (a && G.match) ultVisual(a, op)
+  })
+  onNet('opened', ({ c, d, by }) => {
+    if (!G.match || by === net.sessionId) return
+    markOpened(c, d)
+  })
+  onNet('matchEnd', ({ winner }) => {
+    if (G.match) emit('matchEnd', { winner })
+  })
+
+  // Chat bubbles over other players too (the portal draws the chat itself).
+  bloxity.onChatMessage((m) => {
+    if (!m || m.isLocalPlayer || !G.match) return
+    const a = G.actors.find((x) => x.remote && x.uid && x.uid === m.userId)
+    if (!a) return
+    a.chatBubble?.remove?.()
+    a.chatBubble = bloxity.attachChatBubble(threeRef, a.group, m)
+  })
+}
+let threeRef = null
+// main.js hands over its three.js namespace (the SDK draws bubbles with the game's own three).
+export function setThree(THREE) {
+  threeRef = THREE
+}
+
+// Applies the room's opened crates (late join / new round).
+export function syncLoot() {
+  if (net.state) syncCrates(net.state.crates)
+}
+
+// --- Roster notifications (friend joins) -----------------------------------------------------------
+let known = null
+export function trackRoster() {
+  const st = net.state
+  if (!st?.players) {
+    known = null
+    return
+  }
+  const now = new Set()
+  st.players.forEach((p, sid) => {
+    if (sid === net.sessionId) return
+    now.add(sid)
+    if (!known) bloxity.playerInRoom(p.name)
+    else if (!known.has(sid) && p.name) bloxity.playerJoined(p.name)
+  })
+  known = now
+}
+
+// Everyone in the room right now (lobby squad list): [{ id, name, pfp, inMatch, team }].
+export function roster() {
+  const st = net.state
+  if (!st?.players) return []
+  const out = []
+  st.players.forEach((p, sid) => out.push({ id: sid, name: p.name, pfp: p.pfp, inMatch: p.inMatch, team: p.team, primary: p.primary, secondary: p.secondary, me: sid === net.sessionId }))
+  return out
+}
+
+export const mapOf = (i) => MAPS[i] ?? MAPS[0]
+export { me, buildCharacter }

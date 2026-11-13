@@ -2,7 +2,7 @@
 // here may throw when the SDK is missing: a blocked sdk.bloxity.io leaves the
 // game fully playable on the default avatar and keyboard controls.
 // Docs: https://docs.bloxity.io/#html5
-import { AD_SCREENS, GAME_SLUG, GAME_TITLE, LEADERBOARDS, SETTINGS, DEV_MODE, coerceSetting } from './config.js'
+import { AD_SCREENS, GAME_SLUG, GAME_TITLE, LEADERBOARDS, NET, SETTINGS, DEV_MODE, coerceSetting } from './config.js'
 
 export function sdk() {
   if (DEV_MODE) return null
@@ -192,6 +192,12 @@ export function init() {
 
     initAds(SDK)
     initLeaderboards(SDK)
+    // Party play: a party fills one team (the server seats party members together).
+    try {
+      SDK.party?.enable?.({ maxPartySize: NET.teamMax })
+    } catch (err) {
+      console.warn('[bloxity] party.enable failed', err)
+    }
     // The portal shows its emote button only for games that register this; clips come from
     // the catalogue (getEmoteClip) and play on the player's character.
     try {
@@ -509,12 +515,108 @@ export async function locateRoom(id) {
 }
 
 // Reports the room this player is in ('' = not in a joinable room), so the portal's friend invites
-// land in it.
-export function updateRoom(roomId) {
+// land in it. `partyId` is the game's own team id (never a Bloxity party id).
+export function updateRoom(roomId, partyId) {
   try {
-    sdk()?.game?.updateRoom?.(roomId)
+    if (partyId) sdk()?.game?.updateRoom?.(roomId, partyId)
+    else sdk()?.game?.updateRoom?.(roomId)
   } catch {
     // Ignore.
+  }
+}
+
+// The player's game token for the server (null for no SDK / no session). The server verifies it
+// with Bloxity and uses only the verified id.
+export function getToken() {
+  try {
+    const t = sdk()?.auth?.getToken?.()
+    return typeof t === 'string' && t ? t : null
+  } catch {
+    return null
+  }
+}
+
+// The player's own Bloxity user id (null for guests without an account / no SDK).
+export function userId() {
+  return authState.user?._id || null
+}
+
+// ?instantMultiplayer=true: make a new private room (CrazyGames "Play with friends").
+export function wantsPrivateRoom() {
+  try {
+    return new URLSearchParams(location.search).get('instantMultiplayer') === 'true'
+  } catch {
+    return false
+  }
+}
+
+let featureDone = new Set()
+export function registerFeature(name) {
+  if (featureDone.has(name)) return
+  try {
+    sdk()?.game?.registerFeature?.(name)
+    featureDone.add(name)
+  } catch {
+    // Non-fatal.
+  }
+}
+
+// --- Party play -------------------------------------------------------------------------------
+// Boxity seats a party in one room itself on hosted servers; the game enables it on boot, passes the
+// party's roomKey in the join options (the server puts party members on one team) and reports the
+// room it landed in.
+export function enableParty(maxPartySize) {
+  try {
+    sdk()?.party?.enable?.({ maxPartySize })
+  } catch {
+    // Non-fatal.
+  }
+}
+export function partyLaunch() {
+  try {
+    return sdk()?.party?.getLaunch?.() ?? null
+  } catch {
+    return null
+  }
+}
+export function partyJoined(roomId) {
+  try {
+    sdk()?.party?.joined?.(roomId)
+  } catch {
+    // Non-fatal.
+  }
+}
+export function partyFailed(reason) {
+  try {
+    sdk()?.party?.failed?.(reason)
+  } catch {
+    // Non-fatal.
+  }
+}
+
+// Friend-join notifications: someone joined the room (playerJoined) / was already in it (playerInRoom).
+export function playerJoined(name) {
+  try {
+    sdk()?.game?.playerJoined?.(name)
+  } catch {
+    // Non-fatal.
+  }
+}
+export function playerInRoom(name) {
+  try {
+    sdk()?.game?.playerInRoom?.(name)
+  } catch {
+    // Non-fatal.
+  }
+}
+
+// Another player's composed skin texture (their equipped face / shirt / pants), or null.
+export function getSkinTextureUrlFor(equipped) {
+  try {
+    const url = sdk()?.avatar?.getSkinTextureUrlFor?.(equipped)
+    return typeof url === 'string' && url ? url : null
+  } catch {
+    return null
   }
 }
 

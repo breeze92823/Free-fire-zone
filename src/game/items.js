@@ -11,13 +11,14 @@ import {
   MeshStandardMaterial,
   Vector3,
 } from 'three'
-import { ITEMS, ULT_CHARGE } from '../config.js'
+import { ITEMS, OPERATIVES, ULT_CHARGE } from '../config.js'
 import { RAPIER, world } from '../physics.js'
 import { sfx, spatial } from '../audio/index.js'
 import { G, emit } from './state.js'
 import { castWorld, explode, wallColliders } from './combat.js'
 import { buildGrenade } from './weaponModels.js'
 import * as fx from './fx.js'
+import { send } from '../net.js'
 
 const tmp = new Vector3()
 const tmp2 = new Vector3()
@@ -146,7 +147,14 @@ export function deployWall(actor) {
   actor.items.frostWall--
   walls.push(new FrostWall(p, actor.facing, actor))
   actor.emote = null
+  if (actor.isPlayer) send('wall', { x: r2(p.x), y: r2(p.y), z: r2(p.z), yaw: r2(actor.facing) })
   return true
+}
+const r2 = (v) => Math.round(v * 100) / 100
+
+// Another player's frost wall (online.js): a real collider here too, so it stops this client's bullets.
+export function remoteWall(pos, yaw, owner) {
+  walls.push(new FrostWall(pos, yaw, owner))
 }
 
 // --- Frag grenades ----------------------------------------------------------------------------
@@ -169,7 +177,9 @@ class Grenade {
     if (this.fuse <= 0) {
       this.dead = true
       this.mesh.removeFromParent()
-      explode(this.pos, this.owner)
+      // Another player's grenade only vanishes: their client reports the blast (`boom`) and every
+      // client draws it where it really went off.
+      if (!this.owner?.remote) explode(this.pos, this.owner)
       return
     }
     this.vel.y -= 22 * dt
@@ -220,7 +230,14 @@ function release(actor, dir) {
     v.x += actor.vel.x * 0.5
     v.z += actor.vel.z * 0.5
     grenades.push(new Grenade(p, v, actor))
+    if (actor.isPlayer) send('throw', { p: [r2(p.x), r2(p.y), r2(p.z)], v: [r2(v.x), r2(v.y), r2(v.z)] })
   }
+}
+
+// Another player's frag in flight (drawn only; see Grenade.update).
+export function remoteThrow(owner, p, v) {
+  if (!Array.isArray(p) || !Array.isArray(v)) return
+  grenades.push(new Grenade(new Vector3(p[0], p[1], p[2]), new Vector3(v[0], v[1], v[2]), owner))
 }
 
 // --- Medkit / dash / ability ------------------------------------------------------------------
@@ -254,10 +271,18 @@ export const ultReady = (actor) => actor.ult >= actor.operativeDef.charge
 
 export function useUltimate(actor) {
   if (actor.life !== 'alive' || !ultReady(actor)) return false
-  const op = actor.operativeDef
   actor.ult = 0
+  if (actor.isPlayer) send('ult')
+  ultVisual(actor, actor.operative)
+  return true
+}
+
+// The ability's effect as drawn on this client (the server applies the heals and damage cut).
+// Also used for other players' abilities (online.js).
+export function ultVisual(actor, opId) {
+  const op = OPERATIVES[opId] || actor.operativeDef
   const color = op.color
-  if (actor.operative === 'jin') {
+  if (opId === 'jin') {
     actor.hp = Math.min(actor.maxHp, actor.hp + 90)
     for (const a of G.actors) {
       if (a !== actor && a.team === actor.team && a.life === 'alive' && a.pos.distanceTo(actor.pos) < 10) {
@@ -267,7 +292,7 @@ export function useUltimate(actor) {
     }
     fx.healSparkles(actor.pos, fx.FX_COLORS.heal, 40)
     fx.ring(actor.pos, 0.5, 10, 0.8, color)
-  } else if (actor.operative === 'shade') {
+  } else if (opId === 'shade') {
     actor.cloakUntil = G.time + op.duration
     fx.poof(actor.pos, new Color(1.4, 0.8, 2.6), 26)
   } else {
@@ -277,7 +302,6 @@ export function useUltimate(actor) {
   fx.beam(actor.pos, color, 0.8, 1.1, 6, actor.pos)
   if (actor.isPlayer || actor.pos.distanceTo(G.player?.pos ?? actor.pos) < 30) sfx.ultimate()
   emit('ultimate', { actor, op })
-  return true
 }
 
 // Per-actor timers for items (throw release, heal completion, ult charge, aura).
@@ -300,6 +324,7 @@ export function updateActorItems(actor, dt, aimDir) {
       actor.healT = -1
       actor.items.medkit--
       actor.hp = Math.min(actor.maxHp, actor.hp + ITEMS.medkit.heal)
+      if (actor.isPlayer) send('heal')
       fx.healSparkles(actor.pos, fx.FX_COLORS.heal, 30)
       fx.ring(actor.pos, 0.2, 1.6, 0.5, '#6dff9c', actor.pos, 1.5)
       if (actor.isPlayer) sfx.heal()

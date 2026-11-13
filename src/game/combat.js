@@ -3,14 +3,17 @@
 // against every character's capsule + head sphere; the nearest wins. The
 // player aims from the camera (what the crosshair covers is what gets hit)
 // and a second ray from the gun checks nothing blocks the shot at the muzzle.
-// Damage runs through armour, knock-down and elimination, and every outcome
-// is broadcast on the event bus for the HUD, audio, score and bots.
+// Online, the shooter's client decides only WHAT it hit: each hit goes to the
+// server (net.js `hit`), which checks it and decides the damage, armour,
+// knock-downs and eliminations (online.js turns its answers into bus events).
+// The shot itself is relayed so the others draw its tracers and hear it.
 import { Vector3 } from 'three'
-import { BULLET, HEALTH, ITEMS, OPERATIVES, ULT_CHARGE } from '../config.js'
+import { BULLET, ITEMS, OPERATIVES } from '../config.js'
 import { RAPIER, world } from '../physics.js'
 import { sfx, spatial } from '../audio/index.js'
 import { G, emit } from './state.js'
 import * as fx from './fx.js'
+import { send } from '../net.js'
 
 const DEG = Math.PI / 180
 const tmpO = new Vector3()
@@ -24,6 +27,7 @@ const tmpE = new Vector3()
 const tmpL = new Vector3()
 
 let ray = null
+let shotSeq = 0 // numbers this client's shots: one shot may hit several players (server fire-rate check)
 const STATIC = () => RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS
 
 // Wall registry: frost walls register their collider handle -> wall so bullets can damage them.
@@ -144,6 +148,9 @@ export function fire(actor, origin, dir, speed = 0) {
   const pellets = def.pellets || 1
   let anyHit = false
   let headHit = false
+  const seq = ++shotSeq
+  const hits = new Map() // target actor -> { n, h, d }
+  const ends = []
   for (let i = 0; i < pellets; i++) {
     const d = coneDir(dir, spread, tmpD)
     const range = def.range
@@ -164,13 +171,17 @@ export function fire(actor, origin, dir, speed = 0) {
         endPoint = tmpP.copy(block.point)
         fx.impact(block.point, block.normal, surfaceOf(block.point, block.normal))
         fx.tracer(muzzle, endPoint)
+        ends.push(pt(endPoint))
         continue
       }
     }
+    ends.push(pt(endPoint))
     if (ah) {
-      const falloff = damageFalloff(def, ah.t)
-      const dmg = def.damage * falloff * (ah.head ? def.headMul : 1)
-      applyDamage(ah.actor, dmg, actor, { head: ah.head, weapon: w.id, point: endPoint, dir: d })
+      const rec = hits.get(ah.actor) || { n: 0, h: 0, d: ah.t }
+      rec.n++
+      if (ah.head) rec.h++
+      rec.d = Math.min(rec.d, ah.t)
+      hits.set(ah.actor, rec)
       fx.hitPuff(endPoint, d, ah.head)
       anyHit = true
       headHit = headHit || ah.head
@@ -188,10 +199,13 @@ export function fire(actor, origin, dir, speed = 0) {
       }
     }
     if (i < 3 || Math.random() < 0.4) fx.tracer(muzzle, endPoint, def.kind === 'sniper' ? fx.FX_COLORS.white : null)
-    // A near miss whizzes past the player's head.
-    if (G.player && !actor.isPlayer && actor.team !== G.player.team && G.player.alive) nearMiss(origin, d, endDist)
   }
   if (actor.isPlayer && anyHit) sfx.hitmarker(headHit)
+  // To the server: what this shot hit (it decides the damage), and the shot for the others' eyes and ears.
+  for (const [target, r] of hits) {
+    if (target.netId) send('hit', { t: target.netId, w: w.id, s: seq, n: r.n, h: r.h, d: Math.round(r.d * 10) / 10 })
+  }
+  send('shot', { w: w.id, o: pt(muzzle), e: ends.slice(0, 12) })
 
   // Flash, shell, sound, noise for the bots.
   tmpU.set(0, 1, 0)
@@ -209,20 +223,10 @@ export function fire(actor, origin, dir, speed = 0) {
   return true
 }
 
-function nearMiss(o, d, len) {
-  const p = G.player
-  p.eye(tmpE)
-  tmpU.subVectors(tmpE, o)
-  const along = tmpU.dot(d)
-  if (along < 0 || along > len) return
-  const close = tmpU.addScaledVector(d, -along).length()
-  if (close < 1.6) {
-    const s = spatial(o.x, o.y, o.z)
-    sfx.whiz(s.pan)
-  }
-}
+const pt = (v) => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100]
 
-function damageFalloff(def, dist) {
+// Damage at a distance (the server applies the same falloff).
+export function damageFalloff(def, dist) {
   const start = def.range * BULLET.falloffStart
   if (dist <= start) return 1
   return 1 - 0.4 * Math.min(1, (dist - start) / (def.range - start))
@@ -264,13 +268,10 @@ export function resolveMelee(actor) {
   }
   if (!best) return
   best.chest(tmpP)
-  applyDamage(best, def.damage, actor, { head: false, weapon: actor.weapon.id, point: tmpP.clone(), dir: tmpD.set(fwdX, 0, fwdZ) })
-  fx.hitPuff(tmpP, tmpD, false)
+  if (best.netId) send('hit', { t: best.netId, w: actor.weapon.id, s: ++shotSeq, n: 1, h: 0, d: Math.round(bestD * 10) / 10 })
+  fx.hitPuff(tmpP, tmpD.set(fwdX, 0, fwdZ), false)
   sfx.punch()
   if (actor.isPlayer) sfx.hitmarker(false)
-  // Knockback
-  best.impulse.x += fwdX * 4
-  best.impulse.z += fwdZ * 4
 }
 
 // --- Reload / switch -----------------------------------------------------------------------
@@ -305,135 +306,37 @@ export function selectSlot(actor, i) {
   emit('slot', actor)
 }
 
-// --- Damage --------------------------------------------------------------------------------
-// opts: { head, weapon, point, dir, explosive, zone }
-export function applyDamage(target, amount, attacker, opts = {}) {
-  if (target.life === 'dead' || amount <= 0) return 0
-  if (G.time < target.protectedUntil && !opts.zone) return 0
-  if (G.phase !== 'playing' && G.phase !== 'ending') return 0
-  let dmg = amount
-  if (G.time < target.ultActiveUntil && target.operative === 'rook') dmg *= 0.55
-  // Armour soaks part of the hit and wears down.
-  if (target.life === 'alive' && !opts.zone) {
-    if (opts.head && target.helmet > 0) {
-      const cut = dmg * HEALTH.helmet[target.helmet]
-      dmg -= cut
-      target.helmetDur -= cut
-      if (target.helmetDur <= 0) {
-        target.helmet--
-        target.helmetDur = HEALTH.armorDurability[target.helmet]
-      }
-    } else if (!opts.head && target.vest > 0) {
-      const cut = dmg * HEALTH.vest[target.vest]
-      dmg -= cut
-      target.vestDur -= cut
-      if (target.vestDur <= 0) {
-        target.vest--
-        target.vestDur = HEALTH.armorDurability[target.vest]
-      }
-    }
-  }
-  target.lastDamageAt = G.time
-  if (attacker && attacker !== target) {
-    target.lastHitBy = attacker
-    target.damagers.set(attacker.id, G.time)
-    attacker.stats.damage += dmg
-    attacker.ult = Math.min(attacker.operativeDef.charge, attacker.ult + dmg * ULT_CHARGE.perDamage)
-    if (opts.head) attacker.stats.headshots++
-  }
-  target.hitFlash()
-  target.emote = null
-  if (target.healT >= 0) target.healT = -1 // hits interrupt healing
-  emit('damage', { target, attacker, amount: dmg, head: !!opts.head, point: opts.point, dir: opts.dir, zone: !!opts.zone, explosive: !!opts.explosive })
-
-  if (target.life === 'alive') {
-    target.hp -= dmg
-    if (target.hp <= 0) {
-      target.hp = 0
-      const helpers = G.actors.some((a) => a.team === target.team && a !== target && a.life === 'alive')
-      if (helpers && !opts.zone) knock(target, attacker, opts)
-      else eliminate(target, attacker, opts)
-    }
-  } else if (target.life === 'knocked') {
-    target.downHp -= dmg
-    if (target.downHp <= 0) eliminate(target, attacker, opts)
-  }
-  return dmg
-}
-
-export function knock(target, attacker, opts = {}) {
-  target.life = 'knocked'
-  target.downHp = HEALTH.knockedHp
-  target.reloadT = -1
-  target.throwT = -1
-  target.healT = -1
-  target.emote = null
-  target.aiming = false
-  target.crouch = false
-  target.reviveProgress = 0
-  if (attacker && attacker !== target) attacker.stats.knocks++
-  emit('knock', { target, attacker, weapon: opts.weapon, head: !!opts.head })
-}
-
-export function eliminate(target, attacker, opts = {}) {
-  if (target.life === 'dead') return
-  target.life = 'dead'
-  target.hp = 0
-  target.downHp = 0
-  target.stats.deaths++
-  target.streak = 0
-  target.reloadT = -1
-  target.aiming = false
-  const killer = attacker && attacker !== target && attacker.team !== target.team ? attacker : target.lastHitBy && target.lastHitBy.team !== target.team ? target.lastHitBy : null
-  let streak = 0
-  if (killer) {
-    killer.stats.eliminations++
-    killer.streak = G.time - killer.lastElimAt < 6 ? killer.streak + 1 : 1
-    killer.lastElimAt = G.time
-    streak = killer.streak
-    for (const [id, at] of target.damagers) {
-      if (id === killer.id || G.time - at > 10) continue
-      const helper = G.actors.find((a) => a.id === id)
-      if (helper && helper.team === killer.team) helper.stats.assists++
-    }
-  }
-  target.damagers.clear()
-  emit('elimination', { target, killer, weapon: opts.weapon ?? (opts.zone ? 'zone' : opts.explosive ? 'frag' : null), head: !!opts.head, streak })
-}
-
-export function revive(target, by) {
-  if (target.life !== 'knocked') return
-  target.life = 'alive'
-  target.hp = HEALTH.reviveHp
-  target.downHp = 0
-  target.reviveProgress = 0
-  target.protectedUntil = G.time + 1
-  fx.healSparkles(target.pos)
-  fx.ring(target.pos, 0.3, 2.2, 0.6, '#7dffb0')
-  emit('revive', { target, by })
-}
-
 // --- Explosions -----------------------------------------------------------------------------
+// The local player's frag went off: tell the server who was in the blast (with line of sight); it
+// decides the damage. The flash, sound and frost-wall damage are drawn by every client.
 export function explode(pos, attacker, damage = ITEMS.frag.damage, radius = ITEMS.frag.radius) {
-  fx.explosion(pos, radius)
-  sfx.explosion(spatial(pos.x, pos.y, pos.z))
-  emit('explosion', { pos: pos.clone(), radius })
+  explodeVisual(pos, radius, damage)
+  if (!attacker?.isPlayer) return
   tmpO.copy(pos).y += 0.5
+  const targets = []
   for (const a of G.actors) {
-    if (a.life === 'dead') continue
-    if (attacker && a.team === attacker.team && a !== attacker) continue
+    if (a.life === 'dead' || !a.netId) continue
+    if (a.team === attacker.team && a !== attacker) continue
     a.chest(tmpP)
     const d = tmpP.distanceTo(pos)
     if (d > radius) continue
     if (!lineOfSight(tmpO, tmpP)) continue
-    const k = Math.pow(1 - d / radius, 0.7)
-    const dmg = damage * k * (a === attacker ? 0.5 : 1)
-    applyDamage(a, dmg, attacker, { explosive: true, weapon: 'frag', point: tmpP.clone(), dir: tmpD.subVectors(tmpP, pos).normalize().clone() })
-    a.impulse.x += (tmpP.x - pos.x) * k * 2.5
-    a.impulse.z += (tmpP.z - pos.z) * k * 2.5
+    targets.push(a.netId)
+    if (a === attacker) {
+      const k = Math.pow(1 - d / radius, 0.7)
+      a.impulse.x += (tmpP.x - pos.x) * k * 2.5
+      a.impulse.z += (tmpP.z - pos.z) * k * 2.5
+    }
   }
+  send('boom', { x: Math.round(pos.x * 100) / 100, y: Math.round(pos.y * 100) / 100, z: Math.round(pos.z * 100) / 100, t: targets })
+}
+
+export function explodeVisual(pos, radius = ITEMS.frag.radius, damage = ITEMS.frag.damage) {
+  fx.explosion(pos, radius)
+  sfx.explosion(spatial(pos.x, pos.y, pos.z))
+  emit('explosion', { pos: pos.clone(), radius })
   for (const wall of wallColliders.values()) {
-    if (wall.pos.distanceTo(pos) < radius + 1.5) wall.damage(damage * 1.5, attacker)
+    if (wall.pos.distanceTo(pos) < radius + 1.5) wall.damage(damage * 1.5, null)
   }
 }
 

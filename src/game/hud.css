@@ -1038,7 +1038,10 @@
   display: block;
 }
 .hud-spectate.portal .revive,
-.hud-spectate.portal .hearts {
+.hud-spectate.portal .hearts,
+.hud-spectate .revive,
+.hud-spectate .hearts {
+  /* Online: no revive hearts; the portal's death screen (or a short timer) respawns. */
   display: none;
 }
 .hud-spectate .hearts {
