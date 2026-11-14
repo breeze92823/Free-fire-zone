@@ -11,6 +11,8 @@ import { WEAPON_SCALE } from '../config.js'
 import { G } from './state.js'
 import { castWorld, projectileHit, wallColliders, weaponBlast } from './combat.js'
 import { buildProjectile } from './weaponModels.js'
+import { canHurtVehicle, castVehicles } from './vehicles.js'
+import { send } from '../net.js'
 import * as fx from './fx.js'
 import { sfx, spatial } from '../audio/index.js'
 
@@ -83,7 +85,20 @@ export function updateProjectiles(dt) {
     const wPoint = wh ? wh.point.clone() : null
     const wNormal = wh ? wh.normal.clone() : null
     const wCollider = wh ? wh.collider : null
-    const ah = castActors(p, p.pos, tmpD, Math.min(len + 0.05, whDist))
+    // A vehicle's hull in the way: a launcher round goes off on it, a bolt hits it (vhit).
+    const vh = castVehicles(p.pos, tmpD, Math.min(len + 0.05, whDist), p.owner?.seat?.v ?? null)
+    const ah = castActors(p, p.pos, tmpD, vh ? vh.t : Math.min(len + 0.05, whDist))
+    if (vh && !ah) {
+      const point = p.pos.clone().addScaledVector(tmpD, vh.t)
+      if (p.def.blast) detonate(p, point.addScaledVector(vh.normal, 0.15))
+      else {
+        if (p.local && vh.v.id && canHurtVehicle(vh.v, p.owner)) send('vhit', { v: vh.v.id, w: p.weapon, s: p.seq, n: 1, d: Math.round(point.distanceTo(p.origin) * 10) / 10 })
+        fx.impact(point, vh.normal, 'metal', false)
+        sfx.boltHit(spatial(point.x, point.y, point.z), 'wood')
+      }
+      remove(i)
+      continue
+    }
     if (ah) {
       const point = p.pos.clone().addScaledVector(tmpD, ah.t)
       if (p.def.blast) detonate(p, point)

@@ -104,6 +104,8 @@ export const svgData = (svg) => `data:image/svg+xml;utf8,${encodeURIComponent(sv
 
 // Hand-drawn UI icons (white strokes / fills; colour via CSS).
 export const SVG = {
+  // a vehicle (kill feed: run over / blown up in a vehicle)
+  car: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 24"><path d="M3 15v-4l3-1 3-4h9l4 4 5 1 2 2v2z" fill="#6f7b44" stroke="#1d2410" stroke-width="1.2" stroke-linejoin="round"/><path d="M10 7h7l3 3H9z" fill="#bfe3ff" stroke="#1d2410" stroke-width=".8"/><circle cx="9" cy="16.5" r="3.4" fill="#222" stroke="#000"/><circle cx="24" cy="16.5" r="3.4" fill="#222" stroke="#000"/><circle cx="9" cy="16.5" r="1.3" fill="#aaa"/><circle cx="24" cy="16.5" r="1.3" fill="#aaa"/></svg>',
   heart: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#ff3b5c" stroke="#7a0a1e" stroke-width="1.2" d="M12 21s-7.5-4.6-9.6-9.2C1 8.6 3 5 6.6 5c2.1 0 3.6 1.2 5.4 3.2C13.8 6.2 15.3 5 17.4 5 21 5 23 8.6 21.6 11.8 19.5 16.4 12 21 12 21z"/><path fill="#fff" opacity=".45" d="M6.5 7.2c-1.6.2-2.6 1.8-2 3.4.3-1.5 1-2.6 2.4-3 .5-.2.2-.5-.4-.4z"/></svg>',
   coin: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#ffc83d" stroke="#a86b00" stroke-width="1.6"/><circle cx="12" cy="12" r="6.8" fill="none" stroke="#e09a12" stroke-width="1.4"/><path d="M10 8.6h3.2a2 2 0 0 1 0 4H10.4h3.4a2 2 0 0 1 0 4H10z" fill="none" stroke="#a86b00" stroke-width="1.6" stroke-linejoin="round"/></svg>',
   // Missions: a clipboard with a tick.

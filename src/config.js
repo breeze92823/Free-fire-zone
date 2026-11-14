@@ -213,12 +213,17 @@ export const TOUCH = {
 export const VEHICLES = {
   jeep: {
     name: 'Jeep',
+    // gun: the seat mans the mounted gun (MOUNTS); its occupant stands on the floor (feet at
+    // y - DRIVE.hipHeight) behind the ring mount.
     seats: [
       { x: 0.46, y: 0.92, z: 0.05, drive: true },
       { x: -0.46, y: 0.92, z: 0.05 },
       { x: 0.46, y: 0.98, z: -1.05 },
-      { x: -0.46, y: 0.98, z: -1.05 },
+      { x: -0.42, y: 0.92, z: -1.3, gun: 'mg' },
     ],
+    hp: 1200, // backend rules.ts VEHICLE_TYPES
+    // The ring mount (vehicleModels.js): its pivot, over the gunner's feet at shoulder height (chassis frame).
+    mount: { x: -0.42, y: 1.48, z: -1.3 },
     exits: [[1.9, 0.2], [-1.9, 0.2], [0, -3.4], [0, 3.6]],
     half: [0.98, 0.42, 2.15], // chassis collider half extents
     bodyY: 0.55, // chassis box centre above the wheel axle line
@@ -248,6 +253,7 @@ export const VEHICLES = {
       { x: 0.36, y: 0.78, z: -0.15, drive: true },
       { x: -0.36, y: 0.78, z: -0.15 },
     ],
+    hp: 750,
     exits: [[1.6, -0.1], [-1.6, -0.1], [0, -2.9], [0, 3.0]],
     half: [0.82, 0.32, 1.65],
     bodyY: 0.42,
@@ -271,6 +277,22 @@ export const VEHICLES = {
     color: 0xe0762a,
     camera: { distance: 6.6, height: 2.1 },
   },
+}
+// Mounted guns (a vehicle seat with `gun`): no magazine, it overheats instead. backend rules.ts MOUNTS
+// (damage, interval, range, headMul are checked there).
+export const MOUNTS = {
+  mg: { name: 'Mounted MG', kind: 'lmg', sound: 'lmg', hold: 'rifle', damage: 26, interval: 0.085, range: 170, headMul: 1.6, spread: [2.4, 2.4], recoil: 0.35, auto: true, heatPerShot: 0.045, cool: 0.32, cooldown: 2.4, icon: 'MG' },
+}
+// Damage to vehicles (backend rules.ts VEHICLE_DAMAGE: the server decides it; these are what the
+// client needs to report hits and draw the state).
+export const VEHICLE_DAMAGE = {
+  size: 2.2, // m added to blast radii when listing vehicles caught in one
+  burnBelow: 0.2, // share of hp below which it burns (fire + black smoke) and burns down
+  smokeBelow: 0.55, // grey smoke below this share
+  wreckRadius: 7,
+  // Running someone over: the driver's client reports a player its vehicle touches at this speed
+  // or more (m/s), once per player per gapMs.
+  ram: { minSpeed: 8, gapMs: 900 },
 }
 export const DRIVE = {
   enterRange: 3.2, // m from a door (or the vehicle's side) to get in with E

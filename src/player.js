@@ -27,6 +27,7 @@ export const player = {
   jumped: false, // edge, for sounds
   landed: false, // edge, for sounds
   riding: false, // seated in a vehicle (setRide): the body follows the seat, its collider is off
+  nudge: null, // { x, z } m to move out of something this tick (a vehicle someone drives into us), consumed
 }
 
 const HALF = PLAYER_DIMS.height / 2
@@ -175,7 +176,13 @@ function step(dt) {
   const wasGrounded = player.grounded
   const fallSpeed = player.velocity.y
   const desired = { x: player.velocity.x * dt, y: player.velocity.y * dt, z: player.velocity.z * dt }
-  controller.computeColliderMovement(collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC)
+  if (player.nudge) {
+    desired.x += player.nudge.x
+    desired.z += player.nudge.z
+    player.nudge = null
+  }
+  // Kinematic bodies count: vehicles other players drive (vehicleNet.js) are solid.
+  controller.computeColliderMovement(collider, desired, RAPIER.QueryFilterFlags.EXCLUDE_SENSORS)
   const moved = controller.computedMovement()
   player.grounded = !jumped && controller.computedGrounded()
   if (!wasGrounded && player.grounded && fallSpeed < -6) player.landed = true

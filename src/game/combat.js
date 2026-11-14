@@ -8,13 +8,14 @@
 // knock-downs and eliminations (online.js turns its answers into bus events).
 // The shot itself is relayed so the others draw its tracers and hear it.
 import { Vector3 } from 'three'
-import { BULLET, GRENADES, ITEMS, OPERATIVES, WEAPONS } from '../config.js'
+import { BULLET, GRENADES, ITEMS, MOUNTS, OPERATIVES, WEAPONS } from '../config.js'
 import { RAPIER, world } from '../physics.js'
 import { sfx, spatial } from '../audio/index.js'
 import { G, emit } from './state.js'
 import * as fx from './fx.js'
 import { send } from '../net.js'
 import { launchProjectile } from './projectiles.js'
+import { canHurtVehicle, castVehicles, mountMuzzle, vehiclesInBlast } from './vehicles.js'
 
 const DEG = Math.PI / 180
 const tmpO = new Vector3()
@@ -114,6 +115,7 @@ function coneDir(d, deg, out) {
 
 // The muzzle position of an actor's held weapon (world).
 export function muzzleOf(actor, out = new Vector3()) {
+  if (actor.seat?.gun && actor.seat.v.mount) return mountMuzzle(actor.seat.v, out)
   const m = actor.heldModel?.userData.muzzle
   if (m && actor.heldModel.visible) {
     actor.heldModel.updateMatrixWorld(true)
@@ -169,20 +171,39 @@ export function fire(actor, origin, dir, speed = 0) {
   const muzzle = muzzleOf(actor, tmpM)
   const spread = currentSpread(actor, speed)
   if (def.projectile) return fireProjectile(actor, origin, dir, muzzle, spread)
+  shootBullets(actor, def, w.id, origin, dir, muzzle, spread)
+  afterShot(actor, def, w, muzzle, dir)
+  return true
+}
+
+// The bullets of one shot (every pellet): the world, vehicle hulls (cover: a vehicle stops the
+// bullet and takes the hit) and characters, the nearest wins. What was hit goes to the server
+// (`hit` per player, `vhit` per vehicle); the shot is relayed for the others' tracers.
+const tmpVN = new Vector3()
+function shootBullets(actor, def, wid, origin, dir, muzzle, spread) {
   const pellets = def.pellets || 1
   let anyHit = false
   let headHit = false
   const seq = ++shotSeq
   const hits = new Map() // target actor -> { n, h, d }
+  const vhits = new Map() // vehicle -> { n, d }
   const ends = []
+  const own = actor.seat?.v ?? null
   for (let i = 0; i < pellets; i++) {
     const d = coneDir(dir, spread, tmpD)
     const range = def.range
     const wh = castWorld(origin, d, range)
     let endDist = wh ? wh.dist : range
     const wallCollider = wh ? wh.collider : null
-    const whPoint = wh ? tmpN.copy(wh.point) : null
+    let whPoint = wh ? tmpN.copy(wh.point) : null
     const whNormal = wh ? tmpO.copy(wh.normal) : null
+    const vh = castVehicles(origin, d, endDist, own)
+    const hitV = vh ? vh.v : null
+    if (vh) {
+      endDist = vh.t
+      tmpVN.copy(vh.normal)
+      whPoint = null
+    }
     const ah = castActors(origin, d, endDist, actor, !!def.heal)
     let endPoint = tmpP.copy(origin).addScaledVector(d, ah ? ah.t : endDist)
     // From the muzzle: anything in the way of the gun itself (hugging a wall)?
@@ -211,6 +232,17 @@ export function fire(actor, origin, dir, speed = 0) {
       else fx.hitPuff(endPoint, d, ah.head)
       anyHit = true
       headHit = headHit || (ah.head && !healHit)
+    } else if (hitV) {
+      // Sparks off the hull (no bullet hole: it moves).
+      fx.impact(endPoint, tmpVN, 'metal', false)
+      if (actor.isPlayer || i === 0) sfx.impact('metal', actor.isPlayer && endDist < 3 ? { dist: 0, pan: 0 } : spatial(endPoint.x, endPoint.y, endPoint.z))
+      if (canHurtVehicle(hitV, actor)) {
+        const rec = vhits.get(hitV) || { n: 0, d: endDist }
+        rec.n++
+        rec.d = Math.min(rec.d, endDist)
+        vhits.set(hitV, rec)
+        anyHit = true
+      }
     } else if (whPoint) {
       const wall = wallCollider ? wallColliders.get(wallCollider.handle) : null
       if (wall) {
@@ -232,12 +264,28 @@ export function fire(actor, origin, dir, speed = 0) {
   if (actor.isPlayer && anyHit) sfx.hitmarker(headHit)
   // To the server: what this shot hit (it decides the damage), and the shot for the others' eyes and ears.
   for (const [target, r] of hits) {
-    if (target.netId) send('hit', { t: target.netId, w: w.id, s: seq, n: r.n, h: r.h, d: Math.round(r.d * 10) / 10 })
-    else if (localHits) localHits(target, { weapon: w.id, n: r.n, h: r.h, d: r.d, heal: def.heal && target.team === actor.team ? def.heal * r.n : 0 })
+    if (target.netId) send('hit', { t: target.netId, w: wid, s: seq, n: r.n, h: r.h, d: Math.round(r.d * 10) / 10 })
+    else if (localHits) localHits(target, { weapon: wid, n: r.n, h: r.h, d: r.d, heal: def.heal && target.team === actor.team ? def.heal * r.n : 0 })
   }
-  if (!localHits) send('shot', { w: w.id, o: pt(muzzle), e: ends.slice(0, 12) })
+  if (!localHits) for (const [v, r] of vhits) if (v.id) send('vhit', { v: v.id, w: wid, s: seq, n: r.n, d: Math.round(r.d * 10) / 10 })
+  if (!localHits) send('shot', { w: wid, o: pt(muzzle), e: ends.slice(0, 12) })
+}
 
-  afterShot(actor, def, w, muzzle, dir)
+// The Jeep's mounted gun (the gunner seat): no magazine, it overheats (vehicles.js gunState, kept by
+// controller.js). Fires from the gun's muzzle along the gunner's aim.
+export function fireMounted(actor, mountId, origin, dir) {
+  const def = MOUNTS[mountId]
+  const v = actor.seat?.v
+  if (!def || !v || actor.life !== 'alive' || actor.fireCooldown > 0) return false
+  actor.fireCooldown = def.interval
+  actor.lastShotAt = G.time
+  actor.emote = null
+  actor.cloakUntil = Math.min(actor.cloakUntil, G.time)
+  const muzzle = mountMuzzle(v, tmpM)
+  shootBullets(actor, def, mountId, origin, dir, muzzle, def.spread[0])
+  fx.muzzleFlash(muzzle, dir, 'big', true)
+  sfx.shot(def.sound || def.kind, { dist: 0, pan: 0, own: actor.isPlayer })
+  emit('shot', { actor, pos: muzzle.clone(), recoil: def.recoil, silent: false })
   return true
 }
 
@@ -338,7 +386,8 @@ export function weaponBlast(actor, weaponId, seq, pos) {
       a.impulse.z += (tmpP.z - pos.z) * k * 3
     }
   }
-  send('blast', { w: weaponId, s: seq, x: r2(pos.x), y: r2(pos.y), z: r2(pos.z), t: targets })
+  const vt = vehiclesInBlast(pos, radius, actor, lineOfSight)
+  send('blast', vt.length ? { w: weaponId, s: seq, x: r2(pos.x), y: r2(pos.y), z: r2(pos.z), t: targets, vt } : { w: weaponId, s: seq, x: r2(pos.x), y: r2(pos.y), z: r2(pos.z), t: targets })
 }
 const r2 = (v) => Math.round(v * 100) / 100
 
@@ -485,7 +534,9 @@ export function explode(pos, attacker, damage = ITEMS.frag.damage, radius = ITEM
       a.impulse.z += (tmpP.z - pos.z) * k * 2.5
     }
   }
-  send('boom', { x: Math.round(pos.x * 100) / 100, y: Math.round(pos.y * 100) / 100, z: Math.round(pos.z * 100) / 100, t: targets })
+  const vt = vehiclesInBlast(pos, radius, attacker, lineOfSight)
+  const b = { x: Math.round(pos.x * 100) / 100, y: Math.round(pos.y * 100) / 100, z: Math.round(pos.z * 100) / 100, t: targets }
+  send('boom', vt.length ? { ...b, vt } : b)
 }
 
 // kind: a GRENADES id, or 'launcher' / 'rocket' (a weapon's blast): picks the size of the boom.

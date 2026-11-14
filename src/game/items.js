@@ -9,6 +9,7 @@ import {
   IcosahedronGeometry,
   Mesh,
   MeshStandardMaterial,
+  Quaternion,
   Vector3,
 } from 'three'
 import { GRENADES, ITEMS, OPERATIVES, ULT_CHARGE } from '../config.js'
@@ -17,12 +18,14 @@ import { sfx, spatial } from '../audio/index.js'
 import { G, emit } from './state.js'
 import { castWorld, explode, wallColliders } from './combat.js'
 import { buildGrenade } from './weaponModels.js'
+import { castVehicles } from './vehicles.js'
 import * as fx from './fx.js'
 import { send } from '../net.js'
 import { clearAreas, fireArea, flashBang, smokeCloud, updateAreas } from './areas.js'
 import { clearProjectiles, updateProjectiles } from './projectiles.js'
 
 const tmp = new Vector3()
+const tmpQ = new Quaternion()
 const tmp2 = new Vector3()
 const DOWN = new Vector3(0, -1, 0)
 
@@ -193,6 +196,7 @@ class Grenade {
     this.blink = 0
     this.stuck = false
     this.stuckTo = null // the player a sticky charge clings to
+    this.stuckVeh = null // or the vehicle (stuckOff in its frame)
     this.stuckOff = new Vector3()
     this.beep = 0
   }
@@ -223,6 +227,11 @@ class Grenade {
         if (this.stuckTo.life === 'dead') this.stuckTo = null
         else this.pos.copy(this.stuckTo.pos).add(this.stuckOff)
         this.mesh.position.copy(this.pos)
+      } else if (this.stuckVeh) {
+        // riding along on a vehicle (until it is rebuilt)
+        if (!this.stuckVeh.model.parent) this.stuckVeh = null
+        else this.pos.copy(this.stuckOff).applyQuaternion(this.stuckVeh.model.quaternion).add(this.stuckVeh.model.position)
+        this.mesh.position.copy(this.pos)
       }
       this.beep -= dt
       if (this.beep <= 0) {
@@ -237,8 +246,30 @@ class Grenade {
     if (step > 1e-4) {
       tmp.copy(this.vel).normalize()
       const hit = castWorld(this.pos, tmp, step + 0.08)
+      // Vehicles: a sticky charge clings on, a bottle breaks on it, the rest bounce off.
+      const vh = castVehicles(this.pos, tmp, hit ? hit.dist : step + 0.08)
       // A sticky charge or a bottle also stops on a player in its path.
-      const who = this.effect === 'sticky' || this.effect === 'fire' ? this.playerOnPath(tmp, hit ? hit.dist : step + 0.08) : null
+      const who = this.effect === 'sticky' || this.effect === 'fire' ? this.playerOnPath(tmp, vh ? vh.t : hit ? hit.dist : step + 0.08) : null
+      if (vh && !who) {
+        const v = vh.v
+        this.pos.addScaledVector(tmp, vh.t).addScaledVector(vh.normal, 0.06)
+        if (this.effect === 'fire') return this.detonate()
+        if (this.effect === 'sticky') {
+          this.stick(null)
+          this.stuckVeh = v
+          tmpS.copy(this.pos).sub(v.model.position).applyQuaternion(tmpQ.copy(v.model.quaternion).invert())
+          this.stuckOff.copy(tmpS)
+          this.mesh.quaternion.setFromUnitVectors(UP, vh.normal)
+        } else {
+          const n = vh.normal
+          const vn = this.vel.dot(n)
+          if (vn < 0) this.vel.addScaledVector(n, -1.6 * vn).multiplyScalar(0.55)
+          if (Math.abs(vn) > 2) sfx.bounce(spatial(this.pos.x, this.pos.y, this.pos.z))
+          this.spin.multiplyScalar(0.6)
+        }
+        this.mesh.position.copy(this.pos)
+        return
+      }
       if (who) {
         this.pos.copy(tmpS)
         if (this.effect === 'fire') return this.detonate()

@@ -451,7 +451,7 @@ export function flashLight(pos, peak = 60, dur = 0.25) {
 }
 
 // Bullet hitting the world: sparks, dust, a decal.
-export function impact(point, normal, material = 'stone') {
+export function impact(point, normal, material = 'stone', decal = true) {
   const n = Math.round(rnd(5, 9) * quality)
   for (let i = 0; i < n; i++) {
     const sx = normal.x * rnd(2, 6) + rnd(-2.5, 2.5)
@@ -462,6 +462,7 @@ export function impact(point, normal, material = 'stone') {
   const dustC = material === 'grass' || material === 'dirt' ? C.dirt : C.dust
   for (let i = 0; i < Math.round(2 * quality) + 1; i++) blend.emit(point.x, point.y, point.z, normal.x * rnd(0.6, 1.6) + rnd(-0.4, 0.4), normal.y * rnd(0.6, 1.6) + rnd(0, 0.6), normal.z * rnd(0.6, 1.6) + rnd(-0.4, 0.4), rnd(0.5, 0.9), rnd(0.18, 0.28), dustC, 0.55, -0.6, 2.5, 0.8)
   // Decal
+  if (!decal) return
   const h = holeState.reduce((a, b) => (a.life < b.life ? a : b))
   h.life = 12
   v1.copy(point).addScaledVector(normal, 0.01)

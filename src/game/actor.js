@@ -4,7 +4,7 @@
 // (a body capsule and a head sphere, laid flat while knocked down).
 // Movement lives elsewhere (player.js for the player, online.js applyRemote for the others); each
 // frame they copy their interpolated feet position into `actor.pos`.
-import { CanvasTexture, Group, Object3D, Sprite, SpriteMaterial, SRGBColorSpace, Vector3 } from 'three'
+import { CanvasTexture, Group, Object3D, Quaternion, Sprite, SpriteMaterial, SRGBColorSpace, Vector3 } from 'three'
 import { HEALTH, ITEMS, OPERATIVES, PLAYER_DIMS, SKINS, TEAMS, WEAPONS, WEAPON_SCALE } from '../config.js'
 import { makeAnimator, disposeAnimator } from '../avatar/animator.js'
 import { bakeWeapon } from './merge.js'
@@ -18,6 +18,12 @@ const tmpA = new Vector3()
 const tmpB = new Vector3()
 const tmpC = new Vector3()
 const UP = new Vector3(0, 1, 0)
+const seatQ = new Quaternion()
+// The aim's yaw in a vehicle's frame (0 = straight ahead).
+function relYaw(dir, vq) {
+  tmpC.copy(dir).applyQuaternion(seatQ.copy(vq).invert())
+  return Math.atan2(tmpC.x, tmpC.z)
+}
 
 // Weapon model, merged to one mesh per material, keeping the muzzle/ejector markers.
 const weaponCache = new Map()
@@ -340,10 +346,24 @@ export class Actor {
     const g = this.group
     g.position.copy(this.pos)
     g.rotation.y = this.facing
-    // In a vehicle seat (vehicles.js sets `seat`): the body tilts with the vehicle (pos = its feet origin).
+    // In a vehicle seat (vehicles.js sets `seat`): the body tilts with the vehicle (pos = its feet
+    // origin). The driver faces ahead (twisting toward its aim while it shoots its sidearm, one hand
+    // on the wheel); passengers turn in their seat toward their aim; the gunner stands and turns
+    // with its mounted gun.
     const seat = this.seat
+    let twist = 0
+    let driveAim = false
     if (seat) {
-      g.quaternion.copy(seat.v.model.quaternion)
+      const vq = seat.v.model.quaternion
+      if (seat.drive) {
+        g.quaternion.copy(vq)
+        driveAim = this.life === 'alive' && !!this.def.mag && G.time - this.lastShotAt < 1.5
+        if (driveAim) twist = relYaw(aimDir, vq)
+      } else {
+        let rel = seat.gun && seat.v.mount ? seat.v.mount.yaw.rotation.y : relYaw(aimDir, vq)
+        if (!seat.gun) rel = Math.max(-1.9, Math.min(1.9, rel))
+        g.quaternion.copy(vq).multiply(seatQ.setFromAxisAngle(UP, rel))
+      }
       speed = 0
     }
     const reloadK = this.reloadT >= 0 && this.def.reload ? this.reloadT / this.def.reload : -1
@@ -353,9 +373,9 @@ export class Actor {
       speed,
       verticalVelocity: this.vel.y,
       turn: 0,
-      hold: this.def.hold,
+      hold: seat?.gun ? 'rifle' : this.def.hold, // the gunner's hands on the mount's grips
       pitch: this.pitch,
-      ready: this.ready,
+      ready: seat?.gun ? 1 : this.ready,
       kick: this.kick,
       reload: reloadK,
       swing: this.swingT >= 0 ? this.swingT / Math.min(0.45, swingDur) : -1,
@@ -365,15 +385,17 @@ export class Actor {
       life: this.life,
       emote: this.emote,
       emoteTime: this.emoteT,
-      sit: !!seat,
+      sit: !!seat && !seat.gun,
       drive: !!seat?.drive,
       steer: seat?.drive ? seat.v.steerShown : 0,
+      driveAim,
+      twist,
     })
     this.kick = Math.max(0, this.kick - dt * 9)
 
     // Held weapon: grip in the right hand, pointing along the aim (raised) or the forearm (lowered).
     const held = this.heldModel
-    const showHeld = held && this.life === 'alive' && !this.emote && this.throwT < 0 && !this.hidden && !seat?.drive
+    const showHeld = held && this.life === 'alive' && !this.emote && this.throwT < 0 && !this.hidden && !(seat?.drive && !driveAim) && !seat?.gun
     if (held) held.visible = !!showHeld
     this.backModel.visible = this.life !== 'dead' && !this.hidden
     if (showHeld && this.hand) {

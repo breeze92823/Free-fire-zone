@@ -3,7 +3,7 @@
 // +x the left side, +y up (config.js VEHICLES). Plain coloured parts are merged into one
 // vertex-coloured mesh (merge.js); glass and lamps keep their own materials; each wheel is its own
 // group (vehicles.js turns and spins it) with the tyre's axis along local x.
-import { BoxGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial, Quaternion, TorusGeometry, Vector3 } from 'three'
+import { BoxGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial, Object3D, Quaternion, TorusGeometry, Vector3 } from 'three'
 import { VEHICLES } from '../config.js'
 import { mergeChildren } from './merge.js'
 
@@ -16,6 +16,9 @@ function mats() {
     glass: new MeshStandardMaterial({ color: '#bfe3ff', roughness: 0.08, metalness: 0.2, transparent: true, opacity: 0.32, depthWrite: false }),
     lamp: new MeshStandardMaterial({ color: '#fff6d8', emissive: '#ffe9a8', emissiveIntensity: 1.4, roughness: 0.3 }),
     tail: new MeshStandardMaterial({ color: '#ff3a2a', emissive: '#ff2a1a', emissiveIntensity: 0.9, roughness: 0.4 }),
+    // a destroyed vehicle: everything charred (vertex colours darkened), no glass or lamps
+    wreck: new MeshStandardMaterial({ vertexColors: true, color: 0x57504a, roughness: 1, metalness: 0 }),
+    gun: new MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.45 }),
   }
   MAT.glass.name = 'vehicleGlass'
   return MAT
@@ -122,8 +125,17 @@ function jeep(def) {
   }
   box(g, D, 1.76, 0.09, 0.09, 0, 1.4, -0.58)
   box(g, D, 1.76, 0.08, 0.08, 0, 1.38, -1.86)
-  // seats, steering wheel, gear stick
-  for (const s of def.seats) seat(g, s)
+  // seats (not the gunner's: it stands), steering wheel, gear stick
+  for (const s of def.seats) if (!s.gun) seat(g, s)
+  // the ring mount's frame: a ring at waist height round the gunner, braced to the tub and roll bar
+  const m = def.mount
+  const ring = new Mesh(new TorusGeometry(0.5, 0.035, 6, 24), new MeshStandardMaterial({ color: D }))
+  ring.position.set(m.x, 1.2, m.z)
+  ring.rotation.x = Math.PI / 2
+  g.add(ring)
+  tube(g, D, [m.x - 0.36, 1.2, m.z - 0.34], [m.x - 0.42, 0.42, m.z - 0.5], 0.03)
+  tube(g, D, [m.x + 0.36, 1.2, m.z - 0.34], [m.x + 0.42, 0.42, m.z - 0.5], 0.03)
+  tube(g, D, [m.x, 1.2, m.z + 0.5], [m.x * 0.5, 1.38, -0.58], 0.03)
   const sw = def.seats[0]
   box(g, 0x1a1a1a, 0.06, 0.06, 0.42, sw.x, sw.y + 0.12, 0.52, 0.85)
   const wheelRing = new Mesh(new TorusGeometry(0.19, 0.028, 6, 16), new MeshStandardMaterial({ color: 0x1a1a1a }))
@@ -199,10 +211,56 @@ function buggy(def) {
   return g
 }
 
+// The mounted gun on its ring (vehicles.js turns it): yaw group at the pivot (local +z = where it
+// points), pitch group carrying the gun, a muzzle point at the barrel's end.
+function mountedGun(def) {
+  const m = def.mount
+  const yaw = new Group()
+  yaw.position.set(m.x, m.y, m.z)
+  const carriage = new Group()
+  box(carriage, 0x2b2f26, 0.1, 0.3, 0.08, 0, -0.14, 0.5) // the post from the ring
+  mergeChildren(carriage, mats().body)
+  yaw.add(carriage)
+  const pitch = new Group()
+  pitch.position.set(0, 0, 0.5)
+  const g = new Group()
+  const K = 0x2a2c2f
+  box(g, K, 0.16, 0.17, 0.56, 0, 0.02, 0.06) // receiver
+  box(g, 0x1f2023, 0.12, 0.05, 0.4, 0, 0.13, 0.04) // top cover
+  cyl(g, 0x1d1e20, 0.055, 0.5, 0, 0.02, 0.56, Math.PI / 2, 0, 0, 10) // barrel jacket
+  cyl(g, 0x151617, 0.028, 0.5, 0, 0.02, 0.98, Math.PI / 2, 0, 0, 8) // barrel
+  cyl(g, 0x151617, 0.045, 0.1, 0, 0.02, 1.24, Math.PI / 2, 0, 0, 8) // flash hider
+  box(g, 0x4c5a2a, 0.16, 0.2, 0.26, 0.17, -0.02, 0.0) // ammo can
+  box(g, 0xc9a23a, 0.04, 0.03, 0.14, 0.09, 0.05, 0.02) // belt
+  for (const sx of [0.08, -0.08]) box(g, 0x18191b, 0.035, 0.12, 0.035, sx, -0.04, -0.27, 0.3) // spade grips
+  box(g, 0x18191b, 0.2, 0.03, 0.03, 0, -0.02, -0.25)
+  box(g, 0x55585e, 0.04, 0.08, 0.04, 0, 0.13, 0.32) // sight post
+  mergeChildren(g, mats().gun)
+  pitch.add(g)
+  const muzzle = new Object3D()
+  muzzle.position.set(0, 0.02, 1.3)
+  pitch.add(muzzle)
+  yaw.add(pitch)
+  return { yaw, pitch, muzzle }
+}
+
+// Charred (destroyed) or as new: swaps the painted parts to the wreck material, hides glass and lamps.
+export function setWrecked(root, on) {
+  const M = mats()
+  root.traverse((o) => {
+    if (!o.isMesh) return
+    if (o.userData.live === undefined) o.userData.live = o.material
+    const live = o.userData.live
+    if (live === M.glass || live === M.lamp || live === M.tail) o.visible = !on
+    else o.material = on ? M.wreck : live
+  })
+}
+
 const BUILDERS = { jeep, buggy }
 const RIM = { jeep: 0x6f7550, buggy: 0xd8d2c4 }
 
-// { root, body, wheels: [Group x4] (front left, front right, back left, back right) }.
+// { root, body, wheels: [Group x4] (front left, front right, back left, back right), mount (the
+// Jeep's gun: { yaw, pitch, muzzle }) or null }.
 export function buildVehicleModel(type) {
   const def = VEHICLES[type]
   const root = new Group()
@@ -223,11 +281,16 @@ export function buildVehicleModel(type) {
     root.add(wg)
     return wg
   })
+  let mount = null
+  if (def.mount) {
+    mount = mountedGun(def)
+    root.add(mount.yaw)
+  }
   root.traverse((o) => {
     if (o.isMesh) {
       o.castShadow = o.material !== mats().glass
       o.receiveShadow = true
     }
   })
-  return { root, body, wheels }
+  return { root, body, wheels, mount }
 }

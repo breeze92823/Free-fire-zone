@@ -66,6 +66,120 @@ body.driving .hud .ult {
 .vh-keys b {
   color: #ffd27a;
 }
+/* Health (every seat) and the mounted gun's heat (its gunner). */
+.vh-bar {
+  position: relative;
+  width: clamp(120px, 22vmin, 190px);
+  height: 9px;
+  margin-top: 3px;
+  border-radius: 5px;
+  background: rgba(10, 14, 22, 0.65);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.vh-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  background: #7ddc5a;
+  transition: width 0.15s;
+}
+.vh-bar.hp.mid i {
+  background: #f2c14a;
+}
+.vh-bar.hp.low i {
+  background: #ff5a3a;
+  animation: vh-blink 0.5s steps(2) infinite;
+}
+.vh-bar.heat {
+  display: none;
+}
+.vh-bar.heat i {
+  background: linear-gradient(90deg, #ffd27a, #ff7a2a);
+  transition: none;
+}
+.vh-bar.heat span {
+  display: none;
+  position: absolute;
+  inset: 0;
+  font-size: 8px;
+  line-height: 9px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.08em;
+}
+.vh-bar.heat.over i {
+  background: #ff3a2a;
+}
+.vh-bar.heat.over span {
+  display: block;
+}
+.veh-hud[data-mode='gun'] .vh-bar.heat {
+  display: block;
+}
+.veh-hud[data-mode='ride'] .vh-speed,
+.veh-hud[data-mode='gun'] .vh-speed {
+  display: none;
+}
+@keyframes vh-blink {
+  50% {
+    opacity: 0.45;
+  }
+}
+/* No items or ability from a seat (controller.js); the gunner's own weapon panel steps aside too
+   (it fires the mount). */
+body.riding .hud-items,
+body.riding .hud-items *,
+body.riding .hud .ult,
+body.gunner .hud-weapons,
+body.gunner .hud-weapons * {
+  visibility: hidden !important;
+}
+/* A driver with a gun in the secondary slot keeps the crosshair and the weapon panel. */
+body.driving.drive-shoot .hud-cross,
+body.driving.drive-shoot .hud-weapons,
+body.driving.drive-shoot .hud-weapons * {
+  visibility: visible !important;
+}
+/* Riding (not driving): the HUD's own panels stay; the readout sits above the weapon panel. */
+body.riding .veh-hud {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + clamp(150px, 26vmin, 230px));
+}
+body.riding.gunner .veh-hud {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + clamp(14px, 3vmin, 30px));
+}
+/* Touch, riding (a passenger or the gunner): the FIRE cluster owns the bottom-right, so the bars sit
+   to the right of the "Get out" button (which already names the vehicle). */
+body.touch-ui.riding .veh-hud {
+  right: auto;
+  left: calc(50% + 72px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + clamp(44px, 9vmin, 62px) + clamp(40px, 9vmin, 54px) + 12px);
+  align-items: flex-start;
+}
+body.touch-ui.riding .veh-hud .vh-name {
+  display: none;
+}
+body.touch-ui.riding .vh-bar {
+  width: clamp(76px, 15vmin, 120px);
+}
+@media (orientation: portrait) {
+  /* Portrait, driving: the right column holds the weapon tiles, "Get out", FIRE and BRAKE: the
+     readout goes left, above the joystick. */
+  body.touch-ui.driving .veh-hud {
+    right: auto;
+    left: calc(env(safe-area-inset-left, 0px) + 14px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--t-pad) + var(--t-joy) + 40px);
+    align-items: flex-start;
+  }
+  /* Portrait: under the minimap column's kill feed, right edge (the cluster is far below). */
+  body.touch-ui.riding .veh-hud {
+    left: auto;
+    right: calc(env(safe-area-inset-right, 0px) + 12px);
+    bottom: auto;
+    top: calc(env(safe-area-inset-top, 0px) + 200px);
+    align-items: flex-end;
+  }
+}
 /* Touch: the BRAKE button and the interact button say it all. */
 body.touch-ui .vh-keys {
   display: none;
@@ -73,6 +187,10 @@ body.touch-ui .vh-keys {
 body.touch-ui .veh-hud {
   right: calc(env(safe-area-inset-right, 0px) + var(--t-pad) * 2 + var(--t-fire));
   bottom: calc(env(safe-area-inset-bottom, 0px) + var(--t-pad));
+}
+/* A driver with a gun: FIRE takes that spot, so the readout moves up, clear of the "Get out" button. */
+body.touch-ui.drive-shoot .veh-hud {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--t-pad) + var(--t-fire) + 70px);
 }
 /* The "Get out" prompt (the touch exit button) moves off the car: above BRAKE on touch, bottom-right
    above the speed on desktop. */

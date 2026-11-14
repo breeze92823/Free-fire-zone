@@ -216,7 +216,8 @@ export function installTouch(actions) {
   })
   brake.addEventListener('pointerup', brakeUp)
   brake.addEventListener('pointercancel', brakeUp)
-  root.append(stick, fireBtn('left'), cluster, brake)
+  // A driver with a gun shoots with this one, beside BRAKE (touch.css: body.driving.drive-shoot).
+  root.append(stick, fireBtn('left'), cluster, brake, fireBtn('drive'))
   document.body.append(pads, root)
 
   setVisible(COARSE_POINTER)

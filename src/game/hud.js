@@ -8,7 +8,7 @@
 // scoreboard (Tab). Event-driven where it can be; per-frame writes are cached.
 import './hud.css'
 import { Vector3 } from 'three'
-import { GRENADES, HEALTH, ITEMS, OPERATIVES, RANKS, REACTIONS, TEAMS, WEAPONS } from '../config.js'
+import { GRENADES, HEALTH, ITEMS, MOUNTS, OPERATIVES, RANKS, REACTIONS, TEAMS, VEHICLES, WEAPONS } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { G, on } from './state.js'
 import { SVG, itemIcon, svgData, weaponIcon } from './icons.js'
@@ -488,13 +488,16 @@ function teamClass(a) {
 
 function feed(killer, victim, kind, weapon, streak = 0) {
   const r = h('div', 'kf')
-  const wid = weapon && WEAPONS[weapon] ? weapon : null
+  // a mounted gun shows as the LMG; 'vboom' = caught in a destroyed vehicle; a vehicle type = run over
+  const wid = weapon && WEAPONS[weapon] ? weapon : MOUNTS[weapon] ? 'tempest' : null
   const nade = weapon && GRENADES[weapon] ? weapon : null // a throwable (frag, molotov, leech, ...)
+  const car = weapon === 'vboom' || !!VEHICLES[weapon]
+  const ranOver = !!VEHICLES[weapon] && kind !== 'knock'
   const burnt = GRENADES[weapon]?.effect === 'fire'
-  const blown = kind === 'frag' || (wid && WEAPONS[wid].blast && kind !== 'knock')
-  const actText = kind === 'knock' ? 'Knocked down' : kind === 'head' ? 'Shot to the head' : kind === 'zone' ? 'Lost in the zone' : burnt ? 'Burnt' : blown ? 'Blown up' : 'Eliminated'
+  const blown = kind === 'frag' || weapon === 'vboom' || (wid && WEAPONS[wid].blast && kind !== 'knock')
+  const actText = kind === 'knock' ? 'Knocked down' : kind === 'head' ? 'Shot to the head' : kind === 'zone' ? 'Lost in the zone' : burnt ? 'Burnt' : ranOver ? 'Ran over' : blown ? 'Blown up' : 'Eliminated'
   const actCls = kind === 'knock' ? 'knock' : kind === 'head' ? 'head' : 'elim'
-  const icon = wid ? weaponIcon(wid, 'standard', 160, 70) : nade ? itemIcon(nade, 70) : svgData(kind === 'frag' ? SVG.frag : SVG.skull)
+  const icon = wid ? weaponIcon(wid, 'standard', 160, 70) : nade ? itemIcon(nade, 70) : svgData(car ? SVG.car : kind === 'frag' ? SVG.frag : SVG.skull)
   r.innerHTML = `${streak > 1 ? `<span class="streak o">&lsaquo;${streak}&rsaquo;</span>` : ''}<img alt="" src="${icon}"><span class="a o ${teamClass(killer)}">${killer ? esc(killer.name) : ''}</span><span class="act o ${actCls}">${actText}</span><span class="a o ${teamClass(victim)}">${esc(victim.name)}</span>`
   el.feed.prepend(r)
   while (el.feed.children.length > 3) el.feed.lastChild.remove()

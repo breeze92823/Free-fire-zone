@@ -10,12 +10,18 @@
 //   sendVehicles(dt)  the poses of the vehicles this player simulates, NET.poseHz while it drives or
 //                     the vehicle still moves, then once "at rest" (the server lets go of it).
 //   placeSeated()     after physics: other seated players sit on their vehicle's drawn seat.
+//
+// Health (`hp`), wrecks (`wreck`: the charred look) and respawns (`life` changed: rebuilt at its spawn)
+// come from the state; `vboom` (destroyed: the explosion) and `ram` (someone was run over: the push,
+// for the one it hit) are messages.
 import { Vector3 } from 'three'
-import { NET } from '../config.js'
-import { net } from '../net.js'
+import { NET, VEHICLE_DAMAGE } from '../config.js'
+import { net, onNet } from '../net.js'
 import { G } from './state.js'
+import { explodeVisual } from './combat.js'
+import { addShake } from '../camera.js'
 import {
-  enterVehicle, exitVehicle, myVehicle, mySeatIndex, recentlyExited, removeVehicle, seatFeet, sendVehiclePose, setAuthority, snapVehicle, spawnVehicle, vehicleById, vehicles,
+  enterVehicle, exitVehicle, myVehicle, mySeatIndex, recentlyExited, removeVehicle, seatFeet, sendVehiclePose, setAuthority, setWreck, snapVehicle, spawnVehicle, vehicleById, vehicles,
 } from './vehicles.js'
 
 const PARKED_Y = -100 // backend vehicles.ts: never moved this round
@@ -31,11 +37,19 @@ export function syncVehicles() {
   // Create / update
   st.vehicles.forEach((s, id) => {
     let v = vehicleById(id)
+    // A new one parked at its spawn (the old one was wrecked): rebuild it.
+    if (v && v.life !== s.life) {
+      removeVehicle(v)
+      v = null
+    }
     if (!v) {
       v = spawnVehicle(s.type, s.x, s.z, yawOf(s), id)
       v.seenN = -1
+      v.life = s.life
       if (s.y !== PARKED_Y) snapVehicle(v, s.x, s.y, s.z, set(q, s), { x: s.vx, y: s.vy, z: s.vz })
     }
+    v.hp = s.hp
+    if (s.wreck !== v.wreck) setWreck(v, s.wreck)
     const auth = s.owner && s.owner !== meId ? 'remote' : 'local'
     if (auth !== v.auth) setAuthority(v, auth, { x: s.vx, y: s.vy, z: s.vz })
     v.ownerMine = s.owner === meId
@@ -62,7 +76,7 @@ export function syncVehicles() {
       const a = sid && sid !== meId ? G.actors.find((x) => x.netId === sid) ?? null : null
       if (cur && cur !== a && cur.seat?.v === v) cur.seat = null
       v.seats[i] = a
-      if (a) a.seat = { v, index: i, drive: i === 0 }
+      if (a) a.seat = { v, index: i, drive: i === 0, gun: v.def.seats[i].gun || null }
     }
     if (v.auth === 'remote') follow(v, now)
   })
@@ -174,3 +188,24 @@ export function placeSeated() {
     a.grounded = true
   }
 }
+
+// --- Messages: a vehicle destroyed, a player run over ------------------------------------------------
+const boomAt = new Vector3()
+onNet('vboom', ({ v: id, x, y, z }) => {
+  if (!G.match) return
+  const v = vehicleById(id)
+  // where it is drawn here (the server's y is unknown for a vehicle that never moved)
+  if (v) boomAt.copy(v.model.position)
+  else boomAt.set(x, y === PARKED_Y ? (G.island?.groundHeight(x, z) ?? 0) + 1 : y, z)
+  explodeVisual(boomAt, VEHICLE_DAMAGE.wreckRadius, 300, 'rocket')
+  if (v) setWreck(v, true)
+})
+onNet('ram', ({ t, x, z }) => {
+  const p = G.player
+  if (!G.match || !p || t !== net.sessionId || p.seat) return
+  // Thrown along the vehicle's way and off the ground a little.
+  const sp = Math.hypot(x, z) || 1
+  p.impulse.x += (x / sp) * Math.min(14, 4 + sp * 0.5)
+  p.impulse.z += (z / sp) * Math.min(14, 4 + sp * 0.5)
+  addShake(0.8)
+})

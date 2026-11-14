@@ -13,15 +13,24 @@
 // server decides the seats: requestEnter / requestExit ask it, and each vehicle has an authority:
 // 'local' (a dynamic body simulated here: driven or last driven by this player, or parked with nobody
 // simulating it) or 'remote' (a kinematic body following the poses of the player who drives it).
+//
+// Combat (the server decides every number, backend vehicles.ts / MatchRoom): bullets stop on a
+// vehicle's hull (castVehicles, combat.js) and hurt it, blasts list the vehicles they catch, sticky
+// charges cling to them (items.js); it smokes when hurt, burns below VEHICLE_DAMAGE.burnBelow and
+// ends as a charred wreck (setWreck) until a new one is parked. The driver may shoot their
+// secondary weapon; the Jeep's gunner seat mans its mounted gun (aimMount, combat.js fireMounted).
+// The driver's client reports players its vehicle runs over (`ram`); players on foot are pushed out
+// of vehicles others drive.
 import { Quaternion, Vector3 } from 'three'
-import { DRIVE, PHYSICS, VEHICLES } from '../config.js'
+import { DRIVE, MOUNTS, PHYSICS, VEHICLE_DAMAGE, VEHICLES } from '../config.js'
 import { RAPIER, bindMesh, onTick, unbindMesh, world } from '../physics.js'
 import { inputState, isHeld } from '../input.js'
+import { aimRay } from '../camera.js'
 import { player as body, resetPlayer, setRide } from '../player.js'
 import { sfx, setEngine } from '../audio/index.js'
 import { send } from '../net.js'
 import { G } from './state.js'
-import { buildVehicleModel } from './vehicleModels.js'
+import { buildVehicleModel, setWrecked } from './vehicleModels.js'
 import './vehicles.css'
 import * as fx from './fx.js'
 
@@ -103,6 +112,12 @@ export function spawnVehicle(type, x, z, yaw = 0, id = null) {
     ctrl,
     model: model.root,
     wheels: model.wheels,
+    mount: model.mount, // { yaw, pitch, muzzle } or null
+    gunSeat: def.seats.findIndex((s) => s.gun),
+    hp: def.hp,
+    wreck: false,
+    life: 0, // the server's VehicleState.life this was built for
+    fxT: 0,
     spawn: { x, z, yaw },
     seats: def.seats.map(() => null), // actor per seat
     throttle: 0,
@@ -214,6 +229,194 @@ export function seatFeet(v, index, out) {
   return out.copy(v.model.position).add(tmpW)
 }
 
+// --- Hits: the hull as a box (the drawn pose: what the shooter sees) ---------------------------------
+const HULL_UP = 0.05 // the tub / panels reach a little above the collider
+const rq = new Quaternion()
+const ro = new Vector3()
+const rd = new Vector3()
+// Distance along the ray (o, unit d) to the vehicle's hull within maxDist, or -1; nOut: the face normal.
+function rayHull(v, o, d, maxDist, nOut) {
+  rq.copy(v.model.quaternion).invert()
+  ro.copy(o).sub(v.model.position).applyQuaternion(rq)
+  rd.copy(d).applyQuaternion(rq)
+  const [hx, hy, hz] = v.def.half
+  let t0 = 0
+  let t1 = maxDist
+  let axis = -1
+  let sign = 0
+  for (let i = 0; i < 3; i++) {
+    const lo = i === 0 ? -hx : i === 1 ? -hy : -hz
+    const hi = i === 0 ? hx : i === 1 ? hy + HULL_UP : hz
+    const oi = ro.getComponent(i)
+    const di = rd.getComponent(i)
+    if (Math.abs(di) < 1e-9) {
+      if (oi < lo || oi > hi) return -1
+      continue
+    }
+    let a = (lo - oi) / di
+    let b = (hi - oi) / di
+    let sg = -1
+    if (a > b) {
+      const t = a
+      a = b
+      b = t
+      sg = 1
+    }
+    if (a > t0) {
+      t0 = a
+      axis = i
+      sign = sg
+    }
+    if (b < t1) t1 = b
+    if (t0 > t1) return -1
+  }
+  if (axis < 0) return -1 // the ray starts inside
+  if (nOut) nOut.set(0, 0, 0).setComponent(axis, sign).applyQuaternion(v.model.quaternion)
+  return t0
+}
+
+// The nearest vehicle hull along a unit ray within maxDist: { v, t, normal } (shared object) or null.
+// `skip`: a vehicle to ignore (the shooter's own).
+const vhOut = { v: null, t: 0, normal: new Vector3() }
+const vn = new Vector3()
+export function castVehicles(o, d, maxDist, skip = null) {
+  let best = null
+  let bt = maxDist
+  for (const v of vehicles) {
+    if (v === skip) continue
+    // quick reject: the ray's closest approach to the centre
+    ro.subVectors(v.model.position, o)
+    const along = ro.dot(d)
+    if (along < -4 || along > bt + 4 || ro.lengthSq() - along * along > 16) continue
+    const t = rayHull(v, o, d, bt, vn)
+    if (t >= 0 && t < bt) {
+      bt = t
+      best = v
+      vhOut.normal.copy(vn)
+    }
+  }
+  if (!best) return null
+  vhOut.v = best
+  vhOut.t = bt
+  return vhOut
+}
+
+// Is the world point inside the hull, padded by `pad` m (sides) and `padY` (up and down)? Writes the
+// local offset into `local`.
+function inHull(v, p, pad, padY, local) {
+  rq.copy(v.model.quaternion).invert()
+  local.copy(p).sub(v.model.position).applyQuaternion(rq)
+  const [hx, hy, hz] = v.def.half
+  return Math.abs(local.x) < hx + pad && local.y > -hy - padY && local.y < hy + HULL_UP + padY && Math.abs(local.z) < hz + pad
+}
+
+// May this actor's shots or blasts hurt `v`? (The server checks the same: not a wreck, not one they
+// sit in, nobody of their team inside.)
+export function canHurtVehicle(v, actor) {
+  if (v.wreck) return false
+  for (const a of v.seats) if (a && (a === actor || a.team === actor.team)) return false
+  return true
+}
+
+// The ids of the vehicles a blast at `pos` (radius R) catches, with line of sight to their centre.
+export function vehiclesInBlast(pos, R, actor, los) {
+  const out = []
+  for (const v of vehicles) {
+    if (!v.id || !canHurtVehicle(v, actor)) continue
+    if (v.model.position.distanceTo(pos) > R + VEHICLE_DAMAGE.size) continue
+    if (los && !los(pos, v.model.position)) continue
+    out.push(v.id)
+  }
+  return out
+}
+
+export const vehicleHpShare = (v) => clamp(v.hp / (v.def.hp || 1), 0, 1)
+
+// Destroyed (or rebuilt): charred look, the mount drooped, nobody drives it.
+export function setWreck(v, on) {
+  if (v.wreck === on) return
+  v.wreck = on
+  setWrecked(v.model, on)
+  if (on && v.mount) v.mount.pitch.rotation.x = 0.35
+}
+
+// The mounted gun's muzzle (world), for the gunner's shots and the tracers others draw.
+export function mountMuzzle(v, out) {
+  if (!v?.mount) return null
+  v.model.updateMatrixWorld(true)
+  return v.mount.muzzle.getWorldPosition(out)
+}
+
+// The mounted gun follows its gunner's aim (the local player: the camera; others: their pose yaw and
+// pitch), turned into the vehicle's frame and eased; with nobody on it, it swings back forward.
+const ma = new Vector3()
+function aimMount(v, dt) {
+  const m = v.mount
+  if (!m || v.wreck) return
+  const g = v.seats[v.gunSeat]
+  let yaw = 0
+  let pitch = 0.05
+  if (g) {
+    if (g === G.player) ma.copy(aimRay.dir)
+    else ma.set(Math.sin(g.facing) * Math.cos(g.pitch), -Math.sin(g.pitch), Math.cos(g.facing) * Math.cos(g.pitch))
+    rq.copy(v.model.quaternion).invert()
+    ma.applyQuaternion(rq)
+    yaw = Math.atan2(ma.x, ma.z)
+    pitch = clamp(-Math.asin(clamp(ma.y, -1, 1)), -0.55, 0.38)
+  }
+  const k = 1 - Math.exp(-dt * (g ? 30 : 3))
+  let dy = yaw - m.yaw.rotation.y
+  dy = Math.atan2(Math.sin(dy), Math.cos(dy))
+  m.yaw.rotation.y += dy * k
+  m.pitch.rotation.x += (pitch - m.pitch.rotation.x) * k
+}
+
+// --- Running people over (the local driver's vehicle) and being pushed out of others' ---------------
+const ramAt = new Map() // actor -> ms of the last report
+const loc = new Vector3()
+const chestP = new Vector3()
+function checkRams() {
+  const v = mine
+  if (!v || mySeat !== 0 || v.auth !== 'local' || v.wreck || !v.id) return
+  const lv = v.body.linvel()
+  const sp = Math.hypot(lv.x, lv.z)
+  if (sp < VEHICLE_DAMAGE.ram.minSpeed) return
+  const now = performance.now()
+  for (const a of G.actors) {
+    if (!a.remote || !a.netId || a.seat || a.life === 'dead' || a.team === G.player?.team) continue
+    chestP.set(a.pos.x, a.pos.y + 0.9, a.pos.z)
+    if (!inHull(v, chestP, 0.55, 0.9, loc)) continue
+    if (now - (ramAt.get(a) ?? 0) < VEHICLE_DAMAGE.ram.gapMs) continue
+    ramAt.set(a, now)
+    send('ram', { v: v.id, t: a.netId, sp: Math.round(sp * 10) / 10 })
+    sfx.impact('metal')
+    sfx.hitmarker(false)
+    fx.hitPuff(chestP, fwd.set(lv.x, 0, lv.z).normalize(), false)
+  }
+}
+const nudgeOut = { x: 0, z: 0 }
+function pushWalker() {
+  const p = G.player
+  if (!p || p.seat || p.life === 'dead') return
+  chestP.set(p.pos.x, p.pos.y + 0.9, p.pos.z)
+  for (const v of vehicles) {
+    if (v.auth !== 'remote') continue
+    if (!inHull(v, chestP, 0.42, 0.85, loc)) continue
+    const [hx, , hz] = v.def.half
+    const px = hx + 0.45 - Math.abs(loc.x)
+    const pz = hz + 0.45 - Math.abs(loc.z)
+    // out through the nearer side; a moving vehicle brushes past (sideways), it does not bulldoze
+    // (running someone over is the driver's `ram` report: damage and a push from the server)
+    if (px < pz || Math.abs(v.speed) > 2) loc.set(Math.sign(loc.x || 1) * Math.min(px + 0.02, 0.6), 0, 0)
+    else loc.set(0, 0, Math.sign(loc.z || 1) * Math.min(pz + 0.02, 0.6))
+    loc.applyQuaternion(v.model.quaternion)
+    nudgeOut.x = loc.x
+    nudgeOut.z = loc.z
+    body.nudge = nudgeOut
+    return
+  }
+}
+
 // --- Physics tick: controls -> wheel forces, then the raycast vehicle update --------------------------
 function tickVehicle(v, dt) {
   const def = v.def
@@ -239,7 +442,7 @@ function tickVehicle(v, dt) {
   tmpQ.set(rot.x, rot.y, rot.z, rot.w)
   fwd.set(0, 0, 1).applyQuaternion(tmpQ)
   v.speed = lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z
-  const driven = !!v.seats[0] && v.seats[0] === G.player // a local sim is driven from here, or parked
+  const driven = !!v.seats[0] && v.seats[0] === G.player && !v.wreck // a local sim is driven from here, or parked
   const s = v.speed
   let engine = 0
   let brake = 0
@@ -300,6 +503,7 @@ export function vehicleNear(actor) {
   let best = null
   let bd = DRIVE.enterRange
   for (const v of vehicles) {
+    if (v.wreck) continue
     const free = v.seats.findIndex((a) => !a)
     if (free < 0) continue
     const t = v.body.translation()
@@ -326,7 +530,7 @@ export function enterVehicle(v, index = 0) {
   mine = v
   mySeat = index
   v.seats[index] = p
-  p.seat = { v, index, drive: index === 0 }
+  p.seat = { v, index, drive: index === 0, gun: v.def.seats[index].gun || null }
   p.crouch = false
   p.aiming = false
   p.reloadT = -1
@@ -335,6 +539,8 @@ export function enterVehicle(v, index = 0) {
   setRide((out) => seatPose(v, index, out), index !== 0) // passengers look (and aim) freely
   document.body.classList.toggle('driving', index === 0)
   document.body.classList.toggle('riding', index !== 0)
+  document.body.classList.toggle('gunner', !!p.seat.gun)
+  document.body.classList.toggle('drive-shoot', index === 0 && !!p.slots[1]?.def.mag)
   v.body.wakeUp()
   sfx.equip()
   return true
@@ -352,7 +558,7 @@ export function exitVehicle(force = false) {
     mine = null
     mySeat = -1
     setRide(null)
-    document.body.classList.remove('driving', 'riding')
+    document.body.classList.remove('driving', 'riding', 'gunner', 'drive-shoot')
     setEngine(null)
     paintHud()
     return true
@@ -373,7 +579,7 @@ export function exitVehicle(force = false) {
   const lv = v.body.linvel()
   body.velocity.x = lv.x * 0.5
   body.velocity.z = lv.z * 0.5
-  document.body.classList.remove('driving', 'riding')
+  document.body.classList.remove('driving', 'riding', 'gunner', 'drive-shoot')
   inputState.brake = false
   setEngine(null)
   paintHud()
@@ -471,7 +677,11 @@ export function updateVehicles(dt) {
       fx.dustKick?.(v.model.position, 8)
     }
     v.lastSpeed = v.speed
+    aimMount(v, dt)
+    damageFx(v, dt)
   }
+  checkRams()
+  pushWalker()
   // Engine sound for the vehicle the player sits in.
   if (mine) {
     const v = mine
@@ -481,31 +691,90 @@ export function updateVehicles(dt) {
   paintHud()
 }
 
+// Smoke when hurt, fire and black smoke when burning, a smoulder from a wreck (near the camera only).
+const fxP = new Vector3()
+function damageFx(v, dt) {
+  const share = vehicleHpShare(v)
+  if (!v.wreck && share >= VEHICLE_DAMAGE.smokeBelow) return
+  if (G.camera && G.camera.position.distanceToSquared(v.model.position) > 160 * 160) return
+  v.fxT -= dt
+  if (v.fxT > 0) return
+  const burning = !v.wreck && share < VEHICLE_DAMAGE.burnBelow
+  v.fxT = burning ? 0.04 : v.wreck ? 0.16 : 0.09
+  // from the engine (the Jeep's hood, the Buggy's back)
+  const ez = v.type === 'buggy' ? -1.25 : 1.35
+  fxP.set((Math.random() - 0.5) * 0.6, v.def.half[1] + 0.1, ez + (Math.random() - 0.5) * 0.5).applyQuaternion(v.model.quaternion).add(v.model.position)
+  const lv = v.body.linvel()
+  if (burning) {
+    fx.emitAdd(fxP.x, fxP.y, fxP.z, lv.x * 0.3 + (Math.random() - 0.5) * 0.6, 1.4 + Math.random(), lv.z * 0.3 + (Math.random() - 0.5) * 0.6, 0.35 + Math.random() * 0.25, 0.32, fx.FX_COLORS.fire, 1, 1.5, 0.5, -0.4)
+  }
+  const dark = burning || v.wreck || share < 0.35
+  fx.emitBlend(fxP.x, fxP.y + 0.2, fxP.z, lv.x * 0.2 + (Math.random() - 0.5) * 0.5, 1.2 + Math.random() * 0.8, lv.z * 0.2 + (Math.random() - 0.5) * 0.5, 1.6 + Math.random(), 0.45, dark ? fx.FX_COLORS.darkSmoke : fx.FX_COLORS.smoke, dark ? 0.55 : 0.4, 0.3, 0.6, 1.4)
+}
+
 // --- Speed readout (DOM, shown while seated) --------------------------------------------------------
+// The mounted gun the local player mans: heat 0..1 (controller.js / combat.js fireMounted), `over`
+// while it cools down from overheating.
+export const gunState = { heat: 0, over: false }
 let hud = null
-let shownKmh = -1
-let shownName = ''
+const shown = { kmh: -1, name: '', hp: -1, heat: -1, over: null, mode: '' }
+// Driving: the speed, the vehicle's health and the keys; riding: its health; on the gun: its heat too.
 function paintHud() {
-  if (!mine || mySeat !== 0) {
+  if (!mine) {
     if (hud) hud.style.display = 'none'
-    shownKmh = -1
+    shown.kmh = -1
+    shown.mode = ''
     return
   }
   if (!hud) {
     hud = document.createElement('div')
     hud.className = 'veh-hud'
-    hud.innerHTML = '<div class="vh-speed o"><b>0</b><span>km/h</span></div><div class="vh-name o"></div><div class="vh-keys"><span><b>W S</b> drive</span><span><b>A D</b> steer</span><span><b>Space</b> handbrake</span><span><b>E</b> get out</span></div>'
+    hud.innerHTML = '<div class="vh-speed o"><b>0</b><span>km/h</span></div><div class="vh-name o"></div><div class="vh-bar hp"><i></i></div><div class="vh-bar heat"><i></i><span>OVERHEATED</span></div><div class="vh-keys"></div>'
     document.body.appendChild(hud)
   }
   hud.style.display = ''
-  const kmh = Math.round(Math.abs(mine.speed) * 3.6)
-  if (kmh !== shownKmh) {
-    shownKmh = kmh
-    hud.querySelector('.vh-speed b').textContent = String(kmh)
+  const drive = mySeat === 0
+  const gunner = mySeat === mine.gunSeat
+  const shoots = drive && !!G.player?.slots[1]?.def.mag
+  const mode = drive ? (shoots ? 'drive-gun' : 'drive') : gunner ? 'gun' : 'ride'
+  if (mode !== shown.mode) {
+    shown.mode = mode
+    hud.dataset.mode = mode
+    hud.querySelector('.vh-keys').innerHTML = drive
+      ? `<span><b>W S</b> drive</span><span><b>A D</b> steer</span><span><b>Space</b> handbrake</span>${shoots ? '<span><b>LMB</b> shoot</span>' : ''}<span><b>E</b> get out</span>`
+      : gunner
+        ? '<span><b>LMB</b> mounted gun</span><span><b>E</b> get out</span>'
+        : '<span><b>E</b> get out</span>'
   }
-  const name = `${mine.def.name}${mine.speed < -0.5 && mySeat === 0 ? ' · R' : ''}`
-  if (name !== shownName) {
-    shownName = name
+  if (drive) {
+    const kmh = Math.round(Math.abs(mine.speed) * 3.6)
+    if (kmh !== shown.kmh) {
+      shown.kmh = kmh
+      hud.querySelector('.vh-speed b').textContent = String(kmh)
+    }
+  }
+  const name = gunner ? MOUNT_NAME(mine) : `${mine.def.name}${mine.speed < -0.5 && drive ? ' · R' : ''}`
+  if (name !== shown.name) {
+    shown.name = name
     hud.querySelector('.vh-name').textContent = name
   }
+  const hp = Math.round(vehicleHpShare(mine) * 100)
+  if (hp !== shown.hp) {
+    shown.hp = hp
+    const bar = hud.querySelector('.vh-bar.hp')
+    bar.firstChild.style.width = `${hp}%`
+    bar.classList.toggle('low', hp < VEHICLE_DAMAGE.burnBelow * 100)
+    bar.classList.toggle('mid', hp >= VEHICLE_DAMAGE.burnBelow * 100 && hp < VEHICLE_DAMAGE.smokeBelow * 100)
+  }
+  if (gunner) {
+    const heat = Math.round(gunState.heat * 100)
+    if (heat !== shown.heat || gunState.over !== shown.over) {
+      shown.heat = heat
+      shown.over = gunState.over
+      const bar = hud.querySelector('.vh-bar.heat')
+      bar.firstChild.style.width = `${heat}%`
+      bar.classList.toggle('over', gunState.over)
+    }
+  }
 }
+const MOUNT_NAME = (v) => `${v.def.name} · ${MOUNTS[v.def.seats[v.gunSeat].gun]?.name ?? 'Gun'}`

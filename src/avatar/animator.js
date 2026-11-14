@@ -87,7 +87,8 @@ class PlayerAnimator {
   //   hold: 'rifle'|'pistol'|'melee'|'fist'|null, pitch (rad, + = down), ready (0..1),
   //   kick (0..1 recoil), reload (0..1 or -1), swing (0..1 or -1), throwing (0..1 or -1),
   //   crouch (bool), life: 'alive'|'knocked'|'dead', emote: name|null, emoteTime (s),
-//   sit (bool: in a vehicle seat), drive (bool: hands on the wheel), steer (-1..1) }
+//   sit (bool: in a vehicle seat), drive (bool: hands on the wheel), steer (-1..1), driveAim (bool:
+//   the driver shoots its sidearm, one hand on the wheel), twist (rad: its aim from straight ahead) }
   update(dt, input = NO_INPUT) {
     if (!(dt > 0)) return
     this.time += dt
@@ -253,6 +254,23 @@ class PlayerAnimator {
       for (const bone in P) {
         const at = boneIndex(bone)
         r[at] = lerp(r[at], P[bone].x ?? 0, this.sit)
+      }
+      if (input.drive && life === 'alive' && input.driveAim) {
+        // Shooting the sidearm while driving: the left hand stays on the wheel, the body twists
+        // toward the aim (input.twist: the aim's yaw from straight ahead) and the right arm aims.
+        const D = ANIM.sit.drive
+        const st = (input.steer || 0) * deg(14)
+        const P = ANIM.aim.pistol
+        const tw = clamp(input.twist || 0, -1.5, 1.5)
+        const pitch = (input.pitch || 0) * ANIM.aim.pitchFollow
+        this.mix('ArmL1', D.ArmL1.x + st, D.ArmL1.y ?? 0, D.ArmL1.z ?? 0, this.sit)
+        this.mix('ArmL2', D.ArmL2.x, 0, 0, this.sit)
+        this.addTo('Spine1', 0, tw * 0.4)
+        this.addTo('Spine2', 0, tw * 0.3)
+        this.mix('ArmR1', (P.ArmR1.x ?? 0) + pitch - (input.kick || 0) * deg(9), (P.ArmR1.y ?? 0) + tw * 0.3, P.ArmR1.z ?? 0, this.sit)
+        this.mix('ArmR2', P.ArmR2.x ?? 0, 0, 0, this.sit)
+        this.addTo('Neck1', pitch * 0.45, tw * 0.3)
+        return
       }
       if (input.drive && life === 'alive') {
         const D = ANIM.sit.drive

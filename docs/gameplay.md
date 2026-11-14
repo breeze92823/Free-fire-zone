@@ -396,7 +396,7 @@ Recipe, add a mission: append `{ id, stat, goal, coins, gems }` to the list in b
 
 ## 19. Vehicles and the Test Drive (`vehicles.js`, `vehicleModels.js`, `driveTest.js`)
 
-Driving works offline in the **Test Drive** (the lobby's TEST DRIVE button) and online in Dustline Ridge rounds (`vehicleNet.js`, below): a Jeep and a Dune Buggy wait in each camp's vehicle bay, the server owns the seats, the driver's client simulates the vehicle, passengers ride and shoot. Vehicle damage, cover, ramming and the driver's own gun are the next milestone.
+Driving works offline in the **Test Drive** (the lobby's TEST DRIVE button) and online in Dustline Ridge rounds (`vehicleNet.js`, below): a Jeep and a Dune Buggy wait in each camp's vehicle bay, the server owns the seats, the driver's client simulates the vehicle, passengers ride and shoot, the driver shoots its sidearm, the Jeep's gunner mans a mounted gun, and vehicles take damage, give cover, run people over and blow up (Combat, below).
 
 ### Tuning: `config.js` `VEHICLES` and `DRIVE`
 
@@ -404,7 +404,9 @@ Driving works offline in the **Test Drive** (the lobby's TEST DRIVE button) and 
 
 | Field | Meaning |
 | --- | --- |
-| `seats[i]` `{ x, y, z, drive }` | Hip point of each seat; `seats[0]` is the driver |
+| `seats[i]` `{ x, y, z, drive, gun }` | Hip point of each seat; `seats[0]` is the driver; `gun` (a `MOUNTS` id): the gunner's seat, whose occupant stands (feet at `y - DRIVE.hipHeight`, on the floor) behind the ring mount (the Jeep's seat 3) |
+| `hp` | Health (backend `rules.ts VEHICLE_TYPES`: Jeep 1200, Buggy 750) |
+| `mount` `{ x, y, z }` | The mounted gun's pivot (the Jeep): over the gunner's feet, above the roll bar |
 | `exits` `[[x, z], ...]` | Where getting out puts the player, tried in order (first clear spot) |
 | `half`, `mass`, `com`, `gravity` | Chassis box half extents, mass (kg), centre of mass offset (low = hard to roll), gravity scale (0.65: the game's 22 m/s^2 is heavy for cars; with it they climb about 30 deg and jump further) |
 | `wheels` `{ x, front, back, y, radius, width, rest, travel }` | Wheel connection points (y = where the suspension ray starts), tyre size, suspension rest length and travel |
@@ -414,6 +416,8 @@ Driving works offline in the **Test Drive** (the lobby's TEST DRIVE button) and 
 | `brake`, `handbrake`, `roll` | Brake impulses per wheel: braking (throttle against the motion), handbrake (rear, also when parked), coasting drag |
 | `steer`, `steerAtTop`, `steerRate` | Wheel lock at a standstill and at top speed (rad), how fast the wheels turn (rad/s) |
 | `camera` `{ distance, height }` | The chase camera's boom |
+
+`MOUNTS.mg` (the Jeep's mounted gun; backend `rules.ts MOUNTS`): `damage` 26, `interval` 0.085, `range` 170, `headMul` 1.6 (checked by the server), `spread`, `recoil`, and its heat: `heatPerShot` 0.045 (about 22 shots, 1.9 s of fire), `cool` 0.32/s while not firing, `cooldown` 2.4 s locked out after it overheats. `VEHICLE_DAMAGE` (the client's share of backend `rules.ts VEHICLE_DAMAGE`): `size` (2.2 m added to blast radii when listing vehicles), `burnBelow` 0.2 / `smokeBelow` 0.55 (the effects), `wreckRadius`, `ram.minSpeed` 8 m/s and `ram.gapMs` 900 (reporting a run-over).
 
 `DRIVE`: `enterRange` (3.2 m from the chassis box), `flipAfter` (2.5 s upside down or on its side and slow, then it is put back on its wheels), `camFollowDelay` / `camFollowRate` / `camPitch` (the chase camera swings back behind the vehicle 0.9 s after the last look input), `hipHeight` (feet origin to hips of a seated character), `test` (Test Drive spawn and the two parked vehicles at West Camp's bay).
 
@@ -430,12 +434,15 @@ Driving works offline in the **Test Drive** (the lobby's TEST DRIVE button) and 
 | `exitVehicle(force)` | Finds a clear spot (`exits`: a down ray for the floor, a capsule overlap test), `setRide(null)`, `resetPlayer` there with half the vehicle's speed; refuses (deny sound) when nowhere is clear unless `force` |
 | `driveInput()` | Per frame from `controller.js`: throttle = `move.z`, steering = `-move.x`, handbrake = Space held or `inputState.brake` (touch BRAKE) |
 | `driveCamera()`, `vehicleFocus()` | The chase camera's options and target for `main.js` |
-| `updateVehicles(dt)` | Per frame (`main.js`, only while any exist): wheel groups follow the suspension length, steering and spin; flip / fall recovery; a thump and dust on a hard knock; the engine voice (`audio/engine.js setEngine`); the speed readout (`.veh-hud`) |
+| `updateVehicles(dt)` | Per frame (`main.js`, only while any exist): wheel groups follow the suspension length, steering and spin; flip / fall recovery; a thump and dust on a hard knock; the mounted gun follows its gunner (`aimMount`); smoke and fire (`damageFx`); the local driver's run-overs (`checkRams`); a player on foot pushed out of a vehicle someone else drives (`pushWalker`); the engine voice (`audio/engine.js setEngine`); the readout (`.veh-hud`) |
+| `castVehicles(o, d, max, skip)` | The nearest vehicle hull along a unit ray: `{ v, t, normal }` (shared object). The hull is the chassis box (its drawn, interpolated pose: what the shooter sees) 0.05 m taller than the collider; `skip` = the shooter's own vehicle |
+| `canHurtVehicle(v, actor)`, `vehiclesInBlast(pos, R, actor, los)` | The server's rule (not a wreck, not one the actor sits in, no teammate inside); the ids of the vehicles within `R + VEHICLE_DAMAGE.size` of a blast with line of sight to their centre (`boom` / `blast` `vt`) |
+| `setWreck(v, on)`, `vehicleHpShare(v)`, `mountMuzzle(v, out)`, `gunState` | A wreck's look (`vehicleModels.js setWrecked`), health share, the mounted gun's muzzle (world), the local gunner's `{ heat, over }` |
 | `myVehicle()`, `driving()`, `vehicles` | State |
 
 Physics tick (`onTick`, before `world.step`): per vehicle, the forces from its controls: throttle forward = engine (tapered by speed) or brakes when moving backwards; throttle back = brakes when moving forwards, else reverse (65 % force, up to `reverseSpeed`); no input = `roll` drag; no driver = parked on the handbrake. Steering lock shrinks with speed and eases at `steerRate`. Then `ctrl.updateVehicle(dt, flags, groups, predicate)` (its own chassis and kinematic bodies such as the player's capsule are excluded from the suspension rays).
 
-Seated player: `controller.js updateController` skips weapons, items, crates and revives (`canAct()` is false in a seat), shows the prompt "<vehicle> · Get out" and calls `driveInput()`; E or the prompt button (`interactPress`) gets in and out. `actor.js updateModel` copies the vehicle's quaternion onto the character and passes `sit`, `drive`, `steer` to the animator (the 'sit' layer, avatar.md). The held gun is hidden while driving. `main.js` uses the chase camera (`camera.js opts.drive`).
+Seated player: `controller.js updateController` skips items, abilities, crates and revives in any seat, shows the prompt "<vehicle> · Get out"; the driver calls `driveInput()` and, when its secondary slot holds a gun (`slots[1].def.mag`), is switched to it and fires it along the camera's aim (`shootHeld`; R reloads; the slot it held before comes back once it is on foot); the gunner fires the mount (below); passengers shoot their own weapons. E or the prompt button (`interactPress`) gets in and out. `actor.js updateModel`: the driver takes the vehicle's quaternion (twisting toward its aim while it shoots: animator `driveAim`, `twist`: one hand on the wheel, the other aims); passengers turn in their seat toward their aim (clamped to +-110 deg); the gunner stands (no `sit`) with a rifle hold and turns with the mount; the held gun is hidden for a driver not shooting and for the gunner. `main.js` uses the chase camera for the driver (`camera.js opts.drive`).
 
 ### Online (`vehicleNet.js`; backend `vehicles.ts`, protocol.md)
 
@@ -443,11 +450,20 @@ Each frame of a round (`main.js gameFrame`): `syncVehicles()` after the server s
 
 Passengers: `setRide(seat, look = true)` faces the body with the camera, so they aim freely; `controller.js` lets them fire, reload and switch weapons (no movement, items, abilities or crates; the prompt is Get out); their spread counts at most a walk (3 m/s); no footsteps. The driver keeps the chase camera; passengers keep the shooter camera on their seat. `body.riding` marks a passenger (`body.driving` only the driver: the weapon HUD hides and BRAKE shows only for the driver).
 
-Known limits: the player's capsule ignores kinematic bodies (`player.js`), so a vehicle someone else is driving can be walked through (parked ones are local and solid); bullets ignore vehicles (`combat.js` casts against static colliders only).
+Wrecks and respawns (state `hp`, `wreck`, `life`): `syncVehicles` copies `hp`, turns a vehicle into a wreck when `wreck` is set, and rebuilds it at its spawn when `life` changes (a new one parked). Messages: `vboom` (destroyed: an explosion on the drawn vehicle, `explodeVisual` rocket-size) and `ram` (this player was run over: an impulse along the vehicle's velocity and a camera shake; ignored while seated). The player's capsule collides with kinematic bodies (`player.js`: vehicles others drive are solid), and `pushWalker` nudges the player out of one that drives into them (`player.nudge`, sideways when it moves).
+
+### Combat (backend `vehicles.ts` / `MatchRoom`; every number is the server's)
+
+- **Hits and cover.** `combat.js shootBullets` (every bullet, a driver's sidearm and the mounted gun alike) casts the world, then `castVehicles` up to the world hit, then the characters up to that: a vehicle's hull stops the bullet (cover: the tub covers a seated player's legs, the body above it is exposed). A hull hit throws metal sparks (no bullet hole: it moves) and, when `canHurtVehicle`, counts toward `vhit { v, w, s, n, d }` (one per vehicle per shot, same shot number as any `hit`). Launcher rounds go off on a hull and crossbow bolts report `vhit` (`projectiles.js`). Frags and launcher blasts add `vt` (the vehicles caught) to `boom` / `blast`. Grenades (`items.js`) bounce off hulls, a firebottle breaks on one, a sticky charge clings on and rides along (`stuckVeh`, its offset in the vehicle's frame); the server makes a sticky charge on a vehicle hurt it most.
+- **Damage** (server, `VEHICLE_DAMAGE`): bullets x0.6 with falloff, blasts x1.4 measured to the surface, a sticky on it x2.0; no friendly fire (nobody of the attacker's side inside; empty vehicles are anyone's). Below 20 % it burns down on its own (5 %/s; get out). At 0 the server ejects everyone, `vboom`s, hurts everyone seated (230, through armour) and anyone within 7 m (150 falling off; not the attacker's teammates), credits the destroyer (kill feed weapon `vboom`: "Blown up") and parks a new one after 30 s.
+- **Looks** (`damageFx`, near the camera): grey smoke from the engine below 55 %, black below 35 %, fire below 20 %, a smoulder from a wreck; a wreck is charred (`setWrecked`: the wreck material, no glass or lamps) and its gun droops.
+- **Ramming.** The driver's client (`checkRams`, a vehicle it simulates at 8 m/s or more) reports each enemy on foot whose chest is inside its hull (padded) as `ram { v, t, sp }`, once per 0.9 s per player, with a thump, a hit puff and a hit marker; the server checks it and applies `30 + 7 x (speed - 8)` (max 200; kill feed "Ran over", weapon = the vehicle type) and relays `ram` so the victim's client throws them.
+- **Mounted gun** (the Jeep's seat 3, `gun: 'mg'`): `controller.js` aims it with the camera and `combat.js fireMounted` shoots from its muzzle (`MOUNTS.mg`: no magazine; heat per shot, overheats, cools; the HUD's heat bar). Others see the gun turn with the gunner's pose (`aimMount`) and its shots (`shot` with `w: 'mg'`; `online.js` reads `MOUNTS` and `muzzleOf` gives the mount's muzzle). The server accepts `mg` only from that seat (`Vehicles.mountOf`).
+- **The driver's sidearm**: see Seated player above; the pose it sends carries its aim yaw (`online.js sendPose`), so others see where it shoots.
 
 ### `vehicleModels.js`
 
-`buildVehicleModel(type)` returns `{ root, body, wheels }`: the body is one merged vertex-coloured mesh (`merge.js mergeChildren`) plus glass, head lamps and tail lamps with their own materials; each wheel is a group (tyre with tread blocks, rim, hub; axis along local x, rotation order `YXZ`: y = steering, x = spin). Jeep: olive open-top tub, hood and grille, fenders, folded windshield with glass, roll bar, four seats, steering wheel, spare tyre and jerry cans. Buggy: orange nose and side pods on a floor pan, a tubular roll cage, rear engine with exhausts, two bucket seats, a light bar.
+`buildVehicleModel(type)` returns `{ root, body, wheels, mount }` (`mount`: the Jeep's gun, `{ yaw, pitch, muzzle }`: a yaw group at `VEHICLES.jeep.mount` with a carriage post, a pitch group with the receiver, barrel jacket, ammo can, belt and spade grips, and the muzzle point; the Jeep's gunner seat gets a ring round its waist braced to the tub and roll bar instead of a seat); `setWrecked(root, on)` swaps the painted parts to a charred material and hides glass and lamps. The model: the body is one merged vertex-coloured mesh (`merge.js mergeChildren`) plus glass, head lamps and tail lamps with their own materials; each wheel is a group (tyre with tread blocks, rim, hub; axis along local x, rotation order `YXZ`: y = steering, x = spin). Jeep: olive open-top tub, hood and grille, fenders, folded windshield with glass, roll bar, four seats, steering wheel, spare tyre and jerry cans. Buggy: orange nose and side pods on a floor pan, a tubular roll cage, rear engine with exhausts, two bucket seats, a light bar.
 
 ### `driveTest.js` (Test Drive)
 

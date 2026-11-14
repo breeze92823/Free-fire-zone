@@ -3,7 +3,8 @@
 // NET.interpDelay behind their newest pose; the server decides their health, life and score.
 // The local player sends its pose ~NET.poseHz times a second (sendPose).
 import { Vector3 } from 'three'
-import { DEV_MODE, GRENADES, MAPS, NET, ULT_CHARGE, WEAPONS } from '../config.js'
+import { DEV_MODE, GRENADES, MAPS, MOUNTS, NET, ULT_CHARGE, WEAPONS } from '../config.js'
+import { getYaw } from '../camera.js'
 import { G, emit } from './state.js'
 import { Actor } from './actor.js'
 import { buildCharacter, portrait, randomOutfit } from './characters.js'
@@ -379,7 +380,7 @@ export function sendPose(dt) {
     x: round(p.pos.x),
     y: round(p.pos.y),
     z: round(p.pos.z),
-    yaw: round(p.facing, 1000),
+    yaw: round(p.seat?.drive ? getYaw() + Math.PI : p.facing, 1000), // a driver's aim, not the vehicle's heading
     pitch: round(p.pitch, 1000),
     speed: round(Math.hypot(p.vel.x, p.vel.z)),
     flags: f,
@@ -507,7 +508,7 @@ export function initOnline() {
   onNet('shot', ({ id, w, o, e, v }) => {
     const a = byNet(id)
     if (!a || !G.match || a.life !== 'alive') return
-    const def = WEAPONS[w]
+    const def = WEAPONS[w] ?? MOUNTS[w] // a mounted gun: from its muzzle (muzzleOf)
     if (!def) return
     const muzzle = muzzleOf(a, new Vector3())
     a.lastShotAt = G.time

@@ -206,6 +206,7 @@ Progress (coins, rank, items, loadout, stats) is not stored in the browser: the 
 | Add a shop item or price | `config.js` + backend `catalog.ts`; [ui.md](ui.md) for the card. Skins, operatives and the Store cost coins; the Weapons Store (weapons, grenades, the pass) costs the game's own Gems ([ui.md](ui.md) 3.10). Both are earned only |
 | Change the Weapon Test range (TEST button) | `src/game/testRange.js`; [gameplay.md](gameplay.md) section 17 |
 | Tune or add a vehicle, change the Test Drive | `VEHICLES` / `DRIVE` in `config.js`, `src/game/vehicles.js`, `vehicleModels.js`, `driveTest.js`; [gameplay.md](gameplay.md) section 19 |
+| Vehicle health, damage, ramming, the mounted gun | `VEHICLES[type].hp`, `MOUNTS`, `VEHICLE_DAMAGE` in `config.js` and the backend's `rules.ts` (`VEHICLE_TYPES`, `MOUNTS`, `VEHICLE_DAMAGE`: the server decides); `vehicles.js` (hulls, wrecks, rams), `combat.js` (`shootBullets`, `fireMounted`), `vehicleNet.js`; [gameplay.md](gameplay.md) section 19 "Combat" |
 | Change the HUD or a menu | [ui.md](ui.md); respect reserved areas, touch and small screens |
 | Add a key or touch control | [engine.md](engine.md) (`input.js`, `touch.js`), `controller.js bindKeys`. Never bind P |
 | Change the island | [world.md](world.md); data in `src/world/layout.js` (Coral Key) or `src/world/ridge/layout.js` (Dustline Ridge) |

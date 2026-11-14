@@ -235,3 +235,14 @@ body.driving .touch-cluster,
 body.driving .touch-btn.fire.left {
   display: none;
 }
+.touch-btn.fire.drive {
+  display: none;
+  position: absolute;
+  width: var(--t-fire);
+  height: var(--t-fire);
+  right: calc(env(safe-area-inset-right, 0px) + var(--t-pad) * 2 + var(--t-fire));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--t-pad));
+}
+body.driving.drive-shoot .touch-btn.fire.drive {
+  display: flex;
+}

@@ -4,16 +4,16 @@
 // the ability, the interact key (open supplies, hold to revive), emotes and
 // spectating after an elimination.
 import { Vector3 } from 'three'
-import { HEALTH, PHYSICS, SCOPE_FOV } from '../config.js'
+import { HEALTH, MOUNTS, PHYSICS, SCOPE_FOV } from '../config.js'
 import { inputState, isHeld, onKey } from '../input.js'
 import { player as body } from '../player.js'
 import { aimRay, addRecoil, addShake } from '../camera.js'
 import { sfx } from '../audio/index.js'
 import { G, on } from './state.js'
-import { castWorld, currentSpread, fire, resolveMelee, selectSlot, startReload } from './combat.js'
+import { castWorld, currentSpread, fire, fireMounted, resolveMelee, selectSlot, startReload } from './combat.js'
 import { dash, deployWall, startHeal, startThrow, useUltimate } from './items.js'
 import { crateNear, openCrate } from './loot.js'
-import { driveInput, requestEnter, requestExit, vehicleNear } from './vehicles.js'
+import { castVehicles, driveInput, gunState, requestEnter, requestExit, vehicleNear } from './vehicles.js'
 import * as fx from './fx.js'
 import { profile } from './save.js'
 import { send } from '../net.js'
@@ -24,12 +24,13 @@ let firedThisPress = false
 let lastFireHeld = false
 let stepAcc = 0
 let reviveTarget = null
+let slotBeforeDrive = -1 // the weapon slot to go back to after driving with the sidearm
 
 export const view = { aimDir, aimPoint, scoped: false, spread: 0, onEnemy: false, prompt: null, interactHeld: false }
 
 function canAct() {
   const p = G.player
-  return p && p.life === 'alive' && G.phase === 'playing' && !p.seat?.drive // the driver only drives; passengers shoot
+  return p && p.life === 'alive' && G.phase === 'playing' && !p.seat?.drive && !p.seat?.gun // the driver drives (and shoots its sidearm), the gunner mans the gun
 }
 
 export function bindKeys(hud) {
@@ -38,7 +39,7 @@ export function bindKeys(hud) {
   onKey('Digit2', slot(1))
   onKey('Digit3', slot(2))
   onKey('Digit4', slot(3))
-  onKey('KeyR', () => canAct() && startReload(G.player))
+  onKey('KeyR', () => (canAct() || (G.player?.seat?.drive && G.player.life === 'alive')) && startReload(G.player))
   onKey('KeyC', () => {
     inputState.crouch = !inputState.crouch
     hud.touch?.syncCrouch(inputState.crouch)
@@ -137,25 +138,65 @@ export function updateController(dt, hud) {
   const isGun = !!def.mag
   view.prompt = null
 
-  // Driving: the input drives the vehicle (vehicles.js); no weapons, items or other prompts.
-  // A passenger falls through to the shooting below (no movement, items or prompts but Get out).
+  // Driving: the input drives the vehicle (vehicles.js); no items or other prompts. A driver with a
+  // gun in the secondary slot shoots it one-handed along the camera's aim (it is switched to on the
+  // way in and back on the way out).
   if (p.seat?.drive) {
     inputState.wheel = 0
     p.aiming = false
     p.crouch = false
     view.scoped = false
-    view.onEnemy = false
-    view.spread = 0
-    aimDir.copy(aimRay.dir)
-    aimPoint.copy(aimRay.origin).addScaledVector(aimRay.dir, 60)
-    p.pitch = 0
+    const shoots = !!p.slots[1]?.def.mag
+    traceAim(p)
+    p.pitch = shoots ? -Math.asin(Math.max(-1, Math.min(1, aimDir.y))) : 0
+    view.spread = shoots ? currentSpread(p, 3) : 0
     if (playing && alive) {
       driveInput()
       view.prompt = { t1: p.seat.v.def.name, t2: 'Get out', progress: 0 }
-    }
+      if (shoots) {
+        if (p.slot !== 1) {
+          if (slotBeforeDrive < 0) slotBeforeDrive = p.slot
+          selectSlot(p, 1)
+        }
+        shootHeld(p, p.def, 3, dt)
+        if (p.weapon.ammo === 0 && p.reloadT < 0 && p.weapon.reserve > 0 && !inputState.fire) startReload(p)
+      } else lastFireHeld = false
+    } else lastFireHeld = false
+    return
+  }
+  // Back on foot: the weapon the driver held before.
+  if (!p.seat && slotBeforeDrive >= 0) {
+    if (alive) selectSlot(p, slotBeforeDrive)
+    slotBeforeDrive = -1
+  }
+
+  // The Jeep's gunner seat: the mounted gun (no reload, it overheats), no items or other prompts.
+  if (p.seat?.gun) {
+    inputState.wheel = 0
+    p.aiming = false
+    p.crouch = false
+    view.scoped = false
+    const def = MOUNTS[p.seat.gun]
+    traceAim(p)
+    p.pitch = -Math.asin(Math.max(-1, Math.min(1, aimDir.y)))
+    view.spread = def.spread[0]
+    const g = gunState
+    const firing = inputState.fire && playing && alive && !g.over
+    if (firing && fireMounted(p, p.seat.gun, aimRay.origin, aimRay.dir)) {
+      g.heat = Math.min(1, g.heat + def.heatPerShot)
+      addRecoil(def.recoil, def.recoil * 0.5)
+      if (g.heat >= 1) {
+        g.over = true
+        sfx.deny()
+      }
+    } else if (!firing || g.over) g.heat = Math.max(0, g.heat - dt * (g.over ? 1 / def.cooldown : def.cool))
+    if (g.over && g.heat <= 0) g.over = false
+    if (playing && alive) view.prompt = { t1: p.seat.v.def.name, t2: 'Get out', progress: 0 }
     lastFireHeld = false
     return
   }
+  gunState.heat = 0
+  gunState.over = false
 
   // Wheel switches weapons.
   if (inputState.wheel !== 0) {
@@ -189,19 +230,7 @@ export function updateController(dt, hud) {
   if (sprint && p.reloadT < 0) p.ready = Math.max(0, p.ready - dt * 4)
 
   // Aim ray -> what the crosshair covers.
-  aimDir.copy(aimRay.dir)
-  const wh = castWorld(aimRay.origin, aimRay.dir, 300)
-  aimPoint.copy(aimRay.origin).addScaledVector(aimRay.dir, wh ? wh.dist : 300)
-  view.onEnemy = false
-  for (const a of G.actors) {
-    if (a.team === p.team || a.life === 'dead') continue
-    const h = a.hitTest(aimRay.origin, aimRay.dir, wh ? wh.dist : 300)
-    if (h) {
-      view.onEnemy = true
-      aimPoint.copy(aimRay.origin).addScaledVector(aimRay.dir, h.t)
-      break
-    }
-  }
+  traceAim(p)
   // Boolean: guns without a scope have def.scope undefined, and an undefined here made the
   // HUD's classList.toggle flip the scope overlay on every other frame while aiming.
   view.scoped = !!(p.aiming && def.scope && alive && def.zoom <= SCOPE_FOV + 6)
@@ -213,25 +242,8 @@ export function updateController(dt, hud) {
   p.pitch = -Math.asin(Math.max(-1, Math.min(1, aimDir.y)))
 
   // Fire
-  const fireHeld = inputState.fire && playing && alive
-  if (fireHeld && !lastFireHeld) firedThisPress = false
-  // A burst weapon finishes its burst once started, held or not.
-  if ((fireHeld || p.burstLeft > 0) && p.healT < 0 && p.throwT < 0 && alive && playing) {
-    if (def.auto || !firedThisPress || p.burstLeft > 0) {
-      p.ready = 1
-      const shot = fire(p, aimRay.origin, aimRay.dir, hspeed)
-      if (shot) {
-        firedThisPress = true
-        const kick = (def.recoil || 0) * (p.aiming ? 0.55 : 1) * (p.crouch ? 0.8 : 1)
-        addRecoil(kick, kick * 0.6)
-        if (def.kind === 'sniper' || def.kind === 'shotgun' || def.kind === 'lever' || def.kind === 'revolver') addShake(0.25)
-        else if (def.kind === 'rocket' || def.kind === 'launcher') addShake(def.kind === 'rocket' ? 0.6 : 0.35)
-      }
-    }
-  }
-  lastFireHeld = fireHeld
-  if (p.aiming || G.time - p.lastShotAt < 1.4) p.ready = Math.min(1, p.ready + dt * 8)
-  else if (!sprint) p.ready = Math.max(0.35, p.ready - dt * 1.5)
+  shootHeld(p, def, hspeed, dt)
+  if (!p.aiming && G.time - p.lastShotAt >= 1.4 && !sprint) p.ready = Math.max(0.35, p.ready - dt * 1.5)
   if (p.pendingMelee && G.time >= p.pendingMelee) resolveMelee(p)
 
   // Auto-reload an empty gun.
@@ -304,6 +316,49 @@ export function updateController(dt, hud) {
 }
 
 export const getReviveTarget = () => reviveTarget
+
+// The aim ray -> what the crosshair covers (aimPoint) and whether it is on an enemy.
+function traceAim(p) {
+  aimDir.copy(aimRay.dir)
+  const wh = castWorld(aimRay.origin, aimRay.dir, 300)
+  const vh = castVehicles(aimRay.origin, aimRay.dir, wh ? wh.dist : 300, p.seat?.v ?? null)
+  const far = vh ? vh.t : wh ? wh.dist : 300
+  aimPoint.copy(aimRay.origin).addScaledVector(aimRay.dir, far)
+  view.onEnemy = false
+  for (const a of G.actors) {
+    if (a.team === p.team || a.life === 'dead') continue
+    const h = a.hitTest(aimRay.origin, aimRay.dir, far)
+    if (h) {
+      view.onEnemy = true
+      aimPoint.copy(aimRay.origin).addScaledVector(aimRay.dir, h.t)
+      break
+    }
+  }
+}
+
+// The held weapon's trigger (on foot, a passenger, or a driver's sidearm): auto weapons fire while
+// held, the rest once per press; a burst finishes once started.
+function shootHeld(p, def, hspeed, dt) {
+  const playing = G.phase === 'playing'
+  const alive = p.life === 'alive'
+  const fireHeld = inputState.fire && playing && alive
+  if (fireHeld && !lastFireHeld) firedThisPress = false
+  if ((fireHeld || p.burstLeft > 0) && p.healT < 0 && p.throwT < 0 && alive && playing) {
+    if (def.auto || !firedThisPress || p.burstLeft > 0) {
+      p.ready = 1
+      const shot = fire(p, aimRay.origin, aimRay.dir, hspeed)
+      if (shot) {
+        firedThisPress = true
+        const kick = (def.recoil || 0) * (p.aiming ? 0.55 : 1) * (p.crouch ? 0.8 : 1)
+        addRecoil(kick, kick * 0.6)
+        if (def.kind === 'sniper' || def.kind === 'shotgun' || def.kind === 'lever' || def.kind === 'revolver') addShake(0.25)
+        else if (def.kind === 'rocket' || def.kind === 'launcher') addShake(def.kind === 'rocket' ? 0.6 : 0.35)
+      }
+    }
+  }
+  lastFireHeld = fireHeld
+  if (p.aiming || G.time - p.lastShotAt < 1.4) p.ready = Math.min(1, p.ready + dt * 8)
+}
 
 // Getting hit shakes the view; nearby explosions too.
 on('damage', ({ target, amount, explosive }) => {
