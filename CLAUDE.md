@@ -1,6 +1,6 @@
 # Free Fire Zone
 
-An original third-person ONLINE team shooter on a blocky island (Bloxity platform game). Two teams of real players (blue vs orange, 3 v 3 rounds in an 18-player server room, the rest queue; no bots) fight timed respawn rounds on "Coral Key" with a shrinking safe zone, supply crates, airdrops, frost walls, grenades, operatives with Q abilities, knock-down + revive, and a lobby with shops.
+An original third-person ONLINE team shooter on a blocky island (Bloxity platform game). Two teams of real players (blue vs orange, 3 v 3 rounds in a 6-player server room, a full room sends the next player to another room; no bots) fight timed respawn rounds on "Coral Key" with a shrinking safe zone, supply crates, airdrops, frost walls, grenades, operatives with Q abilities, knock-down + revive, and a lobby with shops.
 
 ## Docs
 Detailed code documentation lives in `docs/` (start at `docs/README.md`: architecture, boot order, frame loop, phases, "where to change what"; then `gameplay.md`, `ui.md`, `engine.md`, `world.md`, `avatar.md`, `audio.md`, `bloxity.md`). The server and the wire protocol are in the backend's `docs/server.md` and `docs/protocol.md`. Read the page for the area before changing it, and update it when the change makes it wrong.

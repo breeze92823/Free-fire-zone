@@ -257,7 +257,7 @@ export const LEADERBOARDS = [
 // Keep roomSize / teamMax / minPlayers / respawn in step with its src/constants.ts.
 export const NET = {
   room: 'match',
-  roomSize: 18, // connections per room (the lobby); a round seats 2 x teamMax, the rest queue
+  roomSize: 6, // connections per room (the lobby) = a round's seats (2 x teamMax): nobody queues, the matchmaker opens another room
   teamMax: 3, // players per side in a round (a round has 6)
   minPlayers: 2, // a round starts once this many have pressed Play
   // Local development without the Bloxity SDK: the backend's `npm start`.

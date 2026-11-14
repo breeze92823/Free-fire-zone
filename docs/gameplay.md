@@ -321,7 +321,7 @@ Edit the number in `config.js` `WEAPONS` and the same number in backend `rules.t
 
 ### Change round length, score target, team size
 
-Mode `duration` / `scoreToWin`: backend `rules.ts` `MODES` is what counts (the client reads `st.duration` / `st.scoreToWin`); keep `config.js` `MATCH_MODES` in step for the lobby text. Team or room size (`teamMax` = players per side in a round, round = 2 x teamMax = 6; `roomSize` = lobby connections, 18, the surplus queues): `NET.roomSize` / `teamMax` here, `ROOM_MAX_CLIENTS` / `TEAM_MAX` in backend `constants.ts` (the backend deploy sends `roomSize` from it).
+Mode `duration` / `scoreToWin`: backend `rules.ts` `MODES` is what counts (the client reads `st.duration` / `st.scoreToWin`); keep `config.js` `MATCH_MODES` in step for the lobby text. Team or room size (`teamMax` = players per side in a round, round = 2 x teamMax = 6; `roomSize` = lobby connections, 6 = the round's seats, so a full room sends the next player to another room instead of queueing): `NET.roomSize` / `teamMax` here, `ROOM_MAX_CLIENTS` / `TEAM_MAX` in backend `constants.ts` (the backend deploy sends `roomSize` from it).
 
 ### React to a game event
 
