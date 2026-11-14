@@ -13,6 +13,7 @@ import * as bloxity from '../bloxity.js'
 import { G, on } from './state.js'
 import { SVG, itemIcon, svgData, weaponIcon } from './icons.js'
 import { portrait } from './characters.js'
+import { vehicles as allVehicles } from './vehicles.js'
 
 const h = (tag, cls = '', html = '') => {
   const e = document.createElement(tag)
@@ -670,6 +671,15 @@ function wireEvents() {
     feed(attacker, target, 'knock', weapon)
     if (attacker === G.player) notice(`Knocked <em>${esc(target.name)}</em>`, '')
   })
+  // A vehicle destroyed (vehicleNet.js `vboom`): "<who> Destroyed <vehicle>".
+  on('vehicleDestroyed', ({ by, name }) => {
+    const r = h('div', 'kf')
+    r.innerHTML = `<img alt="" src="${svgData(SVG.car)}"><span class="a o ${by ? teamClass(by) : ''}">${by ? esc(by.name) : ''}</span><span class="act o elim">Destroyed</span><span class="a o">${esc(name)}</span>`
+    el.feed.prepend(r)
+    while (el.feed.children.length > 3) el.feed.lastChild.remove()
+    setTimeout(() => (r.style.opacity = 0), 5000)
+    setTimeout(() => r.remove(), 5600)
+  })
   on('elimination', ({ target, killer, weapon, head, streak }) => {
     feed(killer, target, weapon === 'zone' ? 'zone' : weapon === 'frag' || GRENADES[weapon] ? 'frag' : head ? 'head' : 'elim', weapon, streak)
     if (killer === G.player) {
@@ -756,6 +766,7 @@ function drawArrow(g, x, y, yaw, size, fill, stroke = '#000') {
   g.restore()
 }
 
+const vehFwd = new Vector3()
 function drawOverlay(g, W, Hh, toPx, scale, viewCone) {
   const zone = G.match?.zone?.state
   if (zone) {
@@ -805,6 +816,30 @@ function drawOverlay(g, W, Hh, toPx, scale, viewCone) {
     g.lineWidth = 2
     g.fillRect(p.x - 5, p.y - 5, 10, 10)
     g.strokeRect(p.x - 5, p.y - 5, 10, 10)
+  }
+  // Vehicles: a box along its heading; white = empty, blue = a teammate in it, red = enemies only,
+  // grey = a wreck; the player's own vehicle outlined in yellow.
+  for (const v of allVehicles) {
+    const p = toPx(v.model.position.x, v.model.position.z)
+    if (p.x < -10 || p.y < -10 || p.x > W + 10 || p.y > Hh + 10) continue
+    const occ = v.seats.filter(Boolean)
+    const mine = G.player?.seat?.v === v
+    const col = v.wreck ? '#5a5a5a' : occ.some((a) => a.team === G.player?.team) ? '#4fc3ff' : occ.length ? '#ff5a4a' : '#f0f0f0'
+    const L = Math.max(13, v.def.half[2] * 2 * scale)
+    const Wd = Math.max(8, v.def.half[0] * 2 * scale)
+    vehFwd.set(0, 0, 1).applyQuaternion(v.model.quaternion)
+    g.save()
+    g.translate(p.x, p.y)
+    g.rotate(-Math.atan2(vehFwd.x, vehFwd.z)) // map +x right, +z down: the nose (local +y) along its heading
+    g.fillStyle = col
+    g.strokeStyle = mine ? '#ffd34d' : '#000'
+    g.lineWidth = mine ? 2.5 : 1.5
+    g.fillRect(-Wd / 2, -L / 2, Wd, L)
+    g.strokeRect(-Wd / 2, -L / 2, Wd, L)
+    // its nose
+    g.fillStyle = '#000'
+    g.fillRect(-Wd / 2, L / 2 - 2.5, Wd, 2.5)
+    g.restore()
   }
   // Gunfire pings
   for (const pg of pings) {

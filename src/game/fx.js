@@ -238,6 +238,7 @@ const C = {
   ember: new Color(3.2, 1.2, 0.3),
   fire: new Color(2.6, 0.85, 0.18),
   dust: new Color('#b9a68a'),
+  sand: new Color('#f3e7cc'), // wheel dust (vehicles.js): pale, to show against sand and dirt
   dirt: new Color('#7a6248'),
   smoke: new Color('#8a8a8a'),
   darkSmoke: new Color('#3d3b39'),

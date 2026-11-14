@@ -795,6 +795,7 @@ export const MISSIONS = {
     { id: 'd_heads', stat: 'headshots', goal: 15, coins: 130, gems: 15 },
     { id: 'd_assists', stat: 'assists', goal: 5, coins: 120, gems: 15 },
     { id: 'd_revives', stat: 'revives', goal: 2, coins: 120, gems: 15 },
+    { id: 'd_wreck', stat: 'wrecks', goal: 1, coins: 140, gems: 18 }, // vehicles (Dustline Ridge)
   ],
   weekly: [
     { id: 'w_play', stat: 'play', goal: 20, coins: 600, gems: 80 },
@@ -803,6 +804,8 @@ export const MISSIONS = {
     { id: 'w_damage', stat: 'damage', goal: 15000, coins: 700, gems: 90 },
     { id: 'w_heads', stat: 'headshots', goal: 80, coins: 700, gems: 90 },
     { id: 'w_revives', stat: 'revives', goal: 10, coins: 600, gems: 80 },
+    { id: 'w_wrecks', stat: 'wrecks', goal: 5, coins: 700, gems: 90 },
+    { id: 'w_rams', stat: 'rams', goal: 4, coins: 700, gems: 90 },
   ],
   // How each stat reads in the window ({n} = the goal). "play" / "win" count rounds played to the end.
   text: {
@@ -814,6 +817,8 @@ export const MISSIONS = {
     headshots: 'Land {n} headshots',
     assists: 'Get {n} assists',
     revives: 'Revive {n} teammates',
+    wrecks: 'Destroy {n} vehicles',
+    rams: 'Run over {n} enemies',
   },
 }
 export const START_PROFILE = {

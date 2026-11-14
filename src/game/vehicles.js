@@ -21,7 +21,7 @@
 // secondary weapon; the Jeep's gunner seat mans its mounted gun (aimMount, combat.js fireMounted).
 // The driver's client reports players its vehicle runs over (`ram`); players on foot are pushed out
 // of vehicles others drive.
-import { Quaternion, Vector3 } from 'three'
+import { CanvasTexture, CircleGeometry, Mesh, MeshBasicMaterial, Quaternion, SRGBColorSpace, Sprite, SpriteMaterial, Vector3 } from 'three'
 import { DRIVE, MOUNTS, PHYSICS, VEHICLE_DAMAGE, VEHICLES } from '../config.js'
 import { RAPIER, bindMesh, onTick, unbindMesh, world } from '../physics.js'
 import { inputState, isHeld } from '../input.js'
@@ -113,6 +113,13 @@ export function spawnVehicle(type, x, z, yaw = 0, id = null) {
     model: model.root,
     wheels: model.wheels,
     mount: model.mount, // { yaw, pitch, muzzle } or null
+    tail: model.tail, // its own tail-lamp material (brake lights)
+    exhaust: model.exhaust,
+    hitAt: -1e9, // performance.now() of its last damage (the health bar over it)
+    bar: null, // that bar (a sprite), made on first use
+    scorch: null, // the burn mark under a wreck
+    exhaustT: 0,
+    dustT: 0,
     gunSeat: def.seats.findIndex((s) => s.gun),
     hp: def.hp,
     wreck: false,
@@ -136,6 +143,16 @@ export function spawnVehicle(type, x, z, yaw = 0, id = null) {
 
 export function removeVehicle(v) {
   if (v === mine) exitVehicle(true)
+  if (v.bar) {
+    v.bar.removeFromParent()
+    v.bar.material.map.dispose()
+    v.bar.material.dispose()
+  }
+  if (v.scorch) {
+    v.scorch.removeFromParent()
+    v.scorch.geometry.dispose()
+  }
+  v.tail?.dispose()
   unbindMesh(v.model)
   v.model.removeFromParent()
   v.model.traverse((o) => {
@@ -338,6 +355,26 @@ export function setWreck(v, on) {
   v.wreck = on
   setWrecked(v.model, on)
   if (on && v.mount) v.mount.pitch.rotation.x = 0.35
+  // A burn mark on the ground where it went up.
+  if (on && !v.scorch) {
+    const p = v.model.position
+    // the floor under it (a camp's concrete, a road, the terrain): a ray down past its own body
+    const ray = new RAPIER.Ray({ x: p.x, y: p.y + 0.2, z: p.z }, { x: 0, y: -1, z: 0 })
+    const hit = world.castRay(ray, 6, true, RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS)
+    const gy = hit ? p.y + 0.2 - (hit.timeOfImpact ?? hit.toi) : (G.island?.groundHeight?.(p.x, p.z) ?? p.y - 0.9)
+    v.scorch = new Mesh(new CircleGeometry(2.8, 20), SCORCH())
+    v.scorch.rotation.x = -Math.PI / 2
+    v.scorch.position.set(p.x, gy + 0.04, p.z)
+    v.scorch.renderOrder = 1
+    G.scene.add(v.scorch)
+  }
+}
+let scorchMat = null
+const SCORCH = () => (scorchMat ??= new MeshBasicMaterial({ color: 0x0c0a08, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }))
+
+// Marks fresh damage (vehicleNet.js, when its health drops): the bar over it shows for a while.
+export function vehicleHit(v) {
+  v.hitAt = performance.now()
 }
 
 // The mounted gun's muzzle (world), for the gunner's shots and the tracers others draw.
@@ -367,7 +404,7 @@ function aimMount(v, dt) {
   const k = 1 - Math.exp(-dt * (g ? 30 : 3))
   let dy = yaw - m.yaw.rotation.y
   dy = Math.atan2(Math.sin(dy), Math.cos(dy))
-  m.yaw.rotation.y += dy * k
+  m.yaw.rotation.y = Math.atan2(Math.sin(m.yaw.rotation.y + dy * k), Math.cos(m.yaw.rotation.y + dy * k))
   m.pitch.rotation.x += (pitch - m.pitch.rotation.x) * k
 }
 
@@ -384,7 +421,7 @@ function checkRams() {
   const now = performance.now()
   for (const a of G.actors) {
     if (!a.remote || !a.netId || a.seat || a.life === 'dead' || a.team === G.player?.team) continue
-    chestP.set(a.pos.x, a.pos.y + 0.9, a.pos.z)
+    chestP.set(a.pos.x, a.pos.y + (a.life === 'knocked' ? 0.35 : 0.9), a.pos.z)
     if (!inHull(v, chestP, 0.55, 0.9, loc)) continue
     if (now - (ramAt.get(a) ?? 0) < VEHICLE_DAMAGE.ram.gapMs) continue
     ramAt.set(a, now)
@@ -679,6 +716,8 @@ export function updateVehicles(dt) {
     v.lastSpeed = v.speed
     aimMount(v, dt)
     damageFx(v, dt)
+    driveFx(v, dt)
+    healthBar(v)
   }
   checkRams()
   pushWalker()
@@ -710,6 +749,83 @@ function damageFx(v, dt) {
   }
   const dark = burning || v.wreck || share < 0.35
   fx.emitBlend(fxP.x, fxP.y + 0.2, fxP.z, lv.x * 0.2 + (Math.random() - 0.5) * 0.5, 1.2 + Math.random() * 0.8, lv.z * 0.2 + (Math.random() - 0.5) * 0.5, 1.6 + Math.random(), 0.45, dark ? fx.FX_COLORS.darkSmoke : fx.FX_COLORS.smoke, dark ? 0.55 : 0.4, 0.3, 0.6, 1.4)
+}
+
+// Driving looks (near the camera): dust thrown up by the wheels on the move, exhaust puffs while
+// someone sits at the wheel, the tail lamps brighten while it brakes.
+const camNear = (v, r) => !G.camera || G.camera.position.distanceToSquared(v.model.position) < r * r
+const ex = new Vector3()
+function driveFx(v, dt) {
+  if (v.wreck) return
+  const sp = Math.abs(v.speed)
+  // brake lights: braking against the motion, the handbrake, or (someone else's) slowing down hard
+  if (v.tail) {
+    const local = v.auth === 'local' && v.seats[0] === G.player
+    const braking = local ? (v.handbrake && sp > 1) || (v.throttle * v.speed < -0.5 && sp > 1) : v.lastSpeed !== undefined && Math.abs(v.lastSpeed) - sp > 8 * dt
+    const want = braking ? 3.2 : 0.9
+    v.tail.emissiveIntensity += (want - v.tail.emissiveIntensity) * Math.min(1, dt * 12)
+  }
+  if (!camNear(v, 120)) return
+  // dust off the back wheels
+  if (sp > 4) {
+    v.dustT -= dt * Math.min(1, sp / 18)
+    if (v.dustT <= 0) {
+      v.dustT = 0.025
+      for (const i of [2, 3]) {
+        if (!v.ctrl.wheelIsInContact(i)) continue
+        const w = v.wheels[i]
+        ex.set(w.position.x + (Math.random() - 0.5) * 0.4, w.position.y - v.def.wheels.radius + 0.15, w.position.z - 0.3 - Math.random() * 0.8).applyQuaternion(v.model.quaternion).add(v.model.position)
+        fx.emitBlend(ex.x, ex.y, ex.z, (Math.random() - 0.5) * 1.2, 0.6 + Math.random() * 0.8, (Math.random() - 0.5) * 1.2, 0.9 + Math.random() * 0.6, 0.6 + sp * 0.02, fx.FX_COLORS.sand, 0.6, 0.2, 1.4, 1.2)
+      }
+    }
+  }
+  // exhaust while someone drives it
+  if (v.seats[0] && v.exhaust && camNear(v, 50)) {
+    v.exhaustT -= dt
+    if (v.exhaustT <= 0) {
+      v.exhaustT = 0.12 + Math.random() * 0.08
+      ex.set(v.exhaust[0], v.exhaust[1], v.exhaust[2]).applyQuaternion(v.model.quaternion).add(v.model.position)
+      fx.emitBlend(ex.x, ex.y, ex.z, (Math.random() - 0.5) * 0.3, 0.35, (Math.random() - 0.5) * 0.3, 0.7, 0.16, fx.FX_COLORS.smoke, 0.28, 0, 1.5, 1.2)
+    }
+  }
+}
+
+// The health bar over a vehicle (not the one the player sits in): for 4 s after it is hurt, and
+// whenever it is burning, within 80 m.
+const BAR_W = 96
+const BAR_H = 12
+function healthBar(v) {
+  const share = vehicleHpShare(v)
+  const show = v !== mine && !v.wreck && (performance.now() - v.hitAt < 4000 || share < VEHICLE_DAMAGE.burnBelow) && camNear(v, 80)
+  if (!show) {
+    if (v.bar) v.bar.visible = false
+    return
+  }
+  if (!v.bar) {
+    const c = document.createElement('canvas')
+    c.width = BAR_W
+    c.height = BAR_H
+    const tex = new CanvasTexture(c)
+    tex.colorSpace = SRGBColorSpace
+    v.bar = new Sprite(new SpriteMaterial({ map: tex, depthTest: false, transparent: true }))
+    v.bar.scale.set(1.9, (1.9 * BAR_H) / BAR_W, 1)
+    v.bar.renderOrder = 10
+    v.bar.userData.shown = -1
+    G.scene.add(v.bar)
+  }
+  v.bar.visible = true
+  v.bar.position.set(v.model.position.x, v.model.position.y + v.def.half[1] + 1.9, v.model.position.z)
+  const pct = Math.round(share * 100)
+  if (pct === v.bar.userData.shown) return
+  v.bar.userData.shown = pct
+  const c = v.bar.material.map.image
+  const g = c.getContext('2d')
+  g.clearRect(0, 0, BAR_W, BAR_H)
+  g.fillStyle = 'rgba(0,0,0,0.75)'
+  g.fillRect(0, 0, BAR_W, BAR_H)
+  g.fillStyle = share < VEHICLE_DAMAGE.burnBelow ? '#ff5a3a' : share < VEHICLE_DAMAGE.smokeBelow ? '#f2c14a' : '#7ddc5a'
+  g.fillRect(2, 2, Math.max(0, (BAR_W - 4) * share), BAR_H - 4)
+  v.bar.material.map.needsUpdate = true
 }
 
 // --- Speed readout (DOM, shown while seated) --------------------------------------------------------

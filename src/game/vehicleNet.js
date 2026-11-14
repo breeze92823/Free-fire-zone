@@ -17,11 +17,11 @@
 import { Vector3 } from 'three'
 import { NET, VEHICLE_DAMAGE } from '../config.js'
 import { net, onNet } from '../net.js'
-import { G } from './state.js'
+import { G, emit } from './state.js'
 import { explodeVisual } from './combat.js'
 import { addShake } from '../camera.js'
 import {
-  enterVehicle, exitVehicle, myVehicle, mySeatIndex, recentlyExited, removeVehicle, seatFeet, sendVehiclePose, setAuthority, setWreck, snapVehicle, spawnVehicle, vehicleById, vehicles,
+  enterVehicle, exitVehicle, vehicleHit, myVehicle, mySeatIndex, recentlyExited, removeVehicle, seatFeet, sendVehiclePose, setAuthority, setWreck, snapVehicle, spawnVehicle, vehicleById, vehicles,
 } from './vehicles.js'
 
 const PARKED_Y = -100 // backend vehicles.ts: never moved this round
@@ -48,6 +48,7 @@ export function syncVehicles() {
       v.life = s.life
       if (s.y !== PARKED_Y) snapVehicle(v, s.x, s.y, s.z, set(q, s), { x: s.vx, y: s.vy, z: s.vz })
     }
+    if (s.hp < v.hp - 0.01) vehicleHit(v)
     v.hp = s.hp
     if (s.wreck !== v.wreck) setWreck(v, s.wreck)
     const auth = s.owner && s.owner !== meId ? 'remote' : 'local'
@@ -191,9 +192,12 @@ export function placeSeated() {
 
 // --- Messages: a vehicle destroyed, a player run over ------------------------------------------------
 const boomAt = new Vector3()
-onNet('vboom', ({ v: id, x, y, z }) => {
+onNet('vboom', ({ v: id, x, y, z, a }) => {
   if (!G.match) return
   const v = vehicleById(id)
+  // the kill feed: "<who> Destroyed <vehicle>"
+  const by = a === net.sessionId ? G.player : G.actors.find((o) => o.netId === a) ?? null
+  emit('vehicleDestroyed', { by, name: v?.def.name ?? 'Vehicle' })
   // where it is drawn here (the server's y is unknown for a vehicle that never moved)
   if (v) boomAt.copy(v.model.position)
   else boomAt.set(x, y === PARKED_Y ? (G.island?.groundHeight(x, z) ?? 0) + 1 : y, z)

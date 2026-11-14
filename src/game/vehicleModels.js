@@ -156,7 +156,8 @@ function jeep(def) {
   // glass + lamps (own materials)
   special(g, mats().glass, new BoxGeometry(1.66, 0.52, 0.02), 0, 0.74, 0.8, -0.18)
   for (const sx of [0.64, -0.64]) special(g, mats().lamp, new CylinderGeometry(0.13, 0.13, 0.06, 14), sx, 0.18, 2.1, Math.PI / 2)
-  for (const sx of [0.78, -0.78]) special(g, mats().tail, new BoxGeometry(0.16, 0.1, 0.03), sx, 0.3, -2.05)
+  for (const sx of [0.78, -0.78]) special(g, tailMat(g), new BoxGeometry(0.16, 0.1, 0.03), sx, 0.3, -2.05)
+  g.userData.exhaust = [-0.7, -0.38, -2.15]
   return g
 }
 
@@ -207,7 +208,8 @@ function buggy(def) {
   mergeChildren(g, mats().body)
   // light bar on the cage + tail lights
   for (const sx of [0.3, 0.1, -0.1, -0.3]) special(g, mats().lamp, new BoxGeometry(0.14, 0.1, 0.06), sx, top + 0.08, 0.2)
-  for (const sx of [0.32, -0.32]) special(g, mats().tail, new BoxGeometry(0.1, 0.08, 0.03), sx, 0.2, -1.6)
+  for (const sx of [0.32, -0.32]) special(g, tailMat(g), new BoxGeometry(0.1, 0.08, 0.03), sx, 0.2, -1.6)
+  g.userData.exhaust = [0, 0.08, -1.8]
   return g
 }
 
@@ -251,16 +253,25 @@ export function setWrecked(root, on) {
     if (!o.isMesh) return
     if (o.userData.live === undefined) o.userData.live = o.material
     const live = o.userData.live
-    if (live === M.glass || live === M.lamp || live === M.tail) o.visible = !on
+    if (live === M.glass || live === M.lamp || live === M.tail || live.userData?.isTail) o.visible = !on
     else o.material = on ? M.wreck : live
   })
+}
+
+// Each vehicle's own tail-lamp material (vehicles.js brightens it while braking).
+function tailMat(g) {
+  if (!g.userData.tail) {
+    g.userData.tail = mats().tail.clone()
+    g.userData.tail.userData.isTail = true
+  }
+  return g.userData.tail
 }
 
 const BUILDERS = { jeep, buggy }
 const RIM = { jeep: 0x6f7550, buggy: 0xd8d2c4 }
 
 // { root, body, wheels: [Group x4] (front left, front right, back left, back right), mount (the
-// Jeep's gun: { yaw, pitch, muzzle }) or null }.
+// Jeep's gun: { yaw, pitch, muzzle }) or null, tail (its tail-lamp material), exhaust ([x, y, z]) }.
 export function buildVehicleModel(type) {
   const def = VEHICLES[type]
   const root = new Group()
@@ -292,5 +303,5 @@ export function buildVehicleModel(type) {
       o.receiveShadow = true
     }
   })
-  return { root, body, wheels, mount }
+  return { root, body, wheels, mount, tail: body.userData.tail, exhaust: body.userData.exhaust }
 }
