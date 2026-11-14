@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { ACESFilmicToneMapping, Clock, PCFSoftShadowMap, PerspectiveCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer } from 'three'
-import { AUTO_GRAPHICS, CAMERA, DEV_MODE, graphicsPreset, MATCH, MAPS, NET, RENDER, SPECTATE, TIME_OF_DAY, WEAPONS } from './config.js'
+import { AUTO_GRAPHICS, CAMERA, DEV_MODE, graphicsPreset, MATCH, MAPS, NET, RENDER, REWARDS, SPECTATE, TIME_OF_DAY, WEAPONS } from './config.js'
 import { createGovernor } from './perf.js'
 import { setAnisotropy, setTextureQuality } from './textures.js'
 import * as bloxity from './bloxity.js'
@@ -15,7 +15,8 @@ import { createPostFx } from './postfx.js'
 import { addWarmTarget, compileNow, drawWarm, initWarmup, keepAlive, warmObject, warmScene, warmTargets } from './warmup.js'
 import { buildWarmKit } from './game/warmkit.js'
 import { frameEnd, frameStart, heap, hitches, span, spanEnd } from './prof.js'
-import { prewarmIcons } from './game/icons.js'
+import { prewarmIcons, SVG, svgData } from './game/icons.js'
+import { toast as lobbyToast } from './game/party.js'
 import { setNeonBloom } from './propkit.js'
 import { loadBaseCharacter } from './avatar/character.js'
 import { applyProportions } from './avatar/loader.js'
@@ -296,7 +297,7 @@ hud.init({
   onItem: (id) => useItem(id),
   onUlt: () => useUlt(),
   onInteract: () => interactPress(), // the prompt as a button (touch): open supplies; revives are a hold
-  onLobby: () => leaveMatch(),
+  onLobby: () => askLeave(), // the exit button and the spectate panel's Lobby
   // Revive (the spectate panel's yellow button, or G): back into the round.
   // The portal's death screen owns the wait: respawn only when it says go (respawn() === true).
   onRespawn: (death) => {
@@ -509,6 +510,7 @@ let lastZonePhase = -1
 let currentMap = MAPS[0]
 let rewards = null // this round's rewards from the server
 let resultsShown = false
+let roundGems = 0 // Gems this round's knocks and eliminations granted (the leave dialog says they stay)
 let queuedAt = 0 // when PLAY was sent: the server's answer (inMatch) takes a moment
 const RUNNING = new Set(['intro', 'countdown', 'playing', 'ending'])
 
@@ -598,6 +600,7 @@ function enterRound() {
   G.slowmo = 1
   rewards = null
   resultsShown = false
+  roundGems = 0
   if (st.phase === 'intro') {
     G.phase = 'intro'
     introT = Math.max(0, MATCH.introFlyover - st.phaseLeft)
@@ -712,9 +715,20 @@ function showRoundResults() {
 }
 
 onNet('rewards', (r) => {
+  // Left a round in play: the server's penalty settlement arrives after we are back in the lobby.
+  if (r?.left) return leaveSummary(r)
   rewards = r
   if (G.phase === 'results') showRoundResults()
 })
+
+// The lobby toast after leaving a round in play: what was kept and what it cost.
+function leaveSummary(r) {
+  const parts = []
+  if (r.coins > 0) parts.push(`+${r.coins} coins`)
+  if (r.gems > 0) parts.push(`+${r.gems} Gems kept`)
+  parts.push(`${r.rp >= 0 ? '+' : ''}${r.rp} rank points`)
+  lobbyToast(`You left the match: ${parts.join(', ')}.`, 'info')
+}
 
 // The round is over and this player stays for the next one.
 function nextRound() {
@@ -728,11 +742,45 @@ function nextRound() {
   bloxity.showAdScreen('lobby')
 }
 
-// Back to the menus (Lobby buttons): costs half the round's coins if it is still running.
+// Back to the menus (Lobby buttons). Leaving a round in play costs its reward (server leaveMatch);
+// the results screen and the queue leave freely.
 function leaveMatch() {
   send('leave')
   backToLobby()
 }
+
+// The exit button / the spectate panel's Lobby: say what leaving costs, then leave. The round keeps
+// going behind the dialog (it is online), so the controls are released while it is open.
+function askLeave() {
+  const p = G.player
+  const sp = net.state?.phase
+  if (!G.match || !p || !(G.phase === 'playing' || G.phase === 'countdown' || G.phase === 'intro')) return leaveMatch()
+  const coin = `<img alt="" src="${svgData(SVG.coin)}">`
+  const gem = `<img alt="" src="${svgData(SVG.gem)}">`
+  let lines
+  if (sp !== 'playing') {
+    lines = ['The round has not started yet, so leaving now costs nothing.']
+  } else {
+    lines = [
+      `You keep the Gems from your knocks and eliminations${roundGems > 0 ? ` (<b>+${roundGems}</b> ${gem})` : ''}.`,
+      `You lose the round reward: only half the coins ${coin} from your fighting, and <b>${REWARDS.leavePenaltyRp}</b> rank points.`,
+    ]
+    if (p.life === 'knocked') lines.push('<span class="warn">You are knocked down: leaving now counts as being eliminated.</span>')
+    const mates = G.actors.filter((a) => a !== p && a.team === p.team).length
+    lines.push(mates ? 'Your team plays on without you.' : 'You are the last player on your team, so the round ends for everyone.')
+  }
+  const resume = () => {
+    if (!G.match || !(G.phase === 'playing' || G.phase === 'countdown')) return
+    setGameInput(true)
+    if (!deadControls) setTouchActive(true)
+  }
+  setGameInput(false)
+  setTouchActive(false)
+  hud.confirmLeave({ title: 'Leave the match?', lines }, () => leaveMatch(), resume)
+}
+on('reward', (r) => {
+  if (G.match) roundGems += r.gems || 0
+})
 
 // The match is over (or left): tell the portal gameplay stopped and drop any death screen.
 function endGameplay() {
@@ -907,10 +955,13 @@ function sendReaction(id) {
 
 // Lost the room mid-round (the SDK's own reconnect failed): back to the menus; net.js reconnects.
 onNet('left', () => {
+  hud.setNet(false)
   if (G.phase !== 'lobby') backToLobby()
   lobby.status('Reconnecting to the game server…')
 })
 onNet('status', (st) => {
+  // A drop mid-round: the SDK reconnects and the server keeps the seat for RECONNECT_SECONDS.
+  hud.setNet(st === 'connecting' && !!G.match)
   if (st === 'online') lobby.status('')
   else if (st === 'offline') lobby.status(net.error || 'Offline')
 })
@@ -944,11 +995,14 @@ on('elimination', ({ target, killer }) => {
     else cycleSpectate(1)
   }
 })
-on('matchEnd', ({ winner }) => {
+on('matchEnd', ({ winner, forfeit, noContest }) => {
   G.slowmo = 0.3
   if (G.phase === 'playing') G.phase = 'ending'
   endGameplay()
-  hud.announce(winner === G.player.team ? 'VICTORY!' : 'TIME!', winner === G.player.team ? 'Your squad wins the clash' : 'The other squad takes it', 2400)
+  hud.closeLeave()
+  if (noContest) hud.announce('NO CONTEST', 'The other team left the match', 2400)
+  else if (forfeit && winner === G.player.team) hud.announce('VICTORY!', 'The other team left the match', 2400)
+  else hud.announce(winner === G.player.team ? 'VICTORY!' : 'TIME!', winner === G.player.team ? 'Your squad wins the clash' : 'The other squad takes it', 2400)
 })
 let fellAt = 0
 body.onFellOut = () => {

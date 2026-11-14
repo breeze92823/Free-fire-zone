@@ -566,8 +566,8 @@ export function initOnline() {
     if (!G.match || by === net.sessionId) return
     markOpened(c, d)
   })
-  onNet('matchEnd', ({ winner }) => {
-    if (G.match) emit('matchEnd', { winner })
+  onNet('matchEnd', ({ winner, forfeit, noContest }) => {
+    if (G.match) emit('matchEnd', { winner, forfeit: !!forfeit, noContest: !!noContest })
   })
 
   // Chat bubbles over other players too (the portal draws the chat itself).

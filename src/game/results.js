@@ -40,8 +40,15 @@ export function showResults(winner, reward, done) {
     document.body.appendChild(root)
   }
   const won = reward.won
-  root.innerHTML = `<div class="banner ${won ? 'win' : ''}">${won ? 'VICTORY' : 'DEFEAT'}</div><div class="plates"></div>
-    <div class="summary"><div class="head">SUMMARY</div><div class="body">
+  // The other side left: early on nobody wins it (no contest, no win bonus); later it is a win.
+  const banner = reward.noContest ? 'NO CONTEST' : won ? 'VICTORY' : 'DEFEAT'
+  const note = reward.noContest
+    ? '<div class="small">The other team left early: no win bonus, and no rank points lost.</div>'
+    : reward.forfeit && won
+      ? '<div class="small">The other team left the match.</div>'
+      : ''
+  root.innerHTML = `<div class="banner ${won ? 'win' : ''}">${banner}</div><div class="plates"></div>
+    <div class="summary"><div class="head">SUMMARY</div><div class="body">${note}
       <div>Eliminations: ${reward.eliminations}</div>
       <div>Damage inflicted: ${Math.round(reward.damage)}</div>
       <div>Coins earned: <span class="plus">+${reward.coins}</span> <img alt="" src="${svgData(SVG.coin)}" style="height:0.9em;vertical-align:-0.1em"></div>
@@ -62,7 +69,7 @@ export function showResults(winner, reward, done) {
     if (t > 1.2 && !summaryShown) revealSummary()
   })
   if (won) sfx.victory()
-  else sfx.defeat()
+  else if (!reward.noContest) sfx.defeat()
 
   // Stage: the winners' start field, everyone else hidden.
   const area = G.island.spawnAreas[winner]
@@ -95,7 +102,7 @@ export function showResults(winner, reward, done) {
     a.emoteT = 0
     a.refreshHeld()
     const plate = h('div', 'plate')
-    plate.innerHTML = `${i === 0 ? '<span class="mvp">MVP</span>' : ''}<div class="pn o">${esc(a.name)}</div><div class="o">${a.stats.eliminations} eliminations</div><div class="o">${Math.round(a.stats.damage)} damage</div>`
+    plate.innerHTML = `${i === 0 && !reward.noContest ? '<span class="mvp">MVP</span>' : ''}<div class="pn o">${esc(a.name)}</div><div class="o">${a.stats.eliminations} eliminations</div><div class="o">${Math.round(a.stats.damage)} damage</div>`
     plateWrap.appendChild(plate)
     plates.push(plate)
   })

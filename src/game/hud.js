@@ -111,7 +111,9 @@ export function initHud(callbacks) {
     <div class="hud-right">
       <div class="hud-minimap-wrap"><canvas width="220" height="220"></canvas><span class="key o">M</span></div>
       <div class="hud-weapons"></div>
+      <button class="hud-exit silent" title="Leave the match" aria-label="Leave the match"><img alt=""></button>
     </div>
+    <div class="hud-net o">Connection lost &mdash; reconnecting&hellip;</div>
     <div class="hud-feed"></div>
     <div class="hud-health">
       <div class="armor"></div>
@@ -156,6 +158,8 @@ export function initHud(callbacks) {
     <div class="hud-bigmap"><div class="frame"><div class="title o">Coral Key</div><canvas width="900" height="900"></canvas><button class="close">&times;</button></div>
       <div class="legend"><div><i style="background:#fff"></i>Safe zone</div><div><i style="background:#5ab4ff;border-radius:2px"></i>Outside zone</div><div><i style="background:#ffd34d"></i>You</div><div><i style="background:#43b6ff"></i>Squad</div><div><i style="background:#ff3b3b"></i>Gunfire</div><div><i style="background:#3dff8b"></i>Your marker (tap map)</div></div></div>
     <div class="hud-board"></div>
+    <div class="hud-leave" role="dialog" aria-modal="true"><div class="box"><div class="t o"></div><div class="body"></div>
+      <div class="btns"><button class="bigbtn white stay"><span class="o">Stay</span></button><button class="bigbtn orange go"><span class="o">Leave</span></button></div></div></div>
   `
   document.body.appendChild(root)
   const q = (s) => root.querySelector(s)
@@ -207,8 +211,12 @@ export function initHud(callbacks) {
     bigmap: q('.hud-bigmap'),
     bigCanvas: q('.hud-bigmap canvas'),
     board: q('.hud-board'),
+    exit: q('.hud-exit'),
+    net: q('.hud-net'),
+    leave: q('.hud-leave'),
   })
   el.ult.querySelector('.ico').src = svgData(SVG.bolt)
+  el.exit.querySelector('img').src = svgData(SVG.exit)
   el.spectate.querySelector('.hearts img').src = svgData(SVG.heart)
   el.spectate.querySelector('.emo img').src = svgData(SVG.emote)
   el.spectate.querySelector('.eye img').src = svgData(SVG.eye)
@@ -249,6 +257,22 @@ export function initHud(callbacks) {
     if (e.target === el.bigmap) toggleMap(false)
   })
   q('.hud-spectate .sp-lobby').addEventListener('click', () => cb.onLobby?.())
+  // Leave the match (top right, beside the minimap): main.js asks first (confirmLeave).
+  el.exit.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    cb.onLobby?.()
+  })
+  el.leave.querySelector('.stay').addEventListener('click', () => closeLeave())
+  el.leave.querySelector('.go').addEventListener('click', () => {
+    const yes = leaveYes
+    closeLeave()
+    yes?.()
+  })
+  el.leave.addEventListener('pointerdown', (e) => {
+    e.stopPropagation()
+    if (e.target === el.leave) closeLeave() // a tap beside the box = Stay
+  })
   hudCb = cb
   // Revive = back into the round (gated by the portal's countdown, or NET.respawnFallback).
   el.revive.addEventListener('click', () => cb.onRespawn?.(death))
@@ -432,6 +456,8 @@ export function setMapImage(img) {
 // Called when a match starts.
 function begin(mapName) {
   for (const k of Object.keys(cache)) delete cache[k]
+  root.classList.remove('can-exit')
+  closeLeave()
   el.mapname.textContent = mapName
   root.querySelector('.hud-bigmap .title').textContent = mapName
   el.feed.innerHTML = ''
@@ -855,6 +881,28 @@ export function toggleMap(force) {
 }
 export const mapOpen = () => el.bigmap.classList.contains('on')
 
+// "Leave the match?": `title`, `lines` (HTML strings, already escaped) and what Leave does. Stay, a
+// tap beside the box or a new round closes it. The round keeps going meanwhile (it is online).
+let leaveYes = null
+let leaveClosed = null
+function confirmLeave({ title, lines }, onYes, onClose) {
+  if (leaveClosed && leaveClosed !== onClose) leaveClosed()
+  leaveYes = onYes
+  leaveClosed = onClose
+  el.leave.querySelector('.t').textContent = title
+  el.leave.querySelector('.body').innerHTML = lines.map((l) => `<p>${l}</p>`).join('')
+  el.leave.classList.add('on')
+  toggleMap(false)
+  showBoard(false)
+  document.exitPointerLock?.()
+}
+function closeLeave() {
+  const closed = leaveClosed
+  leaveYes = leaveClosed = null
+  el.leave?.classList.remove('on')
+  closed?.()
+}
+
 export function showBoard(on) {
   el.board.classList.toggle('on', on)
   if (!on) return
@@ -918,7 +966,15 @@ const hud = {
     if (!on) {
       toggleMap(false)
       showBoard(false)
+      closeLeave()
+      root.classList.remove('can-exit')
     }
+  },
+  confirmLeave,
+  closeLeave,
+  // The connection dropped mid-round and the SDK is reconnecting (the server keeps the seat for a while).
+  setNet(lost) {
+    el.net?.classList.toggle('on', !!lost)
   },
   countdown(text) {
     el.countdown.textContent = text
@@ -930,6 +986,9 @@ const hud = {
     const p = G.player
     if (!p) return
     const m = G.match
+    // The exit button: while up (the spectate panel has its own Lobby button), not in the test range.
+    const canExit = !G.test && (G.phase === 'playing' || G.phase === 'countdown') && p.life !== 'dead'
+    set('exit', canExit, (v) => root.classList.toggle('can-exit', v))
     // Score + clock
     set('blue', m.score.blue, (v) => (el.blueScore.textContent = v))
     set('orange', m.score.orange, (v) => (el.orangeScore.textContent = v))

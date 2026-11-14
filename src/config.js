@@ -554,6 +554,8 @@ export const REWARDS = {
   rpWin: 40,
   rpLoss: -12,
   rpPerElim: 3,
+  leavePenaltyRp: -12, // leaving a round in play: half the fighting coins, no result bonus, this rank change
+  forfeitMinShare: 0.5, // the other side leaving before this share of the round: a no contest (no win bonus)
 }
 // Gems: the game's own currency, NOT Bloxity Gems and not premium currency. Earned only by playing
 // (eliminations and knocks, granted by the server at once: backend rules.ts GEMS, the `reward`

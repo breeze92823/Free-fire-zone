@@ -54,7 +54,7 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 | `MISSIONS` (`daily`, `weekly`: `{ id, stat, goal, coins, gems }`; `text`: how each stat reads) | `save.js`, `lobby.js`, `results.js` | `progress.ts` `MISSIONS` (ids, goals, rewards) |
 | `OUTFITS`, `TEAMS` | `characters.js`, HUD, actor name tags | no |
 | `RANKS`, `START_PROFILE`, `STORE` | `save.js`, lobby, `lobbyScene.js` | `catalog.ts` `START_PROFILE`, `STORE` (ranks exist only on the client; the server stores `rp`) |
-| `REWARDS` | not read by any client code; kept as a copy of the server's table (the HUD's kill popup shows the amounts the server sends in `reward`) | `rules.ts` `REWARDS` |
+| `REWARDS` | a copy of the server's table; only `leavePenaltyRp` is read (the "Leave the match?" dialog quotes it). `forfeitMinShare`: the other side leaving before this share of the round makes it a no contest (server only). The HUD's kill popup shows the amounts the server sends in `reward` | `rules.ts` `REWARDS` |
 | `GEMS` | not read by any client code; a copy of the server's Gems table (`perElimination` 12, `perKnock` 3, `headshot` +3, `streak` +4 per elimination past the first, counted up to `streakCap` 5; at the results `win` 40, `loss` 15, `mvp` 25). Gems are the game's own currency, earned only by playing, never sold; they buy weapons, grenades and the pass | `rules.ts` `GEMS` |
 | `clamp` | everywhere | no |
 

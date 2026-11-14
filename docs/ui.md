@@ -38,7 +38,7 @@ Common root rules (`.hud`, `.lobby`, `.results`, `.loading`): `position: fixed; 
 | `ending` | game scene, `G.slowmo = 0.3` | HUD (still updating), `hud.announce('VICTORY!' / 'TIME!')` | bus `matchEnd`, `syncFlow` |
 | `results` | game scene, camera from `updateResults` | `.results` (banner, plates, then summary + Lobby button) | `toResults`: `hud.show(false)`; `showResults(...)` once the `rewards` message has arrived |
 
-After `results` the server moves to `vote` / `waiting`; `nextRound()` calls `closeMatch()` (which calls `hideResults()` and `hud.show(false)`), sets `G.phase = 'queue'` and shows the lobby with the queue panel again. The results screen is built when the server's `rewards` message has arrived; if it has not after `REWARDS_WAIT` (1.5 s) `syncFlow` shows it anyway with the server-mirrored stats (`fallbackRewards`, coins / gems / rank points 0), so the Lobby button always appears. The Lobby buttons (results screen, spectate panel, "Leave the team") all end in `leaveMatch()` = `send('leave')` + `backToLobby()`.
+After `results` the server moves to `vote` / `waiting`; `nextRound()` calls `closeMatch()` (which calls `hideResults()` and `hud.show(false)`), sets `G.phase = 'queue'` and shows the lobby with the queue panel again. The results screen is built when the server's `rewards` message has arrived; if it has not after `REWARDS_WAIT` (1.5 s) `syncFlow` shows it anyway with the server-mirrored stats (`fallbackRewards`, coins / gems / rank points 0), so the Lobby button always appears. The Lobby buttons (results screen, spectate panel, the HUD exit button, "Leave the team") all end in `leaveMatch()` = `send('leave')` + `backToLobby()`; during a round the exit button and the spectate panel's Lobby ask first (`askLeave`, section 2.10).
 
 ### 1.3 Where the UI gets its data
 
@@ -89,7 +89,7 @@ Internal helpers worth knowing: `set(key, value, fn)` is the write cache (runs `
 | `onReload()` | `.wcard .rl` `pointerdown` | `startReload(G.player)` |
 | `onItem(id)` | `.item` button; ids `emote`, `frostWall`, `frag`, `medkit`, `dash` | `useItem(id)` |
 | `onUlt()` | `.ult` | `useUlt()` |
-| `onLobby()` | `.hud-spectate .sp-lobby` `click` | `leaveMatch()` |
+| `onLobby()` | `.hud-spectate .sp-lobby` `click`, `.hud-exit` `pointerdown` | `askLeave()`: the "Leave the match?" dialog (2.10), then `leaveMatch()`; outside a round straight to `leaveMatch()` |
 | `onRespawn(death)` | `.hud-spectate .revive` `click`, `hud.pressRespawn()` (G) | respawns via `requestRespawn(true)` when `death.respawn()` is true (portal) or `G.time >= p.respawnAt` (no portal); else `sfx.deny()` |
 | `onSpectate(dir)` | `.arrow.prev` / `.arrow.next`, `hud.spectateStep(dir)` (Left / Right) | `cycleSpectate(dir)` |
 | `onHeart()` | `.hud-spectate .hearts` `pointerdown`, `hud.giveHeart()` (H) | `giveHeart()`: `send('heart', { t })` at most every `SPECTATE.heartGap` |
@@ -117,6 +117,9 @@ All selectors are under `div.hud`. "Built" says when the inner DOM is created: `
 | Announcement | `.hud-announce` (`.big`, `.small`) | init | `announce()` | |
 | Squad list | `.hud-squad` > `.sq` rows | begin (`buildSquad`: `G.actors` with the player's team at that moment) | `update`: bar = `hp / maxHp` (knocked: `downHp / HEALTH.knockedHp`), row class = `life`, status "HELP!" or respawn seconds | top = `--res-bottom + 8px`; rows are not added or removed mid-round (7.6) |
 | Minimap | `.hud-minimap-wrap` > `canvas` 220 x 220 | init | `drawMinimap()` every frame | tap opens the big map; "M" label |
+| Exit button | `button.hud-exit` (door icon `SVG.exit`) inside `.hud-right` | init | `update`: `.hud.can-exit` while `playing` / `countdown`, not dead, not in the test range (cleared in `begin` and `show(false)`) | 44 px; desktop: left of the minimap (`right` = the minimap's width + 8 px, since the weapon column under it is wider); touch landscape: under the emote button beside the minimap (the score bar can slide up to the emote's row); touch portrait: under the emote button, under the minimap. `cb.onLobby()` |
+| Leave dialog | `.hud-leave` > `.box` (`.t`, `.body` paragraphs, `.btns .stay / .go`) | init | `hud.confirmLeave({ title, lines }, onYes, onClose)` / `hud.closeLeave()` | see 2.10 |
+| Reconnecting notice | `.hud-net` | init | `hud.setNet(on)` from `main.js` `status` (`connecting` while `G.match`) and `left` | red pill at 30 % height |
 | Big map | `.hud-bigmap` (`.frame` > `canvas` 900 x 900, `.title`, `.close`, `.legend`) | init | `drawBigMap()` while `.on` | tap on the canvas sets the waypoint; tap on the backdrop or the close button closes |
 | Waypoint marker | `.hud-ping` | init | `update`: waypoint projected to the screen with the distance in metres; cleared within 4 m | not shown while dead |
 | Kill feed | `.hud-feed` > `.kf` | init, emptied in `begin` | `knock` and `elimination` events via `feed(killer, victim, kind, weapon, streak)`; newest first, max 3, fades at 5 s | icon = `weaponIcon(weapon, 'standard', 160, 70)` or the skull / frag SVG; name colours by `teamClass` (`me`, `ally`, `enemy`) |
@@ -219,6 +222,14 @@ Media queries:
 | `(orientation: landscape) and (max-height: 500px)` | multi-kill banner one row under the zone timer; kill popup: only the newest row, 18 px chips, wrapped before the weapon panel |
 | `(orientation: portrait)` | right column starts below the score bar (`max(--res-rtop, --res-top)` + offset); squad rows are the same chips; health sits above the joystick (`bottom: clamp(190px, 27vh, 230px)`), ability button hangs off its right end; feed above the health bar; toasts at 40 % (desktop-pointer portrait windows; touch uses the touch layout) |
 | `(max-width: 340px)` | tighter score bar (320 px phones), clear of the squad chips |
+
+### 2.10 Leaving a round
+
+- Ways out: the exit button (`.hud-exit`, while up) and the spectate panel's Lobby (while eliminated) call `cb.onLobby()` -> `main.js askLeave()`. The results screen's Lobby and the queue's "Leave the team" leave at once (nothing to lose there).
+- `askLeave()` builds the dialog's lines from the server's phase: before `playing` "The round has not started yet, so leaving now costs nothing."; in `playing`: the kills' Gems stay (with this round's total, `roundGems`, summed from the bus `reward` events since `enterRound`), the round reward is lost (half the fighting coins, `REWARDS.leavePenaltyRp` rank points), a knocked player is warned that leaving counts as being eliminated, and whether the team plays on or the round ends for everyone (no teammates). It releases the controls (`setGameInput(false)`, `setTouchActive(false)`, pointer unlocked) because the round keeps running; Stay, a tap beside the box, `matchEnd` or a new round (`begin`, `show(false)`) close it and `onClose` gives the controls back (touch only when alive).
+- Leave -> `leaveMatch()`. The server's settlement (`rewards` with `left: true`) arrives in the lobby: `main.js leaveSummary` toasts "You left the match: +N coins, +N Gems kept, -12 rank points." (`party.js toast`); the `profile` that follows updates the top bar.
+- The other side leaving: `matchEnd { forfeit, noContest }` -> announcement "NO CONTEST" / "VICTORY!" + "The other team left the match"; the results banner reads NO CONTEST (no MVP tag, no win / defeat sound, a note under SUMMARY) or VICTORY with "The other team left the match."
+- Checked on 2026-11-14 against a local server with a bot at 1280x720, 740x360 (touch) and 375x812 (touch): no overlap with the score bar, zone timer, emote button, minimap or kill feed; the dialog's backdrop covers every control (`elementFromPoint`).
 
 ## 3. `lobby.js`
 
@@ -480,6 +491,7 @@ Prices used for the local affordability check come from `config.js`; the server 
 - DOM: `.banner` ("VICTORY" with `.win`, or "DEFEAT"), `.plates` (one `.plate` per lineup member: name, eliminations, damage; "MVP" tag on the first), `.summary` (eliminations, damage, coins with the coin SVG, "Gems earned" when `reward.gems > 0`, rank points with `rankOf().name`, a line of knocks / assists / headshots / deaths, the final score and "MATCH MVP"), `button.lobbybtn`.
 - Stage: `G.island.spawnAreas[winner]`; `topPlayers(winner, 3)` (`match.js`) stand in a line facing the island centre, everyone else gets `hidden = true`; they are set alive at full health with emotes `cheer`, `flex`, `dance`; if the local player is in the lineup its physics body is moved too (`resetPlayer`, `syncYawToPlayer`).
 - Timeline: plates fade in from 0.8 s (0.3 s apart) and follow their actor's projected position; the summary and the Lobby button appear at 4.2 s (`revealSummary`, with `sfx.coins()`); the camera pushes in slowly over 6 s.
+- Banner: `VICTORY` / `DEFEAT` from `reward.won`, or `NO CONTEST` when `reward.noContest` (the other side left early: no MVP tag, no victory / defeat sound, a note under SUMMARY); a forfeit win adds "The other team left the match."
 - Buttons: only "Lobby", which hides the screen and calls `done` (`main.js` passes `leaveMatch`, i.e. `send('leave')` and back to the menus). Doing nothing keeps the player in the room: when the server starts the next vote, `nextRound()` hides the results.
 
 The summary also lists `rewards.rankUp` ("Rank up: <name>!" with its coins and Gems) and `rewards.missions` ("Mission(s) complete: ...", claimed in the lobby).

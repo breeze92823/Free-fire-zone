@@ -462,6 +462,121 @@
   font-size: 12px;
   font-weight: 700;
 }
+/* Leave the match: a small door button left of the minimap (touch: left of the emote button;
+   portrait touch: under it). Shown while the player is up in a round (.hud.can-exit). */
+.hud-exit {
+  --es: 44px;
+  position: absolute;
+  top: 0;
+  right: calc(clamp(110px, 21vmin, 190px) + 8px); /* the minimap's width (the column under it can be wider) */
+  width: var(--es);
+  height: var(--es);
+  display: none;
+  place-items: center;
+  padding: 0;
+  border-radius: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  background: rgba(16, 22, 34, 0.62);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: none;
+}
+.hud-exit img {
+  width: 58%;
+  height: 58%;
+  pointer-events: none;
+}
+.hud-exit:hover {
+  background: rgba(200, 60, 40, 0.75);
+}
+.hud.can-exit .hud-exit {
+  display: grid;
+}
+/* The connection dropped mid-round: the SDK reconnects while the server keeps the seat. */
+.hud-net {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  display: none;
+  padding: 8px 16px;
+  border-radius: 10px;
+  background: rgba(150, 20, 20, 0.82);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  font-size: clamp(14px, 2.6vmin, 20px);
+  font-weight: 700;
+  white-space: nowrap;
+  z-index: 4;
+}
+.hud-net.on {
+  display: block;
+}
+/* "Leave the match?" */
+.hud-leave {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+  z-index: 6;
+}
+.hud-leave.on {
+  display: grid;
+}
+.hud-leave .box {
+  width: min(calc(100vw - 32px), 460px);
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: clamp(14px, 2.6vmin, 22px);
+  background: rgba(16, 22, 34, 0.95);
+  border: 3px solid #ff8a1f;
+  border-radius: 14px;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.4);
+  color: #fff;
+}
+.hud-leave .t {
+  font-size: clamp(22px, 4.4vmin, 32px);
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: 8px;
+}
+.hud-leave .body p {
+  margin: 0 0 8px;
+  font-size: clamp(14px, 2.4vmin, 17px);
+  line-height: 1.35;
+  color: #dfe6f2;
+}
+.hud-leave .body b {
+  color: #fff;
+}
+.hud-leave .body .warn {
+  color: #ffb27a;
+}
+.hud-leave .body img {
+  height: 1em;
+  vertical-align: -0.15em;
+}
+.hud-leave .btns {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+.hud-leave .btns .bigbtn {
+  flex: 1;
+  height: clamp(48px, 8vmin, 60px);
+  font-size: clamp(20px, 3.8vmin, 28px);
+  touch-action: manipulation;
+}
+@media (max-height: 460px) {
+  .hud-leave .body p {
+    margin-bottom: 4px;
+  }
+  .hud-leave .btns {
+    margin-top: 6px;
+  }
+}
 .hud-weapons {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -2194,12 +2309,19 @@
   right: calc(var(--safe-r) + var(--pad) + var(--mm, 88px) + 8px);
   bottom: auto;
 }
+/* The exit button: under the emote button, beside the minimap (the score bar can slide right up to
+   the emote button's row, so the same row has no room). */
+.touch-ui .hud-exit {
+  top: calc(clamp(34px, 8vmin, 44px) + 6px);
+  right: calc(var(--mm, 88px) + 8px);
+}
 /* Kill feed: right-aligned under the minimap, the two newest rows. */
 .touch-ui .hud-feed {
   left: auto;
   right: calc(var(--safe-r) + var(--pad));
   bottom: auto;
-  top: calc(var(--safe-t) + var(--res-mmtop, 0px) + var(--pad) + var(--mm, 88px) + 6px);
+  /* under the minimap, and under the emote + exit column beside it when the minimap is small */
+  top: calc(var(--safe-t) + var(--res-mmtop, 0px) + var(--pad) + max(var(--mm, 88px), clamp(34px, 8vmin, 44px) + 50px) + 6px);
   transform: none;
   width: auto;
   max-width: 24vw;
@@ -2323,6 +2445,11 @@
   .touch-ui .item[data-id='emote'] {
     top: calc(var(--safe-t) + var(--res-mmtop, 0px) + var(--pad) + var(--mm, 88px) + 6px);
     right: calc(var(--safe-r) + var(--pad));
+  }
+  /* The exit button under the emote button. */
+  .touch-ui .hud-exit {
+    top: calc(100% + 6px + clamp(34px, 8vmin, 44px) + 6px);
+    right: 0;
   }
   /* The feed goes under the zone timer: the minimap's column is too narrow for it. */
   .touch-ui .hud-feed {
