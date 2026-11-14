@@ -19,6 +19,8 @@ import { castWorld, explode, wallColliders } from './combat.js'
 import { buildGrenade } from './weaponModels.js'
 import * as fx from './fx.js'
 import { send } from '../net.js'
+import { clearAreas, fireArea, flashBang, smokeCloud, updateAreas } from './areas.js'
+import { clearProjectiles, updateProjectiles } from './projectiles.js'
 
 const tmp = new Vector3()
 const tmp2 = new Vector3()
@@ -161,33 +163,73 @@ const r2 = (v) => Math.round(v * 100) / 100
 
 // Another player's frost wall (online.js): a real collider here too, so it stops this client's bullets.
 export function remoteWall(pos, yaw, owner) {
-  walls.push(new FrostWall(pos, yaw, owner))
+  const w = new FrostWall(pos, yaw, owner)
+  walls.push(w)
+  return w
 }
 
-// --- Frag grenades ----------------------------------------------------------------------------
+// --- Grenades -----------------------------------------------------------------------------------
+// Every throwable flies the same way (gravity 22, bounces off the world); what happens at the end
+// depends on its GRENADES `effect`: a blast after the fuse (frag, pulse, breach), a blast that
+// sticks to the first wall, floor or player it touches (leech), a fire pool the moment it hits
+// something (molotov), a smoke cloud or a stun flash after the fuse.
 const grenades = []
+const tmpS = new Vector3()
 class Grenade {
   constructor(pos, vel, owner, kind = 'frag') {
     this.pos = pos.clone()
     this.vel = vel.clone()
     this.owner = owner
-    this.def = GRENADES[kind] ?? GRENADES.frag
+    this.kind = GRENADES[kind] ? kind : 'frag'
+    this.def = GRENADES[this.kind]
+    this.effect = this.def.effect || 'blast'
     this.fuse = this.def.fuse
     this.mesh = buildGrenade(this.def.model)
     this.mesh.position.copy(pos)
     this.spin = new Vector3(Math.random() * 10, Math.random() * 10, Math.random() * 10)
+    if (this.effect === 'fire') this.spin.set(9, 0, 3) // a bottle tumbles end over end
     G.scene.add(this.mesh)
     this.dead = false
     this.blink = 0
+    this.stuck = false
+    this.stuckTo = null // the player a sticky charge clings to
+    this.stuckOff = new Vector3()
+    this.beep = 0
+  }
+  // The fuse ran out (or a firebottle hit something): the effect, drawn here; the thrower's client
+  // also reports it (`boom`) so the server can apply damage and relay it to everyone else.
+  detonate() {
+    this.dead = true
+    this.mesh.removeFromParent()
+    // Another player's grenade only vanishes: their client reports it (`boom`) and every client
+    // draws it where it really went off.
+    if (this.owner?.remote) return
+    const fx2 = this.effect
+    if (fx2 === 'blast' || fx2 === 'sticky') {
+      explode(this.pos, this.owner, this.def.damage, this.def.radius, this.kind)
+      return
+    }
+    if (fx2 === 'fire') fireArea(this.pos, this.def, this.owner)
+    else if (fx2 === 'smoke') smokeCloud(this.pos, this.def)
+    else if (fx2 === 'flash') flashBang(this.pos, this.owner, this.def)
+    if (this.owner?.isPlayer && !this.owner.offline) send('boom', { x: r2(this.pos.x), y: r2(this.pos.y), z: r2(this.pos.z), t: [] })
   }
   update(dt) {
     this.fuse -= dt
-    if (this.fuse <= 0) {
-      this.dead = true
-      this.mesh.removeFromParent()
-      // Another player's grenade only vanishes: their client reports the blast (`boom`) and every
-      // client draws it where it really went off.
-      if (!this.owner?.remote) explode(this.pos, this.owner, this.def.damage, this.def.radius)
+    if (this.fuse <= 0) return this.detonate()
+    if (this.stuck) {
+      // Clinging on: ride along with the player it stuck to.
+      if (this.stuckTo) {
+        if (this.stuckTo.life === 'dead') this.stuckTo = null
+        else this.pos.copy(this.stuckTo.pos).add(this.stuckOff)
+        this.mesh.position.copy(this.pos)
+      }
+      this.beep -= dt
+      if (this.beep <= 0) {
+        this.beep = this.fuse > 1 ? 0.4 : this.fuse > 0.5 ? 0.2 : 0.1
+        sfx.stickyBeep(spatial(this.pos.x, this.pos.y, this.pos.z), this.fuse < 0.6)
+        fx.emitAdd(this.pos.x, this.pos.y + 0.12, this.pos.z, 0, 0.2, 0, 0.1, 0.16, fx.FX_COLORS.red, 1, 0, 0)
+      }
       return
     }
     this.vel.y -= 22 * dt
@@ -195,24 +237,72 @@ class Grenade {
     if (step > 1e-4) {
       tmp.copy(this.vel).normalize()
       const hit = castWorld(this.pos, tmp, step + 0.08)
-      if (hit) {
-        // Bounce: reflect about the surface normal, lose energy.
-        const n = hit.normal
-        const vn = this.vel.dot(n)
-        this.vel.addScaledVector(n, -1.6 * vn).multiplyScalar(0.55)
-        this.pos.copy(hit.point).addScaledVector(n, 0.09)
-        if (Math.abs(vn) > 2) sfx.bounce(spatial(this.pos.x, this.pos.y, this.pos.z))
-        this.spin.multiplyScalar(0.6)
+      // A sticky charge or a bottle also stops on a player in its path.
+      const who = this.effect === 'sticky' || this.effect === 'fire' ? this.playerOnPath(tmp, hit ? hit.dist : step + 0.08) : null
+      if (who) {
+        this.pos.copy(tmpS)
+        if (this.effect === 'fire') return this.detonate()
+        this.stick(who)
+      } else if (hit) {
+        if (this.effect === 'fire') {
+          this.pos.copy(hit.point).addScaledVector(hit.normal, 0.1)
+          return this.detonate()
+        }
+        if (this.effect === 'sticky') {
+          this.pos.copy(hit.point).addScaledVector(hit.normal, 0.05)
+          this.stick(null)
+          // Lie flat on the surface, adhesive face down.
+          tmpS.copy(hit.normal)
+          this.mesh.quaternion.setFromUnitVectors(UP, tmpS)
+        } else {
+          // Bounce: reflect about the surface normal, lose energy.
+          const n = hit.normal
+          const vn = this.vel.dot(n)
+          this.vel.addScaledVector(n, -1.6 * vn).multiplyScalar(0.55)
+          this.pos.copy(hit.point).addScaledVector(n, 0.09)
+          if (Math.abs(vn) > 2) sfx.bounce(spatial(this.pos.x, this.pos.y, this.pos.z))
+          this.spin.multiplyScalar(0.6)
+        }
       } else this.pos.addScaledVector(this.vel, dt)
     }
     this.mesh.position.copy(this.pos)
-    this.mesh.rotation.x += this.spin.x * dt
-    this.mesh.rotation.z += this.spin.z * dt
-    // Blinking ember as the fuse runs out.
+    if (!this.stuck) {
+      this.mesh.rotation.x += this.spin.x * dt
+      this.mesh.rotation.z += this.spin.z * dt
+    }
+    // Fuse cues: a blinking ember (blasts), a burning rag (bottle), a hiss of smoke from a smoke can.
     this.blink += dt * (this.fuse < 0.8 ? 14 : 6)
-    if (Math.sin(this.blink * Math.PI) > 0.6) fx.emitAdd(this.pos.x, this.pos.y + 0.1, this.pos.z, 0, 0.3, 0, 0.08, 0.12, fx.FX_COLORS.red, 1, 0, 0)
+    if (this.effect === 'fire') {
+      fx.emitAdd(this.pos.x, this.pos.y + 0.15, this.pos.z, 0, 0.6, 0, 0.18, 0.14, fx.FX_COLORS.fire, 1, 0.5, 0, -0.3)
+    } else if (this.effect === 'smoke') {
+      if (Math.random() < dt * 14) fx.emitBlend(this.pos.x, this.pos.y + 0.1, this.pos.z, 0, 0.5, 0, 0.6, 0.14, fx.FX_COLORS.smoke, 0.4, 0.2, 0.5, 0.5)
+    } else if (Math.sin(this.blink * Math.PI) > 0.6) fx.emitAdd(this.pos.x, this.pos.y + 0.1, this.pos.z, 0, 0.3, 0, 0.08, 0.12, fx.FX_COLORS.red, 1, 0, 0)
+  }
+  // The nearest other player whose hitbox the next step crosses (puts the contact point in tmpS).
+  playerOnPath(dir, maxDist) {
+    let best = null
+    let bestT = maxDist
+    for (const a of G.actors) {
+      if (a === this.owner || a.life === 'dead' || a.untargetable) continue
+      const h = a.hitTest(this.pos, dir, bestT)
+      if (h && h.t < bestT) {
+        bestT = h.t
+        best = a
+      }
+    }
+    if (best) tmpS.copy(this.pos).addScaledVector(dir, bestT)
+    return best
+  }
+  stick(actor) {
+    this.stuck = true
+    this.vel.set(0, 0, 0)
+    this.stuckTo = actor
+    if (actor) this.stuckOff.subVectors(this.pos, actor.pos)
+    this.beep = 0
+    sfx.stick(spatial(this.pos.x, this.pos.y, this.pos.z))
   }
 }
+const UP = new Vector3(0, 1, 0)
 
 // Begin the throw animation; the grenade leaves the hand partway through (see updateItems).
 export function startThrow(actor, kind = 'frag') {
@@ -356,6 +446,8 @@ export function updateItems(dt) {
     grenades[i].update(dt)
     if (grenades[i].dead) grenades.splice(i, 1)
   }
+  updateProjectiles(dt)
+  updateAreas(dt)
 }
 
 export function clearItems() {
@@ -363,6 +455,28 @@ export function clearItems() {
   walls.length = 0
   for (const g of grenades) g.mesh.removeFromParent()
   grenades.length = 0
+  clearProjectiles()
+  clearAreas()
+}
+
+// Another player's grenade went off (their `boom`, relayed with its kind): draw its effect here.
+export function remoteBoom(pos, kind, owner) {
+  const def = GRENADES[kind] ?? GRENADES.frag
+  // The copy flying here (remoteThrow) is done.
+  for (let i = grenades.length - 1; i >= 0; i--) {
+    const g = grenades[i]
+    if (g.owner === owner && g.kind === kind && owner) {
+      g.mesh.removeFromParent()
+      grenades.splice(i, 1)
+      break
+    }
+  }
+  const e = def.effect || 'blast'
+  if (e === 'fire') fireArea(pos, def, owner)
+  else if (e === 'smoke') smokeCloud(pos, def)
+  else if (e === 'flash') flashBang(pos, owner, def)
+  else return false
+  return true
 }
 
 export const activeGrenades = () => grenades

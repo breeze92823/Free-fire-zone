@@ -314,6 +314,9 @@ Every `button` in the root gets a `pointerenter` handler that plays `sfx.hover()
 | `inventory` | `inventoryWindow` | loadout (two guns with skin name, operative; "Change" jumps to the shop via `data-go`), emote pills (`profile.owned.emotes`), supply upgrade levels, career stats (rank, RP, matches, wins, eliminations, damage, best, K/D) | `data-emote` -> `equipEmote` + `cb.onEmote` |
 | `settings` | `settingsWindow` | Sound (range + Mute pill), Graphics (`QUALITY_OPTIONS` pills + note; Auto shows the running tier), Look sensitivity (range), the key list, the phone hint and the save notice (`account.saved`) | see 3.7 |
 | `mode` | `modeWindow` | a card per `MATCH_MODES` entry (team size, description, minutes, score to win) | `data-mode` -> `setMode(id)`, then `close()` |
+| `news` | `newsWindow` (`.win.news`, orange header with the Gem balance) | the announcement `NEWS` (config.js): a hero line (spinning NEW badge, `tagline`, a sentence) and a `.nw-card` tile per new weapon / grenade (store rarity colour, NEW tag, picture, name, `NEWS.blurb`, Gem price or OWNED; staggered pop-in); "Got it" and "Open the Weapons Store" pinned at the bottom | a tile -> the Weapons Store on that item (its category); the store button -> the store; "Got it" / X / backdrop -> `close()`. Every way out calls `markNewsSeen(NEWS.id)` |
+
+**The announcement pops up by itself** (`maybeNews`, called from `refresh` and when the loading screen goes): once per visit, 0.7 s after the plain lobby shows, when the profile has loaded (`account.loaded`), the player has not closed this `NEWS.id` yet (`newsSeen()`: the account's `profile.newsSeen` or this browser's copy), and nothing else is in the way (not queued / voting, no other window, no loading screen). To announce a new batch: raise `NEWS.id`, list the items in `NEWS.weapons` / `NEWS.grenades` with a `blurb` each, and change `title` / `tagline`. Phones: two columns, the buttons share the bottom row; short landscape screens drop the hero's sentence.
 
 Tabs exist in the Missions window (Daily / Weekly / Rank rewards, each re-rendered with `current = { kind: 'missions', opt }`) and the skins window (Weapons / Skins); `wireTabs` sets `current = { kind: 'weapons', opt: tab }` so `reopen()` returns to the same tab, and the Weapons tab goes back to the Weapons Store.
 
@@ -321,10 +324,10 @@ Tabs exist in the Missions window (Daily / Weekly / Rank rewards, each re-render
 
 `weaponsWindow('weapons')` writes `.ws` straight into `.lb-modal` (class `wsm`: no padding, darker backdrop) instead of using `frame()`. Everything in it is priced in the game's own Gems (`profile.gems`, earned in matches, never sold); skins stay in coins behind the Skins button.
 
-- **Layout** (`lobby.css`, "Weapons Store"): a grid with the header across the top (Gems balance, title, Skins, close; the header starts right of the platform toolbar via `--res-right`, and the whole store starts under the toolbar when the toolbar spans the screen, `--res-tool` set from `onReservedAreas`), then the category column (`WEAPON_CATS`: All, Pistols, Rifles, Shotguns, SMGs, Grenades, Specials; the open one orange), the item column (`.wsi` tiles: picture, name, a Gem price / OWNED / EQUIPPED badge; grey for starters and cheaper items, purple from 1,800 Gems, gold for specials; the selected one has a yellow border) and the detail column (name, slot line, description, big picture, stat bars, TEST and BUY). The pass box (`.ws-pass`: icon, name, "All basic weapons, forever", Gem price or Owned) floats top-right of the detail column.
+- **Layout** (`lobby.css`, "Weapons Store"): a grid with the header across the top (Gems balance, title, Skins, close; the header starts right of the platform toolbar via `--res-right`, and the whole store starts under the toolbar when the toolbar spans the screen, `--res-tool` set from `onReservedAreas`), then the category column (`WEAPON_CATS`: All, Pistols, Rifles, Shotguns, SMGs, Heavy, Melee, Grenades, Specials; the open one orange), the item column (`.wsi` tiles: picture, name, a Gem price / OWNED / EQUIPPED badge; grey for starters and cheaper items, purple from 1,800 Gems, gold for specials; the selected one has a yellow border) and the detail column (name, slot line, description, big picture, stat bars, TEST and BUY). The pass box (`.ws-pass`: icon, name, "All basic weapons, forever", Gem price or Owned) floats top-right of the detail column.
 - **Portrait phones** (`max-width: 700px`): one column; the pass under the header; categories and items scroll sideways; the details scroll with TEST / BUY sticky at the bottom. **Short landscape** (`max-height: 500px`): narrow columns (96 / 112 px), the pass without its blurb, the description clamped to three lines.
 - **State**: `wsCat`, `wsSel = { type: 'weapon' | 'grenade', id }` survive rebuilds (`reopen()` after a purchase or a `profile` change). Items: `wsItems(cat)` = the category's weapons (any `WEAPONS` entry with `cat`, cheapest first) and, for All / Grenades, the `GRENADES`.
-- **Stats** (`wsStats`): guns: Damage (`damage * pellets` / 220), Fire rate (`1 / interval` / 17), Range (/ 400), Healing for the Mender (`heal` / 15, green), Reload speed, Accuracy (aimed spread), Magazine (/ 60); melee: Damage, Reach, Swing speed, Mobility (`speedMul`); grenades: Damage, Blast radius, Fuse speed.
+- **Stats** (`wsStats`): guns: Damage (`damage * pellets * burst` / 220), Fire rate (shots per s / 17), Range (/ 400), Blast radius for launchers, Healing for the Mender (`heal` / 15, green), Reload speed, Accuracy (aimed spread), Magazine (/ 60); melee: Damage, Reach, Swing speed, Mobility (`speedMul`); grenades by `effect`: blasts Damage, Blast radius, Fuse speed; fire Burn damage, Fire radius, Burn time; smoke Cloud size, Cloud time, Pops after; flash Blind range, Blind time, Fuse speed. The slot line under the name says Primary / Secondary / Melee slot and "burst fire" / "full auto". Heavy weapons get the gold tile like specials. The Combat Knife is listed under Melee (free, owned by everyone) so a player can switch back to it.
 - **Actions**: BUY (red, the Gem price above it; dimmed when short) -> `buyWeapon` / `buyGrenade`, then equips it at once (`equipWeapon` picks the slot; `equipGrenade`) and calls `cb.onLoadout()`; EQUIP (green, shows the slot) for owned items; EQUIPPED (grey, disabled); the pass -> `buyPass('basic')`; TEST (blue) closes the store and calls `cb.onTestWeapon(weaponId, grenadeId)` (the test range, [gameplay.md](gameplay.md) section 17), which reopens the store (`lobby.openStore()`) when the player leaves.
 
 Button states (`.buy` + modifier): `price` (affordable, gold), `cant` (not enough coins, grey; still clickable, the purchase then fails), `owned` (blue: Equip / Apply / Select / Change), `equipped` (dark with gold border, disabled).
@@ -419,6 +422,7 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `missions` | `{ day, week, daily: [{ id, n, claimed }], weekly: [...] }` | empty | the current mission sets and progress (the server rolls and counts them; gameplay.md 18) |
 | `rankReward` | number | 0 | highest `RANKS` index whose one-time reward was paid |
 | `tutorial` | boolean | false | the first-round tips are done |
+| `newsSeen` | number | 0 | the newest lobby announcement (`NEWS.id`) the player has closed |
 | `mode` | string | `clash` | `MATCH_MODES` id sent with `play` |
 
 ### 4.2 Exports
@@ -445,6 +449,8 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `claimMission` | `(kind, i) -> boolean` | sends `claim { m, i }`; `false` = offline or not loaded |
 | `onClaimed` | `(fn) -> unsubscribe` | `fn(msg)` with the server's `claimed` answer |
 | `finishTutorial` | `()` | sets `profile.tutorial`, sends `tutorialDone` |
+| `newsSeen` | `()` | the newest announcement closed: the larger of `profile.newsSeen` and this browser's copy (`localStorage` `ffz.newsSeen`, kept for guests and failed saves); a newer local copy is sent to the account |
+| `markNewsSeen` | `(id)` | sets `profile.newsSeen`, stores the local copy, sends `newsSeen { id }` |
 
 ### 4.3 Server messages
 
@@ -459,6 +465,7 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `getProfile` | out | resync |
 | `claim { m, i }` / `claimed { m, i, id, coins, gems }` or `{ m, i, error }` | out / in | `claimMission` / `onClaimed` listeners (the profile follows) |
 | `tutorialDone` | out | `finishTutorial` |
+| `newsSeen` | out | `markNewsSeen` |
 
 Prices used for the local affordability check come from `config.js`; the server decides with its own table, so a mismatch shows up as an optimistic purchase that is rolled back.
 
@@ -553,7 +560,8 @@ Local frame of every model: grip at the origin, barrel along +Z, up +Y, metres.
 | --- | --- | --- |
 | `buildWeapon` | `(modelId, skinId = 'standard') -> Group` | `userData.muzzle`, `userData.ejector` (marker `Object3D`s) and `userData.length`; an unknown id (including `fists`) returns an empty group with markers |
 | `skinMaterials` | `(skinId) -> { body, accent, furniture, steel, dark, lens, glow, blade }` | cached per skin and shared by every weapon; no outside caller |
-| `buildGrenade` | `(kind = 'frag')` | `'frag'`, `'pulse'` (dark cylinder, glowing cyan bands), `'breach'` (olive charge with a red light); anything else builds the ice canister; used by `actor.js`, `items.js` (`GRENADES[kind].model`), `icons.js` |
+| `buildGrenade` | `(kind = 'frag')` | `'frag'`, `'pulse'` (dark cylinder, glowing cyan bands), `'breach'` (olive charge with a red light), `'leech'` (cloth-wrapped sticky charge, yellow goo face, red diode), `'molotov'` (glass bottle of fuel, burning rag), `'smoke'` (grey-green canister, white band), `'flash'` (black perforated stun grenade, yellow bands); anything else builds the ice canister. One prototype per kind, cloned (shared geometry). Used by `actor.js`, `items.js` (`GRENADES[kind].model`), `icons.js`, the warm kit |
+| `buildProjectile` | `(kind = 'bolt')` | a flying round along +Z: `'bolt'` (crossbow), `'shell40'` (40 mm grenade), `'rocket'` (glowing motor at the back); cloned prototypes; used by `projectiles.js` |
 | `buildMedkit` | `()` | only referenced by `itemIcon` |
 
 Model id mapping: `WEAPONS[id].model` selects the builder in `BUILDERS`.
@@ -576,9 +584,30 @@ Model id mapping: `WEAPONS[id].model` selects the builder in `BUILDERS`.
 | `autoshot` | `buildAutoshot` | `cyclone` | boxy receiver, box magazine, ribbed shroud |
 | `blade` | `buildBlade` | `ronin` | wrapped grip, guard, long single-edged blade |
 | `mender` | `buildMender` | `mender` | fixed white / red body with a cross, glowing vial canister (ignores skins) |
+| `gnat` | `buildGnat` | `gnat` | full-auto pistol: ported slide, extended magazine, selector |
+| `mantis` | `buildMantis` | `mantis` | machine pistol: cocking knobs, curved magazine, wire stock folded over the top |
+| `revolver` | `buildRevolver` | `drifter` | six-shot cylinder with brass rims, hammer, underlug, vent rib |
+| `falcon` | `buildFalcon` | `falcon` | bullpup with a long carry handle, folded bipod |
+| `sentinel` | `buildSentinel` | `sentinel` | carry-handle upper, round ribbed handguard, sight tower |
+| `sparrow` | `buildSparrow` | `sparrow` | slim sporting stock, op rod, low scope |
+| `whisper` | `buildWhisper` | `whisper` | fat integral suppressor, skeleton stock, side scope |
+| `osprey` | `buildOsprey` | `osprey` | round receiver, bolt handle, wooden stock with cheek riser, long scope |
+| `ranger` | `buildRanger` | `ranger` | lever loop, tube magazine, buckhorn sights, hammer |
+| `bulldog` | `buildBulldog` | `bulldog` | finned barrel, compensator, wooden foregrip, 50-round drum |
+| `swarm` | `buildSwarm` | `swarm` | rounded bullpup, see-through top magazine with the rounds inside, reflex sight |
+| `sawback` | `buildSawback` | `sawback` | sawn-off side-by-side barrels on a hinge, twin hammers, cut-down grip |
+| `rattler` | `buildRattler` | `rattler` | stamped receiver, gas tube, slotted brake, 5-shell box magazine |
+| `machete` | `buildMachete` | `machete` | rubber grip, long blade widening to a clipped tip |
+| `crowbar` | `buildCrowbar` | `crowbar` | red hex bar, curled claw, chisel end |
+| `pan` | `buildPan` | `pan` | cast-iron pan on a riveted handle (also worn on the back) |
+| `crossbow` | `buildCrossbow` | `quill` | recurved limbs, a two-half string, the loaded bolt, red dot |
+| `thumper` | `buildThumper` | `thumper` | fat break-open barrel, leaf sight, recoil pad |
+| `rhino` | `buildRhino` | `rhino` | launch tube with venturi, heat shield, two grips, side optic, warhead |
 | `fists` | none | `fists` | empty group |
 
-Shared part helpers: `rail` (notched strip), `scope`, `redDot`; geometry is cached by dimensions (`box`, `cyl`).
+Shared part helpers: `rail` (notched strip), `scope`, `redDot`, `grip`, `trigger`; geometry is cached by dimensions (`box`, `cyl`, `cylY`, `cylX`, `sphere`). `fixed` holds colours every skin keeps (brass, shell red, olive, rubber, wood, cord...).
+
+**Moving parts**: a builder puts the meshes that animate in a group made with `part(g, name, pivot)` (coordinates relative to the pivot). `bakeWeapon` (`merge.js`) bakes each part into its own child named `part:<name>` (one extra draw call each); `actor.js weaponMesh` records their rest pose and `Actor.animateParts` moves them every frame from the actor's shot clock (`lastShotAt`, set for other players by their `shot` relay) and reload progress. Names: `slide` (kicks back on a shot, locks back on empty), `mag` / `drum` (drop out and come back during a reload; the drum also turns per shot), `cyl` (a revolver cylinder: turns 60 degrees per shot, swings out to reload), `hammer` (cocks), `bolt` (bolt-action cycle when `cycle: 'bolt'`), `lever`, `pump`, `barrels` / `breech` (tip open round the hinge to reload), `stringL` / `stringR` (the crossbow string halves, re-aimed and stretched to the nock), `round` (the loaded round: shown while loaded, or while being loaded into an open `breech`).
 
 Skins: a `SKINS` entry supplies `body`, `accent`, `furniture` colours and optional `camo` (array of colours: base first, the rest as blobs in a generated texture), `glow` (adds an emissive strip on every model) and `metal` (shinier body and accent). Current ids: `standard`, `desert`, `jungle`, `arctic`, `crimson`, `neon`, `gold`.
 

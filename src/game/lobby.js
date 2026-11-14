@@ -6,13 +6,13 @@
 // Also the waiting / map-vote panel after PLAY (the room's server runs the
 // rounds: real players only) and the loading screen.
 import './lobby.css'
-import { GRENADES, MATCH_MODES, OPERATIVES, PASSES, RANKS, SKINS, STORE, WEAPONS, WEAPON_CATS, GAME_TITLE, QUALITY_OPTIONS } from '../config.js'
+import { GRENADES, MATCH_MODES, NEWS, OPERATIVES, PASSES, RANKS, SKINS, STORE, WEAPONS, WEAPON_CATS, GAME_TITLE, QUALITY_OPTIONS } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { sfx, setVolume, isMuted, setMuted } from '../audio/index.js'
 import { SVG, itemIcon, svgData, weaponIcon } from './icons.js'
 import { portrait, randomOutfit } from './characters.js'
 import party, { initParty } from './party.js'
-import { account, buyGrenade, buyOperative, buyPass, buySkin, buyStoreItem, buyWeapon, claimable, claimMission, equipEmote, equipGrenade, equipOperative, equipSkin, equipWeapon, missionList, missionResets, missionText, onClaimed, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
+import { account, buyGrenade, buyOperative, buyPass, buySkin, buyStoreItem, buyWeapon, claimable, claimMission, equipEmote, equipGrenade, equipOperative, equipSkin, equipWeapon, markNewsSeen, missionList, missionResets, missionText, newsSeen, onClaimed, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
 
 const h = (tag, cls = '', html = '') => {
   const e = document.createElement(tag)
@@ -182,6 +182,7 @@ function refresh() {
   badge.hidden = !ready
   badge.textContent = ready
   if (modal.classList.contains('on') && current && current.kind !== 'queue') reopen()
+  maybeNews()
 }
 
 let fixedOutfit = null
@@ -201,6 +202,8 @@ function frame(title, bodyHtml, tabs = null, activeTab = null) {
 }
 
 export function close() {
+  // The announcement counts as seen however it is closed (X, the backdrop, a button).
+  if (current?.kind === 'news') markNewsSeen(NEWS.id)
   // Closing any window while queued keeps the vote panel shut until the next vote (or the
   // "Map voting..." button).
   if (root?.classList.contains('queued')) queueHidden = true
@@ -222,6 +225,7 @@ function open(kind, opt) {
   if (kind === 'inventory') return inventoryWindow()
   if (kind === 'settings') return settingsWindow()
   if (kind === 'mode') return modeWindow()
+  if (kind === 'news') return newsWindow()
 }
 function reopen() {
   if (current) open(current.kind, current.opt)
@@ -261,7 +265,7 @@ const wsDef = (it) => (it.type === 'weapon' ? WEAPONS[it.id] : GRENADES[it.id])
 // Tile colour: starters / basic grey, the dearer guns purple, specials gold.
 function rarity(it) {
   const d = wsDef(it)
-  if (it.type === 'weapon' && d.cat === 'special') return 'gold'
+  if (it.type === 'weapon' && (d.cat === 'special' || d.cat === 'heavy')) return 'gold'
   if (d.price >= 1800) return 'epic'
   return 'std'
 }
@@ -270,7 +274,7 @@ function wsOwned(it) {
 }
 function wsEquipped(it) {
   if (it.type === 'grenade') return (profile.loadout.grenade || 'frag') === it.id
-  return profile.loadout.primary === it.id || profile.loadout.secondary === it.id
+  return profile.loadout.primary === it.id || profile.loadout.secondary === it.id || (profile.loadout.melee || 'knife') === it.id
 }
 function wsPic(it, w, h) {
   return it.type === 'weapon' ? weaponIcon(it.id, skinFor(it.id), w, h) : itemIcon(it.id, h)
@@ -280,10 +284,16 @@ function bar(label, v, cls = '') {
 }
 function wsStats(it) {
   const d = wsDef(it)
-  if (it.type === 'grenade') return bar('Damage', d.damage / 240) + bar('Blast radius', d.radius / 9) + bar('Fuse speed', 1 - d.fuse / 3)
+  if (it.type === 'grenade') {
+    if (d.effect === 'fire') return bar('Burn damage', d.damage / 30) + bar('Fire radius', d.radius / 6) + bar('Burn time', d.burn / 10)
+    if (d.effect === 'smoke') return bar('Cloud size', d.radius / 8) + bar('Cloud time', d.cloud / 15) + bar('Pops after', 1 - d.fuse / 3)
+    if (d.effect === 'flash') return bar('Blind range', d.radius / 16) + bar('Blind time', d.blind / 4) + bar('Fuse speed', 1 - d.fuse / 3)
+    return bar('Damage', d.damage / 240) + bar('Blast radius', d.radius / 9) + bar('Fuse speed', 1 - d.fuse / 3)
+  }
   if (d.melee) return bar('Damage', d.damage / 100) + bar('Reach', d.range / 4) + bar('Swing speed', 1 / d.interval / 2.6) + bar('Mobility', (d.speedMul || 1) / 1.2)
-  const dmg = d.damage * (d.pellets || 1)
-  let html = bar('Damage', dmg / 220) + bar('Fire rate', 1 / d.interval / 17) + bar('Range', d.range / 400)
+  const dmg = d.damage * (d.pellets || 1) * (d.burst || 1)
+  let html = bar('Damage', dmg / 220) + bar('Fire rate', (d.burst ? d.burst : 1) / d.interval / 17) + bar('Range', d.range / 400)
+  if (d.blast) html += bar('Blast radius', d.blast / 6)
   if (d.heal) html += bar('Healing', d.heal / 15, 'heal')
   html += bar('Reload speed', 1 - (d.reload - 1) / 3) + bar('Accuracy', 1 - Math.min(1, (d.spread?.[1] ?? 1) / 1.6))
   if (!d.heal) html += bar('Magazine', d.mag / 60)
@@ -313,7 +323,8 @@ function weaponsWindow(tab) {
   else if (own) act = `<button class="wsb equip o" data-act="equip">EQUIP${sel.type === 'weapon' ? `<small>${d.slot}</small>` : ''}</button>`
   else act = `<button class="wsb buy o${profile.gems >= d.price ? '' : ' cant'}" data-act="buy"><span class="wsp o">${gemImg()}${fmtN(d.price)}</span>BUY</button>`
   const canTest = sel.type === 'weapon' || sel.type === 'grenade'
-  const slotLine = sel.type === 'weapon' ? `${d.slot === 'primary' ? 'Primary' : 'Secondary'} slot${d.tier === 'basic' ? ` · in the ${pass.name}` : ''}` : 'Throwable (T)'
+  const slotName = d.slot === 'primary' ? 'Primary' : d.slot === 'melee' ? 'Melee' : 'Secondary'
+  const slotLine = sel.type === 'weapon' ? `${slotName} slot${d.burst ? ' · burst fire' : d.auto ? ' · full auto' : ''}${d.tier === 'basic' ? ` · in the ${pass.name}` : ''}` : 'Throwable (T)'
   modal.innerHTML = `<div class="ws">
     <div class="ws-h">
       <div class="ws-gems" title="Gems: earned in matches, never sold">${gemImg()}<span class="o">${fmtN(profile.gems || 0)}</span></div>
@@ -381,6 +392,60 @@ function weaponsWindow(tab) {
   })
   // Keep the chosen tile in view after a rebuild.
   win.querySelector('.wsi.on')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+}
+
+// --- New arrivals (NEWS) --------------------------------------------------------------------------
+// Pops up once in the lobby for a player who has not closed this announcement yet (profile.newsSeen,
+// saved on the account by the server): the new weapons and throwables with their pictures, a line
+// each and their Gem price. A tile opens the Weapons Store on that item; "Open the Weapons Store"
+// on the first one; "Got it" just closes. Any way of closing it marks it seen.
+let newsShown = false // this session already showed it (it never pops up twice in one visit)
+function maybeNews() {
+  if (newsShown || !root || !account.loaded || newsSeen() >= NEWS.id) return
+  // Only on the plain lobby: not while queued / voting, over another window or the loading screen.
+  if (!root.classList.contains('on') || root.classList.contains('queued') || modal.classList.contains('on') || loadingEl?.classList.contains('on')) return
+  newsShown = true
+  // A beat after the lobby appears, so it does not land on top of the scene coming in.
+  setTimeout(() => {
+    if (!root.classList.contains('on') || root.classList.contains('queued') || modal.classList.contains('on')) {
+      newsShown = false
+      return
+    }
+    open('news')
+    sfx.purchase?.()
+  }, 700)
+}
+function newsWindow() {
+  const items = [...NEWS.weapons.filter((id) => WEAPONS[id]).map((id) => ({ type: 'weapon', id })), ...NEWS.grenades.filter((id) => GRENADES[id]).map((id) => ({ type: 'grenade', id }))]
+  const tiles = items
+    .map((it, i) => {
+      const d = wsDef(it)
+      const own = wsOwned(it)
+      const tag = own ? '<span class="nw-own o">OWNED</span>' : `<span class="nw-pr o">${gemImg()}${fmtN(d.price)}</span>`
+      return `<button class="nw-card ${rarity(it)}" data-type="${it.type}" data-id="${it.id}" style="--i:${i}"><span class="nw-new o">NEW</span><span class="nw-pic"><img alt="" src="${wsPic(it, 256, 110)}"></span><span class="nw-nm o">${esc(d.name)}</span><span class="nw-sub">${esc(NEWS.blurb[it.id] || '')}</span>${tag}</button>`
+    })
+    .join('')
+  const win = frame(NEWS.title, `<div class="nw"><div class="nw-hero"><div class="nw-burst o">NEW</div><div><div class="nw-t o">${esc(NEWS.tagline)}</div><div class="nw-s">Rockets, a crossbow, a silenced rifle, a revolver, a frying pan that stops bullets and more. Try any of them free in the TEST range, then buy with Gems you earn in matches.</div></div></div><div class="nw-grid">${tiles}</div><div class="nw-act"><button class="nw-btn ok o" data-ok>Got it</button><button class="nw-btn go o" data-go>Open the Weapons Store</button></div></div>`)
+  win.classList.add('news')
+  // Prices here are in Gems: the header shows the Gem balance instead of coins.
+  const bal = win.querySelector('.win-h .coins')
+  if (bal) bal.innerHTML = `${gemImg()}<span class="o">${fmtN(profile.gems || 0)}</span>`
+  const toStore = (sel) => {
+    markNewsSeen(NEWS.id)
+    if (sel) {
+      const d = wsDef(sel)
+      wsCat = sel.type === 'grenade' ? 'grenade' : d.cat || 'all'
+      wsSel = sel
+    }
+    sfx.click?.()
+    open('weapons', 'weapons')
+  }
+  win.querySelector('[data-ok]').addEventListener('click', () => {
+    sfx.click?.()
+    close()
+  })
+  win.querySelector('[data-go]').addEventListener('click', () => toStore(null))
+  win.querySelectorAll('.nw-card').forEach((b) => b.addEventListener('click', () => toStore({ type: b.dataset.type, id: b.dataset.id })))
 }
 
 let skinWeapon = null
@@ -820,6 +885,7 @@ export function showLoading(on, step = '', progress = 0) {
     document.body.appendChild(loadingEl)
   }
   loadingEl.classList.toggle('on', on)
+  if (!on) setTimeout(maybeNews, 0) // the announcement waits for the loading screen to go
   loadingEl.querySelector('.step').textContent = step
   loadingEl.querySelector('.bar i').style.width = `${Math.round(progress * 100)}%`
   if (on && !loadingEl.dataset.tip) loadingEl.dataset.tip = loadingEl.querySelector('.tip').textContent = `Tip: ${TIPS[Math.floor(Math.random() * TIPS.length)]}`
@@ -829,7 +895,7 @@ export function showLoading(on, step = '', progress = 0) {
 const lobby = {
   show(on) {
     root.classList.toggle('on', on)
-    if (on) refresh()
+    if (on) refresh() // (refresh also checks for the announcement)
     else if (modal.classList.contains('on')) close()
   },
   refresh,

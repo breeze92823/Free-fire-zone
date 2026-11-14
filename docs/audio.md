@@ -101,7 +101,9 @@ Private helpers:
 - `limit(name, ms)`: per-name rate limiter (`performance.now()`); false when called again within `ms`.
 - `buzz(pattern)`: `navigator.vibrate` on coarse pointers when not muted.
 - `falloff(dist)` -> `{ gain, lp, verb }` with `k = max(0, 1 - dist / AUDIO.hearing)`: `gain = k^2` (times `0.55 + 0.45 * min(1, 12 / dist)` beyond 3 m), `lp = 900 + 15000 k^2` Hz, `verb = 0.15 + 0.6 (1 - k)`. Callers scale `dist` to shorten the range of small sounds.
-- `GUN`: per kind `{ crack, body, gain, tail, d }` for `rifle`, `smg`, `pistol`, `shotgun`, `lmg`, `dmr`, `sniper`; an unknown kind uses `rifle`.
+- `GUN`: per kind `{ crack, body, gain, tail, d }` for `rifle`, `smg`, `pistol`, `shotgun`, `lmg`, `dmr`, `sniper`, `mpistol` (machine pistols), `hsmg` (the heavy drum SMG), `revolver` (plus a ringing frame), `lever`; an unknown kind uses `rifle`.
+- `SPECIAL`: shots that are not a powder crack, played instead of the `GUN` recipe: `silenced` (a dull cough plus the action's clack, heard over a third of the range), `crossbow` (string slap + limb thrum), `launcher` (a hollow "thoonk"), `rocket` (ignition crack + the motor roaring away).
+- `RELOADS`: reload recipes by `WEAPONS[id].reloadStyle`: `drum`, `revolver` (latch, cases tinkling down, six rounds in, snap shut), `shells` (rounds pushed in one by one), `break` (barrels drop, shells out and in, slam), `string` (a ratcheting crank, latch, bolt on the rail), `tube` (breech open, round in, close), `rocket` (slid in, latched, cocked). Anything else plays the magazine recipe.
 
 Columns: `voice(seconds, priority)`, rate limit, trigger (caller found by Grep). Bus is `sfx` unless marked `ui`.
 
@@ -110,11 +112,14 @@ Columns: `voice(seconds, priority)`, rate limit, trigger (caller found by Grep).
 | Function | Sound | Voice / limit | Triggered by |
 | --- | --- | --- | --- |
 | `shot(kind, { dist, pan, own })` | Crack + pitched body + muzzle blast + reverberant tail; quieter, duller and wetter with distance; silent when `falloff.gain < 0.01`; vibrates on own sniper / shotgun | (0.6, own ? 3 : 1) | `combat.js` on a local shot (own: `dist 0, pan 0`; skipped while cloaked); `online.js` on the server `shot` event for other players |
-| `bolt(kind)` | Two metal clacks 0.28 s (shotgun) or 0.42 s later | (0.4, 2) | `combat.js`, after the player's sniper / shotgun shot |
+| `bolt(cycle)` | Working the action after the shot: `pump` (slide back and forward), `bolt` (lift, back, forward, lock), `lever` (a quick double clack) | (0.6, 2) | `combat.js`, after the player's shot with a `WEAPONS[id].cycle` (Thunder, Hawk-50, Osprey, Ranger) |
 | `dryFire()` | Metal click | (0.1, 2), 160 ms | `combat.js`, player fires with nothing to shoot |
-| `reload(time = 2)` | Mag out, mag in, charging handle spread over `time` | (time, 2) | `combat.js` reload start (player only, `def.reload`) |
+| `reload(time = 2, style = 'mag')` | Mag out, mag in, charging handle spread over `time`, or a `RELOADS` recipe | (time, 2) | `combat.js` reload start (player only, `def.reload`, `def.reloadStyle`) |
 | `swap()` | Cloth whoosh + metal click | (0.3, 2), 80 ms | `combat.js` slot change (player only) |
-| `swing()` | Rising whoosh | (0.3, 2) | `combat.js` melee swing |
+| `swing(kind)` | Rising whoosh; lower and longer for the crowbar / pan, sharper for blades | (0.3, 2) | `combat.js` melee swing |
+| `meleeHit(kind, { dist, pan }, surface)` | The blow landing: a cast-iron BONG (pan), a ringing clank (crowbar), a slash (machete), a thud (others); glass chimes on a frost wall (`surface 'ice'`) | (1, 2) | `combat.js resolveMelee` (own blows); `online.js` `dmg` from another player holding a melee weapon |
+| `panBlock({ dist, pan })` | A bullet ringing off the pan on someone's back | (1, 2), 50 ms | `online.js` `dmg` with `b` |
+| `boltHit({ dist, pan }, kind)` | A crossbow bolt thudding into a wall (`wood`, with the shaft quivering) or a player (`flesh`) | (0.4, 1) | `projectiles.js` |
 
 ### Hits
 
@@ -132,7 +137,13 @@ Columns: `voice(seconds, priority)`, rate limit, trigger (caller found by Grep).
 
 | Function | Sound | Voice / limit | Triggered by |
 | --- | --- | --- | --- |
-| `explosion({ dist, pan })` | Low boom + crack + sub + debris crinkle; vibrates within 20 m | (2.5, 4) | `combat.js explodeVisual` |
+| `explosion({ dist, pan }, size = 1)` | Low boom + crack + sub + debris crinkle; vibrates within 20 m; `size` 1.25 for a rocket (longer, deeper), 0.9 for a 40 mm round | (2.5, 4) | `combat.js explodeVisual` |
+| `molotov({ dist, pan })` | Glass shattering + a fireball "whoomph" | (1.5, 3) | `areas.js fireArea` |
+| `fireCrackle({ dist, pan })` | A breathy roar with a few pops (every ~0.35 s while a fire burns) | (0.5, 0.5) | `areas.js` |
+| `smokePop` / `smokeHiss({ dist, pan })` | A canister popping, then hissing out its cloud | (1.5, 2) / (0.4, 0.5), 180 ms | `areas.js smokeCloud` |
+| `flashBang({ dist, pan })` | A deafening crack with a hard edge; vibrates within 15 m | (1.5, 4) | `areas.js flashBang` |
+| `tinnitus(dur)` | A high ring on the `ui` bus while the `sfx` and `world` buses drop to ~15% and come back over `dur` | (dur, 4) | `areas.js flashBang`, when the stun grenade blinds the local player |
+| `stick` / `stickyBeep({ dist, pan }, urgent)` | A sticky charge slapping on; then beeps, faster as its fuse runs out | (0.3, 2) / (0.1, 1) | `items.js` (Leech Charge) |
 | `pinPull()` | Two metal pings | (0.3, 2) | `items.js` throw start (player only) |
 | `bounce({ dist, pan })` | Metal clink; nothing beyond 40 m | (0.2, 1), 70 ms | `items.js` grenade bounce (normal speed > 2) |
 | `frostWall({ dist, pan })` | Hiss + six glass chimes + low thump | (1.2, 3) | `items.js` wall deployed |

@@ -8,12 +8,13 @@
 // knock-downs and eliminations (online.js turns its answers into bus events).
 // The shot itself is relayed so the others draw its tracers and hear it.
 import { Vector3 } from 'three'
-import { BULLET, GRENADES, ITEMS, OPERATIVES } from '../config.js'
+import { BULLET, GRENADES, ITEMS, OPERATIVES, WEAPONS } from '../config.js'
 import { RAPIER, world } from '../physics.js'
 import { sfx, spatial } from '../audio/index.js'
 import { G, emit } from './state.js'
 import * as fx from './fx.js'
 import { send } from '../net.js'
+import { launchProjectile } from './projectiles.js'
 
 const DEG = Math.PI / 180
 const tmpO = new Vector3()
@@ -35,6 +36,7 @@ let localHits = null
 export function setLocalHits(fn) {
   localHits = fn
 }
+export const localHitHandler = () => localHits
 const STATIC = () => RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS
 
 // Wall registry: frost walls register their collider handle -> wall so bullets can damage them.
@@ -131,19 +133,32 @@ export function currentSpread(actor, speed) {
 }
 
 // Fire the held gun. origin/dir: the aim ray. Returns true if a shot went off.
+// A burst weapon (`burst` shots `burstGap` s apart, `interval` from one burst to the next) keeps
+// firing its burst on its own: `actor.burstLeft` counts the shots still to come (controller.js).
 export function fire(actor, origin, dir, speed = 0) {
   const def = actor.def
   const w = actor.weapon
-  if (actor.life !== 'alive' || actor.fireCooldown > 0 || actor.reloadT >= 0 || actor.throwT >= 0 || actor.healT >= 0) return false
+  if (actor.life !== 'alive' || actor.fireCooldown > 0 || actor.reloadT >= 0 || actor.throwT >= 0 || actor.healT >= 0) {
+    if (actor.reloadT >= 0 || actor.life !== 'alive') actor.burstLeft = 0
+    return false
+  }
   if (def.melee) return melee(actor)
   if (w.ammo <= 0) {
-    if (actor.isPlayer) sfx.dryFire()
+    if (actor.isPlayer && !actor.burstLeft) sfx.dryFire()
+    actor.burstLeft = 0
     actor.fireCooldown = 0.25
     startReload(actor)
     return false
   }
   const overdrive = G.time < actor.ultActiveUntil && actor.operative === 'nova' ? 0.77 : 1
   actor.fireCooldown = def.interval * overdrive
+  if (def.burst) {
+    if (actor.burstLeft > 0) actor.burstLeft--
+    else actor.burstLeft = def.burst - 1
+    // Inside a burst the next round follows at once; the burst as a whole takes `interval`.
+    actor.fireCooldown = (actor.burstLeft > 0 ? def.burstGap : def.interval - def.burstGap * (def.burst - 1)) * overdrive
+    if (w.ammo <= 1) actor.burstLeft = 0
+  }
   w.ammo--
   actor.lastShotAt = G.time
   actor.ready = 1
@@ -153,6 +168,7 @@ export function fire(actor, origin, dir, speed = 0) {
 
   const muzzle = muzzleOf(actor, tmpM)
   const spread = currentSpread(actor, speed)
+  if (def.projectile) return fireProjectile(actor, origin, dir, muzzle, spread)
   const pellets = def.pellets || 1
   let anyHit = false
   let headHit = false
@@ -208,7 +224,10 @@ export function fire(actor, origin, dir, speed = 0) {
         }
       }
     }
-    if (i < 3 || Math.random() < 0.4) fx.tracer(muzzle, endPoint, def.kind === 'sniper' ? fx.FX_COLORS.white : def.heal ? fx.FX_COLORS.heal : null)
+    // A silenced weapon shows no tracer (the shooter sees a faint one).
+    if (def.silenced) {
+      if (actor.isPlayer && i === 0) fx.tracer(muzzle, endPoint, fx.FX_COLORS.faint)
+    } else if (i < 3 || Math.random() < 0.4) fx.tracer(muzzle, endPoint, def.kind === 'sniper' || def.kind === 'lever' ? fx.FX_COLORS.white : def.heal ? fx.FX_COLORS.heal : null)
   }
   if (actor.isPlayer && anyHit) sfx.hitmarker(headHit)
   // To the server: what this shot hit (it decides the damage), and the shot for the others' eyes and ears.
@@ -218,21 +237,110 @@ export function fire(actor, origin, dir, speed = 0) {
   }
   if (!localHits) send('shot', { w: w.id, o: pt(muzzle), e: ends.slice(0, 12) })
 
-  // Flash, shell and sound.
-  tmpU.set(0, 1, 0)
-  tmpR.set(Math.cos(actor.facing), 0, -Math.sin(actor.facing))
-  fx.muzzleFlash(muzzle, dir, def.kind === 'shotgun' || def.kind === 'sniper' || def.kind === 'lmg', actor.isPlayer || Math.random() < 0.35)
-  const ej = actor.heldModel?.userData.ejector
-  if (ej && def.kind !== 'shotgun') fx.shellCasing(ej.getWorldPosition(tmpE), tmpR.negate(), tmpU)
+  afterShot(actor, def, w, muzzle, dir)
+  return true
+}
+
+// Flash, shell, sound, bloom and the `shot` event: the same for bullets and projectiles.
+function afterShot(actor, def, w, muzzle, dir) {
+  fx.muzzleFlash(muzzle, dir, flashStyle(def), actor.isPlayer || Math.random() < 0.35)
+  ejectShell(actor, def)
   const s = actor.isPlayer ? { dist: 0, pan: 0 } : spatial(muzzle.x, muzzle.y, muzzle.z)
   const kind = def.sound || def.kind
   if (!(G.time < actor.cloakUntil)) sfx.shot(kind, { ...s, own: actor.isPlayer })
-  if (actor.isPlayer && (def.kind === 'sniper' || def.kind === 'shotgun')) sfx.bolt(def.kind)
+  if (actor.isPlayer && def.cycle && w.ammo > 0) sfx.bolt(def.cycle)
   actor.spreadBloom = Math.min(actor.spreadBloom + def.recoil * 0.22, 3.5)
-  emit('shot', { actor, pos: muzzle.clone(), recoil: def.recoil })
-  if (w.ammo === 0 && actor.isPlayer) setTimeout(() => startReload(actor), 120)
+  emit('shot', { actor, pos: muzzle.clone(), recoil: def.recoil, silent: !!def.silenced })
+  if (w.ammo === 0 && actor.isPlayer) setTimeout(() => startReload(actor), def.projectile ? 260 : 120)
+}
+
+// Muzzle flash look per weapon (fx.muzzleFlash): 'big', 'small', 'none' (silenced), 'rocket'
+// (back-blast as well), 'puff' (launcher / crossbow).
+export function flashStyle(def) {
+  if (def.silenced) return def.projectile ? 'none' : 'suppressed'
+  if (def.kind === 'rocket') return 'rocket'
+  if (def.kind === 'launcher') return 'puff'
+  if (def.kind === 'shotgun' || def.kind === 'sniper' || def.kind === 'lmg' || def.kind === 'revolver' || def.kind === 'lever') return 'big'
+  return 'small'
+}
+
+// A spent case out of the ejection port: brass, a big rifle case or a red shotgun shell. Bolt,
+// lever and pump guns throw theirs when the action is worked, a moment after the shot.
+function ejectShell(actor, def) {
+  const type = def.shells || (def.kind === 'shotgun' ? 'none' : 'brass')
+  if (type === 'none') return
+  const go = () => {
+    const ej = actor.heldModel?.userData.ejector
+    if (!ej || !actor.heldModel.visible || actor.def !== def) return
+    tmpU.set(0, 1, 0)
+    tmpR.set(-Math.cos(actor.facing), 0, Math.sin(actor.facing))
+    if (def.model === 'swarm') tmpU.set(0, -0.6, 0) // drops straight out of the bottom
+    if (def.cycle === 'lever') tmpR.multiplyScalar(0.3).y += 0.6 // top ejection
+    fx.shellCasing(ej.getWorldPosition(tmpE), tmpR, tmpU, type)
+  }
+  if (def.cycle) setTimeout(go, def.cycle === 'lever' ? 220 : def.cycle === 'pump' ? 330 : 520)
+  else go()
+}
+
+// Crossbow bolts, 40 mm grenades and rockets fly (projectiles.js): what they hit is decided when
+// they land. The shot is still relayed (with the launch velocity) so the others see it fly.
+function fireProjectile(actor, origin, dir, muzzle, spread) {
+  const def = actor.def
+  const w = actor.weapon
+  const d = coneDir(dir, spread, tmpD)
+  // Aim from the muzzle at the point the crosshair covers (the camera ray), so it flies true.
+  const wh = castWorld(origin, d, 300)
+  tmpL.copy(origin).addScaledVector(d, wh ? wh.dist : 300).sub(muzzle).normalize()
+  if (tmpL.dot(d) < 0.5) tmpL.copy(d)
+  const v = tmpL.clone().multiplyScalar(def.projectile.speed)
+  const seq = ++shotSeq
+  launchProjectile({ owner: actor, weapon: w.id, def, pos: muzzle.clone(), vel: v, seq, local: true, localHits })
+  if (!localHits) send('shot', { w: w.id, o: pt(muzzle), e: [], v: pt(v) })
+  afterShot(actor, def, w, muzzle, tmpL)
   return true
 }
+
+// A projectile this client fired landed on a player (projectiles.js): reported like a bullet.
+export function projectileHit(actor, weaponId, seq, target, head, dist) {
+  if (target.netId) send('hit', { t: target.netId, w: weaponId, s: seq, n: 1, h: head ? 1 : 0, d: Math.round(dist * 10) / 10 })
+  else if (localHits) localHits(target, { weapon: weaponId, n: 1, h: head ? 1 : 0, d: dist, heal: 0 })
+  if (actor.isPlayer) sfx.hitmarker(head)
+}
+
+// A launcher round this client fired went off: the blast is drawn here and reported (the server
+// decides the damage) with everyone in the radius in line of sight.
+export function weaponBlast(actor, weaponId, seq, pos) {
+  const def = WEAPONS[weaponId]
+  const radius = def.blast
+  explodeVisual(pos, radius, def.damage, def.kind === 'rocket' ? 'rocket' : 'launcher')
+  tmpO.copy(pos).y += 0.5
+  if (localHits) {
+    for (const a of G.actors) {
+      if (a.life === 'dead' || a === actor || a.team === actor.team || a.untargetable) continue
+      a.chest(tmpP)
+      const d = tmpP.distanceTo(pos)
+      if (d > radius || !lineOfSight(tmpO, tmpP)) continue
+      localHits(a, { weapon: weaponId, n: 1, h: 0, d, heal: 0, explosive: true, damage: def.damage * Math.pow(1 - d / radius, 0.7) })
+    }
+    return
+  }
+  const targets = []
+  for (const a of G.actors) {
+    if (a.life === 'dead' || !a.netId) continue
+    if (a.team === actor.team && a !== actor) continue
+    a.chest(tmpP)
+    const d = tmpP.distanceTo(pos)
+    if (d > radius || !lineOfSight(tmpO, tmpP)) continue
+    targets.push(a.netId)
+    if (a === actor) {
+      const k = Math.pow(1 - d / radius, 0.7)
+      a.impulse.x += (tmpP.x - pos.x) * k * 3
+      a.impulse.z += (tmpP.z - pos.z) * k * 3
+    }
+  }
+  send('blast', { w: weaponId, s: seq, x: r2(pos.x), y: r2(pos.y), z: r2(pos.z), t: targets })
+}
+const r2 = (v) => Math.round(v * 100) / 100
 
 const pt = (v) => [Math.round(v.x * 100) / 100, Math.round(v.y * 100) / 100, Math.round(v.z * 100) / 100]
 
@@ -252,7 +360,7 @@ export function melee(actor) {
   actor.ready = 1
   actor.lastShotAt = G.time
   actor.emote = null
-  sfx.swing()
+  sfx.swing(def.kind)
   // The blow lands a moment into the swing.
   const at = G.time + 0.14
   actor.pendingMelee = at
@@ -277,12 +385,24 @@ export function resolveMelee(actor) {
     best = a
     bestD = d
   }
-  if (!best) return
+  if (!best) {
+    // Nobody in reach: a blow can still land on a frost wall in front (the crowbar wrecks them).
+    actor.chest(tmpO)
+    const wh = castWorld(tmpO, tmpD.set(fwdX, 0, fwdZ), def.range + 0.3)
+    const wall = wh ? wallColliders.get(wh.collider?.handle) : null
+    if (wall) {
+      wall.damage(def.damage * (def.wallMul || 1.5), actor)
+      fx.iceBurst(wh.point, def.wallMul ? 14 : 5)
+      sfx.meleeHit(def.kind, actor.isPlayer ? { dist: 0, pan: 0 } : spatial(wh.point.x, wh.point.y, wh.point.z), 'ice')
+    }
+    return
+  }
   best.chest(tmpP)
   if (best.netId) send('hit', { t: best.netId, w: actor.weapon.id, s: ++shotSeq, n: 1, h: 0, d: Math.round(bestD * 10) / 10 })
   else if (localHits) localHits(best, { weapon: actor.weapon.id, n: 1, h: 0, d: bestD, heal: 0 })
   fx.hitPuff(tmpP, tmpD.set(fwdX, 0, fwdZ), false)
-  sfx.punch()
+  if (def.kind === 'pan') fx.panSparks(tmpP, tmpD)
+  sfx.meleeHit(def.kind)
   if (actor.isPlayer) sfx.hitmarker(false)
 }
 
@@ -293,7 +413,20 @@ export function startReload(actor) {
   if (!def.mag || actor.reloadT >= 0 || w.ammo >= def.mag || w.reserve <= 0 || actor.life !== 'alive') return false
   actor.reloadT = 0
   actor.emote = null
-  if (actor.isPlayer) sfx.reload(def.reload)
+  actor.burstLeft = 0
+  if (actor.isPlayer) {
+    sfx.reload(def.reload, def.reloadStyle || 'mag')
+    // Break-open guns and the revolver dump their spent cases when they open.
+    const dump = def.reloadStyle === 'revolver' ? def.mag - w.ammo : def.reloadStyle === 'break' ? def.mag - w.ammo : 0
+    if (dump > 0) {
+      setTimeout(() => {
+        const ej = actor.heldModel?.userData.ejector
+        if (!ej || actor.reloadT < 0) return
+        ej.getWorldPosition(tmpE)
+        for (let i = 0; i < dump; i++) fx.shellCasing(tmpE, tmpR.set((Math.random() - 0.5) * 0.4, -0.3, (Math.random() - 0.5) * 0.4), tmpU.set(0, 0.3, 0), def.reloadStyle === 'break' ? 'shell' : 'brass')
+      }, def.reload * 260)
+    }
+  }
   return true
 }
 
@@ -311,6 +444,7 @@ export function selectSlot(actor, i) {
   actor.slot = i
   actor.reloadT = -1
   actor.swingT = -1
+  actor.burstLeft = 0
   actor.fireCooldown = Math.max(actor.fireCooldown, 0.35)
   actor.aiming = false
   actor.refreshHeld()
@@ -321,8 +455,8 @@ export function selectSlot(actor, i) {
 // --- Explosions -----------------------------------------------------------------------------
 // The local player's frag went off: tell the server who was in the blast (with line of sight); it
 // decides the damage. The flash, sound and frost-wall damage are drawn by every client.
-export function explode(pos, attacker, damage = ITEMS.frag.damage, radius = ITEMS.frag.radius) {
-  explodeVisual(pos, radius, damage)
+export function explode(pos, attacker, damage = ITEMS.frag.damage, radius = ITEMS.frag.radius, kind = 'frag') {
+  explodeVisual(pos, radius, damage, kind)
   if (!attacker?.isPlayer) return
   tmpO.copy(pos).y += 0.5
   const targets = []
@@ -333,7 +467,7 @@ export function explode(pos, attacker, damage = ITEMS.frag.damage, radius = ITEM
       a.chest(tmpP)
       const d = tmpP.distanceTo(pos)
       if (d > radius || !lineOfSight(tmpO, tmpP)) continue
-      localHits(a, { weapon: 'grenade', n: 1, h: 0, d, heal: 0, explosive: true, damage: damage * Math.pow(1 - d / radius, 0.7) })
+      localHits(a, { weapon: kind, n: 1, h: 0, d, heal: 0, explosive: true, damage: damage * Math.pow(1 - d / radius, 0.7) })
     }
     return
   }
@@ -354,9 +488,10 @@ export function explode(pos, attacker, damage = ITEMS.frag.damage, radius = ITEM
   send('boom', { x: Math.round(pos.x * 100) / 100, y: Math.round(pos.y * 100) / 100, z: Math.round(pos.z * 100) / 100, t: targets })
 }
 
-export function explodeVisual(pos, radius = ITEMS.frag.radius, damage = ITEMS.frag.damage) {
-  fx.explosion(pos, radius)
-  sfx.explosion(spatial(pos.x, pos.y, pos.z))
+// kind: a GRENADES id, or 'launcher' / 'rocket' (a weapon's blast): picks the size of the boom.
+export function explodeVisual(pos, radius = ITEMS.frag.radius, damage = ITEMS.frag.damage, kind = 'frag') {
+  fx.explosion(pos, radius, kind === 'rocket' ? 1.35 : 1)
+  sfx.explosion(spatial(pos.x, pos.y, pos.z), kind === 'rocket' ? 1.25 : kind === 'launcher' ? 0.9 : 1)
   emit('explosion', { pos: pos.clone(), radius })
   for (const wall of wallColliders.values()) {
     if (wall.pos.distanceTo(pos) < radius + 1.5) wall.damage(damage * 1.5, null)

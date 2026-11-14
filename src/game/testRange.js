@@ -13,11 +13,13 @@ import './testRange.css'
 import { GRENADES, HEALTH, ITEMS, WEAPONS } from '../config.js'
 import { RAPIER, addFixed, world } from '../physics.js'
 import { sfx, spatial } from '../audio/index.js'
-import { G, emit } from './state.js'
+import { G, emit, on } from './state.js'
+import { remoteWall } from './items.js'
+import { smokeBlocks, smokeInside } from './areas.js'
 import * as bloxity from '../bloxity.js'
 import { Actor } from './actor.js'
 import { randomOutfit } from './characters.js'
-import { damageFalloff, muzzleOf, setLocalHits } from './combat.js'
+import { damageFalloff, flashStyle, muzzleOf, setLocalHits } from './combat.js'
 import { getZone, kit } from './match.js'
 import { profile } from './save.js'
 import * as fx from './fx.js'
@@ -130,15 +132,18 @@ let S = null // the running test
 let ui = null
 let offAreas = null
 
-function weaponKind(def) {
-  if (!def) return 'grenade'
+// gun, medic, melee, blast (launchers), and for throwables grenade (blasts and fire), smoke, flash.
+function weaponKind(def, gdef) {
+  if (!def) return gdef?.effect === 'smoke' ? 'smoke' : gdef?.effect === 'flash' ? 'flash' : 'grenade'
   if (def.heal) return 'medic'
   if (def.melee) return 'melee'
+  if (def.blast) return 'blast'
   return 'gun'
 }
 // How far the first target stands, by weapon.
 function targetRange(def) {
   if (!def) return 14
+  if (def.blast) return 24
   if (def.scope) return 40
   if (def.kind === 'shotgun') return 7
   if (def.melee) return 4
@@ -148,7 +153,7 @@ function targetRange(def) {
 
 function makeActor(name, team, weaponId = 'striker', opts = {}) {
   const def = WEAPONS[weaponId]
-  const lo = def?.slot === 'secondary' ? { primary: 'striker', secondary: weaponId } : { primary: def?.slot === 'primary' ? weaponId : 'striker', secondary: 'viper' }
+  const lo = def?.slot === 'secondary' ? { primary: 'striker', secondary: weaponId } : { primary: def?.slot === 'primary' ? weaponId : 'striker', secondary: 'viper', melee: def?.slot === 'melee' ? weaponId : 'knife' }
   const a = new Actor({ name, team, outfit: randomOutfit(), loadout: lo })
   a.addToScene(G.scene)
   a.slot = Math.max(0, a.slots.findIndex((s) => s.id === weaponId))
@@ -230,26 +235,58 @@ function buildSteps(kind, def, gdef) {
       },
       onHit: () => S.progress++,
     })
-    steps.push({
-      title: 'Feel the speed',
-      text: `With the blade out you run ${Math.round(((def.speedMul || 1) - 1) * 100)}% faster. Sprint to the glowing ring.`,
-      need: 1,
-      setup() {
-        S.ring = ahead(26, 10)
-        S.ringMesh = new Mesh(new TorusGeometry(1.6, 0.15, 10, 36), new MeshBasicMaterial({ color: '#ffd84a' }))
-        S.ringMesh.rotation.x = -Math.PI / 2
-        S.ringMesh.position.set(S.ring.x, ARENA.y + 0.15, S.ring.z)
-        G.scene.add(S.ringMesh)
-      },
-      update() {
-        const p = G.player.pos
-        if (Math.hypot(p.x - S.ring.x, p.z - S.ring.z) < 2) S.progress = 1
-      },
-      cleanup() {
-        S.ringMesh?.removeFromParent()
-        S.ringMesh = null
-      },
-    })
+    if ((def.speedMul || 1) > 1.04) {
+      steps.push({
+        title: 'Feel the speed',
+        text: `With the ${esc(name)} out you run ${Math.round(((def.speedMul || 1) - 1) * 100)}% faster. Sprint to the glowing ring.`,
+        need: 1,
+        setup() {
+          S.ring = ahead(26, 10)
+          S.ringMesh = new Mesh(new TorusGeometry(1.6, 0.15, 10, 36), new MeshBasicMaterial({ color: '#ffd84a' }))
+          S.ringMesh.rotation.x = -Math.PI / 2
+          S.ringMesh.position.set(S.ring.x, ARENA.y + 0.15, S.ring.z)
+          G.scene.add(S.ringMesh)
+        },
+        update() {
+          const p = G.player.pos
+          if (Math.hypot(p.x - S.ring.x, p.z - S.ring.z) < 2) S.progress = 1
+        },
+        cleanup() {
+          S.ringMesh?.removeFromParent()
+          S.ringMesh = null
+        },
+      })
+    } else if (def.wallMul) {
+      steps.push({
+        title: 'Break through',
+        text: `An enemy Frost Wall blocks the way. Smash it with the ${esc(name)}: two swings and it shatters.`,
+        need: 1,
+        setup() {
+          const p = ahead(8, 6)
+          S.wall = remoteWall(new Vector3(p.x, ARENA.y + 0.05, p.z), Math.PI, null)
+        },
+        update() {
+          if (S.wall?.dead) S.progress = 1
+        },
+        cleanup() {
+          S.wall?.remove?.()
+          S.wall = null
+        },
+      })
+    } else {
+      steps.push({
+        title: 'Hit it on the move',
+        text: `The dummy now walks side to side. Catch it and land 3 more strikes.${def.block ? ' Out of your hand, the pan rides on your back and soaks up shots from behind.' : ''}`,
+        need: 3,
+        setup() {
+          S.strafe = { x: enemy().pos.x, z: enemy().pos.z, t: 0, w: 2.5 }
+        },
+        onHit: () => S.progress++,
+        cleanup() {
+          S.strafe = null
+        },
+      })
+    }
     steps.push({
       title: 'Take it down',
       text: 'The dummy now moves and fights back with nothing. Catch it and eliminate it.',
@@ -313,11 +350,43 @@ function buildSteps(kind, def, gdef) {
         if (t === enemy()) S.progress++
       },
     })
-  } else {
-    // Grenades
+  } else if (kind === 'smoke') {
     steps.push({
-      title: 'Throw at the target',
-      text: `Press T (or the grenade button) to throw the ${esc(name)}. Land the blast on the dummy (radius ${gdef.radius} m, fuse ${gdef.fuse} s).`,
+      title: 'Make some cover',
+      text: `Press T (or the grenade button) to throw the ${esc(name)} between you and the dummy.`,
+      need: 1,
+      setup() {
+        const p = ahead(R + 6)
+        place(enemy(), p.x, p.z, START)
+        revive(enemy())
+        enemy().invulnerable = true
+      },
+      update() {
+        if (smokeBlocks(G.player.eye(tmp), enemy().chest(tmp2))) S.progress = 1
+      },
+    })
+    steps.push({
+      title: 'Hide in it',
+      text: 'Walk into the cloud. Inside it, enemies cannot see you or your name tag.',
+      need: 1,
+      update() {
+        if (smokeInside(G.player.pos, 0)) S.progress = 1
+      },
+    })
+    steps.push({
+      title: 'Cover a push',
+      text: 'Throw another one right next to the dummy and walk up to it under the smoke.',
+      need: 1,
+      update() {
+        const e = enemy().pos
+        const p = G.player.pos
+        if (smokeInside(e, 2) && Math.hypot(p.x - e.x, p.z - e.z) < 3) S.progress = 1
+      },
+    })
+  } else if (kind === 'flash') {
+    steps.push({
+      title: 'Stun the target',
+      text: `Throw the ${esc(name)} so it goes off within ${gdef.radius} m of the dummy (fuse ${gdef.fuse} s).`,
       need: 1,
       setup() {
         const p = ahead(R)
@@ -325,11 +394,64 @@ function buildSteps(kind, def, gdef) {
         revive(enemy())
         enemy().invulnerable = true
       },
-      onHit: () => S.progress++,
+      onBang(pos) {
+        if (pos.distanceTo(enemy().pos) < gdef.radius) S.progress = 1
+      },
+    })
+    steps.push({
+      title: 'See what they see',
+      text: 'Throw one at the wall of the field and watch it go off. Brace yourself!',
+      need: 1,
+      onFlashed(amount) {
+        if (amount > 0.35) S.progress = 1
+      },
+    })
+    steps.push({
+      title: 'Look away',
+      text: 'Throw one close by, then turn your back to it before it pops: it barely touches you.',
+      need: 1,
+      onBang(pos) {
+        if (pos.distanceTo(G.player.pos) > gdef.radius) return
+        S.bangAt = G.time
+        S.bangHit = 0
+      },
+      onFlashed(amount) {
+        S.bangHit = amount
+      },
+      update() {
+        if (S.bangAt && G.time - S.bangAt > 0.2) {
+          if (S.bangHit < 0.3) S.progress = 1
+          S.bangAt = 0
+        }
+      },
+    })
+  } else {
+    // Grenades and launchers (blasts and fire)
+    const launcher = kind === 'blast'
+    steps.push({
+      title: launcher ? 'Hit the target' : 'Throw at the target',
+      text: launcher
+        ? `Fire the ${esc(name)} at the dummy. It flies in an arc${def.kind === 'rocket' ? ' (almost flat)' : ''} and bursts on impact (radius ${def.blast} m): aim at its feet. Land 2 blasts.`
+        : gdef.effect === 'fire'
+          ? `Press T (or the grenade button) to throw the ${esc(name)}. It bursts into flames where it lands: set the dummy on fire.`
+          : `Press T (or the grenade button) to throw the ${esc(name)}. Land the blast on the dummy (radius ${gdef.radius} m, fuse ${gdef.fuse} s).${gdef.effect === 'sticky' ? ' It sticks to whatever it touches.' : ''}`,
+      need: launcher ? 2 : 1,
+      setup() {
+        const p = ahead(R)
+        place(enemy(), p.x, p.z, START)
+        revive(enemy())
+        enemy().invulnerable = true
+        S.lastBlastAt = -9
+      },
+      // Fire hurts every half second: count one blast (or one fire) once.
+      onHit: () => {
+        if (G.time - S.lastBlastAt > 0.6) S.progress++
+        S.lastBlastAt = G.time
+      },
     })
     steps.push({
       title: 'Catch two at once',
-      text: 'Two dummies stand close together. Catch both of them in one blast.',
+      text: `Two dummies stand close together. Catch both of them in one ${gdef?.effect === 'fire' && !launcher ? 'fire' : 'blast'}.`,
       need: 1,
       setup() {
         const p = ahead(R + 2)
@@ -348,7 +470,7 @@ function buildSteps(kind, def, gdef) {
     })
     steps.push({
       title: 'Take it down',
-      text: 'The dummy has full health now. Eliminate it with grenades.',
+      text: `The dummy has full health now. Eliminate it with ${launcher ? `the ${esc(name)}` : 'grenades'}.`,
       need: 1,
       setup() {
         S.enemies[1].life = 'dead'
@@ -402,7 +524,7 @@ function onLocalHit(t, info) {
 function demo() {
   const ins = S.instructor
   const target = S.kind === 'medic' && S.i < 2 ? S.allies[S.i] : S.enemies[0]
-  if (!ins || !target || S.kind === 'grenade') return
+  if (!ins || !target || S.kind === 'grenade' || S.kind === 'blast' || S.kind === 'smoke' || S.kind === 'flash') return
   ins.facing = Math.atan2(target.pos.x - ins.pos.x, target.pos.z - ins.pos.z)
   S.demoShots = S.kind === 'melee' ? 0 : 3
   S.demoT = 0.4
@@ -421,8 +543,8 @@ function demoUpdate(dt) {
       ins.lastShotAt = G.time
       const m = muzzleOf(ins, tmp)
       S.demoTarget.chest(tmp2)
-      fx.muzzleFlash(m, tmp2.clone().sub(m).normalize(), S.def.kind === 'shotgun' || S.def.kind === 'sniper', true)
-      fx.tracer(m, tmp2, S.def.heal ? fx.FX_COLORS.heal : null)
+      fx.muzzleFlash(m, tmp2.clone().sub(m).normalize(), flashStyle(S.def), true)
+      if (!S.def.silenced && !S.def.projectile) fx.tracer(m, tmp2, S.def.heal ? fx.FX_COLORS.heal : null)
       sfx.shot(S.def.sound || S.def.kind, { ...spatial(m.x, m.y, m.z), own: false })
     }
   }
@@ -495,10 +617,11 @@ export function startTest({ weaponId, grenadeId, playerName, playerAvatar, playe
   addColliders()
   const def = weaponId ? WEAPONS[weaponId] : null
   const gdef = GRENADES[grenadeId || profile.loadout?.grenade || 'frag'] ?? GRENADES.frag
-  const kind = weaponKind(def)
-  const lo = { primary: profile.loadout?.primary || 'striker', secondary: profile.loadout?.secondary || 'viper', grenade: grenadeId || profile.loadout?.grenade || 'frag' }
+  const kind = weaponKind(def, gdef)
+  const lo = { primary: profile.loadout?.primary || 'striker', secondary: profile.loadout?.secondary || 'viper', melee: profile.loadout?.melee || 'knife', grenade: grenadeId || profile.loadout?.grenade || 'frag' }
   if (def?.slot === 'primary') lo.primary = weaponId
   if (def?.slot === 'secondary') lo.secondary = weaponId
+  if (def?.slot === 'melee') lo.melee = weaponId
   G.actors = []
   const player = new Actor({ name: playerName, team: 'blue', isPlayer: true, outfit: randomOutfit(), operative: profile.loadout?.operative, loadout: lo, avatar: playerAvatar })
   player.portrait = playerPortrait
@@ -521,7 +644,7 @@ export function startTest({ weaponId, grenadeId, playerName, playerAvatar, playe
   }
   G.time = 0
   kit(player, true)
-  if (kind === 'grenade') player.items.frag = 6
+  if (!def) player.items.frag = 6
   if (def) player.slot = Math.max(0, player.slots.findIndex((s) => s.id === weaponId))
   player.refreshHeld()
   player.life = 'alive'
@@ -551,6 +674,11 @@ export function startTest({ weaponId, grenadeId, playerName, playerAvatar, playe
   S.allies = kind === 'medic' ? [makeActor('Ally', 'blue'), makeActor('Ally 2', 'blue')] : []
   S.steps = buildSteps(kind, def, gdef)
   setLocalHits(onLocalHit)
+  // Stun grenade steps watch the bangs and how hard they hit the player.
+  S.offs = [
+    on('explosion', ({ pos }) => S?.steps[S.i]?.onBang?.(pos)),
+    on('flashed', ({ amount }) => S?.steps[S.i]?.onFlashed?.(amount)),
+  ]
   buildUi(onExit)
   enterStep()
   return { player, pos: new Vector3(START.x, ARENA.y + 0.05, START.z), facing: Math.PI }
@@ -586,12 +714,13 @@ export function updateTest(dt, camera) {
   } else if (e) e.vel.set(0, 0, 0)
   // Enemy dummies face the player; the instructor watches its target.
   for (const a of S.enemies) if (a !== e || !S.strafe) a.facing = Math.atan2(G.player.pos.x - a.pos.x, G.player.pos.z - a.pos.z)
-  // A grenade test never runs dry.
-  if (S.kind === 'grenade' && G.player.items.frag <= 0) G.player.items.frag = 6
+  // A test never runs dry: grenades, and the tested gun's spare ammo.
+  if (!S.def.name && G.player.items.frag <= 0) G.player.items.frag = 6
+  for (const w of G.player.slots) if (w.def.mag && w.reserve < w.def.mag * 2) w.reserve = w.def.reserve
   demoUpdate(dt)
   if (st) {
     st.update?.(dt)
-    if (S.kind === 'gun' || S.kind === 'melee' || S.kind === 'grenade') {
+    if (S.kind === 'gun' || S.kind === 'melee' || S.kind === 'grenade' || S.kind === 'blast') {
       if (st.need > 1) S.tag(S.enemies[0], `${Math.min(S.progress, st.need)}/${st.need}`, 'cnt')
     }
     if (S.nextT <= 0 && S.progress >= st.need) {
@@ -636,6 +765,7 @@ export function endTest() {
   if (!S) return
   S.steps[S.i]?.cleanup?.()
   clearTimeout(S.blastT)
+  for (const off of S.offs || []) off()
   setLocalHits(null)
   offAreas?.()
   offAreas = null

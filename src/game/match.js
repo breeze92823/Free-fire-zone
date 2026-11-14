@@ -35,7 +35,7 @@ export function createMatch({ st, me, map, playerAvatar, playerName, playerPortr
     isPlayer: true,
     outfit: randomOutfit(),
     operative: me.operative,
-    loadout: { primary: me.primary, secondary: me.secondary, grenade: profile.loadout?.grenade || 'frag', skins: { [me.primary]: me.skinPrimary || 'standard', [me.secondary]: me.skinSecondary || 'standard' } },
+    loadout: { primary: me.primary, secondary: me.secondary, melee: me.melee || 'knife', grenade: profile.loadout?.grenade || 'frag', skins: { [me.primary]: me.skinPrimary || 'standard', [me.secondary]: me.skinSecondary || 'standard' } },
     avatar: playerAvatar,
   })
   player.portrait = playerPortrait

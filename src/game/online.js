@@ -3,13 +3,14 @@
 // NET.interpDelay behind their newest pose; the server decides their health, life and score.
 // The local player sends its pose ~NET.poseHz times a second (sendPose).
 import { Vector3 } from 'three'
-import { DEV_MODE, MAPS, NET, ULT_CHARGE, WEAPONS } from '../config.js'
+import { DEV_MODE, GRENADES, MAPS, NET, ULT_CHARGE, WEAPONS } from '../config.js'
 import { G, emit } from './state.js'
 import { Actor } from './actor.js'
 import { buildCharacter, portrait, randomOutfit } from './characters.js'
 import { me, net, onNet, send } from '../net.js'
-import { muzzleOf, explodeVisual } from './combat.js'
-import { remoteThrow, remoteWall, ultVisual } from './items.js'
+import { muzzleOf, explodeVisual, flashStyle } from './combat.js'
+import { remoteBoom, remoteThrow, remoteWall, ultVisual } from './items.js'
+import { endRemote, launchProjectile } from './projectiles.js'
 import { markOpened, syncCrates, syncDrops } from './loot.js'
 import { mulberry32 } from './zone.js'
 import { spawnActor, updateMvp } from './match.js'
@@ -49,7 +50,7 @@ function hash(s) {
   return h >>> 0
 }
 
-const loadoutOf = (p) => ({ primary: p.primary, secondary: p.secondary, skins: { [p.primary]: p.skinPrimary || 'standard', [p.secondary]: p.skinSecondary || 'standard' } })
+const loadoutOf = (p) => ({ primary: p.primary, secondary: p.secondary, melee: p.melee || 'knife', skins: { [p.primary]: p.skinPrimary || 'standard', [p.secondary]: p.skinSecondary || 'standard' } })
 
 // --- Roster -> actors ---------------------------------------------------------------------------
 // The blocky look a player wears without a Bloxity avatar: the same on every client.
@@ -236,10 +237,12 @@ function applyRemote(a, p, dt, now) {
   a.throwT = timer(f & FLAG.throw, a.throwT, 0.54)
   if (f & FLAG.swing && a.swingT < 0) a.swingT = 0
   a.ready += ((a.aiming || G.time - a.lastShotAt < 1.4 ? 1 : 0.35) - a.ready) * Math.min(1, dt * 8)
-  if (a.slots[0].id !== p.primary || a.slots[1].id !== p.secondary || a.slots[0].skin !== p.skinPrimary || a.slots[1].skin !== p.skinSecondary) {
+  const melee = WEAPONS[p.melee]?.slot === 'melee' ? p.melee : 'knife'
+  if (a.slots[0].id !== p.primary || a.slots[1].id !== p.secondary || a.slots[2].id !== melee || a.slots[0].skin !== p.skinPrimary || a.slots[1].skin !== p.skinSecondary) {
     const lo = loadoutOf(p)
     a.slots[0] = { id: lo.primary, def: WEAPONS[lo.primary] || WEAPONS.striker, ammo: 0, reserve: 0, skin: lo.skins[lo.primary] }
     a.slots[1] = { id: lo.secondary, def: WEAPONS[lo.secondary] || WEAPONS.viper, ammo: 0, reserve: 0, skin: lo.skins[lo.secondary] }
+    a.slots[2] = { id: melee, def: WEAPONS[melee], ammo: 0, reserve: 0, skin: 'standard' }
     a.buildWeapons()
   }
   if (a.slot !== p.slot) {
@@ -396,7 +399,7 @@ export function initOnline() {
   if (wired) return
   wired = true
 
-  onNet('dmg', ({ t, a, n, h, z, e }) => {
+  onNet('dmg', ({ t, a, n, h, z, e, b }) => {
     const target = byNet(t) || (t === net.sessionId ? G.player : null)
     if (!target || !G.match) return
     const attacker = byNet(a) || (a === net.sessionId ? G.player : null)
@@ -405,6 +408,14 @@ export function initOnline() {
     if (attacker) target.lastHitBy = attacker
     const point = h ? target.head(new Vector3()) : target.chest(new Vector3())
     const dir = attacker ? tmp2.subVectors(point, attacker.pos).normalize().clone() : null
+    // b: the frying pan on the target's back stopped most of a shot from behind: CLANG.
+    if (b) {
+      const back = target.chest(new Vector3()).addScaledVector(tmp.set(Math.sin(target.facing), 0, Math.cos(target.facing)), -0.3)
+      fx.panSparks(back, dir || tmp.set(0, 0, 1))
+      sfx.panBlock(target === G.player ? { dist: 0, pan: 0 } : spatial(back.x, back.y, back.z))
+    }
+    // Another player's melee blow: everyone near hears it land (the swinger heard their own).
+    if (attacker && attacker !== G.player && attacker.def?.melee && !e && !z) sfx.meleeHit(attacker.def.kind, spatial(point.x, point.y, point.z))
     emit('damage', { target, attacker, amount: n, head: !!h, point, dir, zone: !!z, explosive: !!e })
     if (target === G.player && z) sfx.zoneTick()
     // Dealing damage charges the ability.
@@ -493,7 +504,7 @@ export function initOnline() {
       a.life = 'alive'
     }
   })
-  onNet('shot', ({ id, w, o, e }) => {
+  onNet('shot', ({ id, w, o, e, v }) => {
     const a = byNet(id)
     if (!a || !G.match || a.life !== 'alive') return
     const def = WEAPONS[w]
@@ -510,14 +521,20 @@ export function initOnline() {
       }
     }
     const aim = remoteAimDir(a, tmp)
-    fx.muzzleFlash(muzzle, aim, def.kind === 'shotgun' || def.kind === 'sniper' || def.kind === 'lmg', Math.random() < 0.5)
+    fx.muzzleFlash(muzzle, aim, flashStyle(def), Math.random() < 0.5)
     const ends = Array.isArray(e) ? e : []
-    ends.forEach((pt, i) => {
-      if (i < 3 || Math.random() < 0.4) fx.tracer(muzzle, tmp2.set(pt[0], pt[1], pt[2]), def.kind === 'sniper' ? fx.FX_COLORS.white : null)
-    })
+    // A launched round flies here too (for the eyes only: its owner reports what it hits).
+    if (def.projectile && Array.isArray(v) && v.length === 3 && v.every(Number.isFinite)) {
+      launchProjectile({ owner: a, weapon: w, def, pos: muzzle.clone(), vel: new Vector3(v[0], v[1], v[2]), seq: 0, local: false })
+    }
+    if (!def.silenced) {
+      ends.forEach((pt, i) => {
+        if (i < 3 || Math.random() < 0.4) fx.tracer(muzzle, tmp2.set(pt[0], pt[1], pt[2]), def.kind === 'sniper' || def.kind === 'lever' ? fx.FX_COLORS.white : null)
+      })
+    }
     if (def.melee) a.swingT = 0
     else if (!(G.time < a.cloakUntil)) sfx.shot(def.sound || def.kind, { ...spatial(muzzle.x, muzzle.y, muzzle.z), own: false })
-    emit('shot', { actor: a, pos: muzzle, recoil: def.recoil })
+    emit('shot', { actor: a, pos: muzzle, recoil: def.recoil, silent: !!def.silenced })
     // A near miss whizzes past the player's head.
     const pl = G.player
     if (pl && pl.life === 'alive' && a.team !== pl.team && Array.isArray(o) && ends.length) {
@@ -550,8 +567,20 @@ export function initOnline() {
     const by = byNet(a) || (a === net.sessionId ? G.player : null)
     if (target) emit('heal', { target, by, amount: n })
   })
-  onNet('boom', ({ x, y, z }) => {
-    if (G.match) explodeVisual(new Vector3(x, y, z))
+  // Another player's grenade went off: { id, x, y, z, k: its GRENADES kind }.
+  onNet('boom', ({ id, x, y, z, k }) => {
+    if (!G.match) return
+    const pos = new Vector3(x, y, z)
+    const kind = GRENADES[k] ? k : 'frag'
+    if (!remoteBoom(pos, kind, byNet(id))) explodeVisual(pos, GRENADES[kind].radius, GRENADES[kind].damage, kind)
+  })
+  // Another player's launcher round went off: { id, w, x, y, z }.
+  onNet('blast', ({ id, w, x, y, z }) => {
+    const def = WEAPONS[w]
+    if (!G.match || !def?.blast) return
+    const a = byNet(id)
+    if (a) endRemote(a, w)
+    explodeVisual(new Vector3(x, y, z), def.blast, def.damage, def.kind === 'rocket' ? 'rocket' : 'launcher')
   })
   onNet('wall', ({ id, x, y, z, yaw }) => {
     const a = byNet(id)

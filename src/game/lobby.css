@@ -1854,3 +1854,206 @@
     min-width: 88px;
   }
 }
+
+/* --- New arrivals window (lobby.js newsWindow, NEWS in config.js) ----------------------------- */
+.win.news .win-h {
+  background: linear-gradient(180deg, #ff7a2e, #d9381e);
+}
+.nw {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.nw-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: linear-gradient(100deg, rgba(255, 122, 46, 0.35), rgba(26, 32, 52, 0.4) 70%);
+  border: 2px solid rgba(255, 170, 80, 0.45);
+}
+.nw-burst {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: clamp(54px, 9vmin, 76px);
+  aspect-ratio: 1;
+  font-size: clamp(15px, 2.6vmin, 20px);
+  font-weight: 700;
+  color: #2a1400;
+  background: radial-gradient(circle, #fff3a0, #ffc21f 60%, #ff8a00);
+  clip-path: polygon(50% 0, 61% 18%, 82% 10%, 80% 32%, 100% 40%, 85% 56%, 96% 76%, 74% 78%, 68% 100%, 50% 86%, 32% 100%, 26% 78%, 4% 76%, 15% 56%, 0 40%, 20% 32%, 18% 10%, 39% 18%);
+  animation: nwSpin 6s linear infinite;
+}
+@keyframes nwSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.nw-t {
+  font-size: clamp(16px, 3vmin, 24px);
+  font-weight: 700;
+}
+.nw-s {
+  font-size: clamp(12px, 2vmin, 14px);
+  opacity: 0.85;
+  margin-top: 3px;
+  line-height: 1.35;
+}
+.nw-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(132px, 22vmin, 180px), 1fr));
+  gap: 10px;
+}
+.nw-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 44px;
+  padding: 18px 6px 8px;
+  border-radius: 10px;
+  border: 3px solid #0a0d14;
+  background: radial-gradient(circle at 50% 38%, #f4f6f8, #9aa2ac);
+  color: #fff;
+  cursor: pointer;
+  animation: nwIn 0.34s cubic-bezier(0.2, 1.4, 0.5, 1) both;
+  animation-delay: calc(var(--i) * 30ms);
+  transition: transform 0.12s;
+}
+.nw-card.epic {
+  background: radial-gradient(circle at 50% 38%, #c77bff, #4b158f);
+}
+.nw-card.gold {
+  background: radial-gradient(circle at 50% 38%, #ffe866, #e6a200);
+}
+.nw-card:active {
+  transform: scale(0.96);
+}
+@media (hover: hover) {
+  .nw-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 0 2px #ffd21f, 0 6px 16px rgba(0, 0, 0, 0.4);
+  }
+}
+@keyframes nwIn {
+  from {
+    transform: scale(0.7);
+    opacity: 0;
+  }
+}
+.nw-new {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #e53935;
+  border: 2px solid #3a0606;
+}
+.nw-pic {
+  width: 100%;
+  height: clamp(54px, 9vmin, 76px);
+  display: grid;
+  place-items: center;
+}
+.nw-pic img {
+  max-width: 100%;
+  max-height: 100%;
+  filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.45));
+}
+.nw-nm {
+  font-size: clamp(13px, 2.2vmin, 16px);
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.1;
+}
+.nw-sub {
+  font-size: 11px;
+  font-weight: 600;
+  color: #10141e;
+  text-align: center;
+  line-height: 1.15;
+  min-height: 1.2em;
+}
+.nw-card.epic .nw-sub {
+  color: #f1e2ff;
+}
+.nw-pr,
+.nw-own {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+  padding: 1px 8px 1px 3px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.45);
+}
+.nw-pr img {
+  width: 16px;
+  height: 16px;
+}
+.nw-own {
+  padding: 1px 8px;
+  background: #2e9d4f;
+}
+.nw-act {
+  position: sticky;
+  bottom: -12px;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 -12px -12px;
+  padding: 10px 12px calc(10px + var(--safe-b));
+  background: linear-gradient(180deg, rgba(58, 71, 102, 0), #3a4766 35%);
+}
+.nw-btn {
+  min-width: 150px;
+  min-height: 46px;
+  padding: 6px 18px;
+  border-radius: 10px;
+  border: 3px solid #0a0d14;
+  font-size: clamp(15px, 2.6vmin, 19px);
+  font-weight: 700;
+  cursor: pointer;
+}
+.nw-btn.ok {
+  background: #56627c;
+}
+.nw-btn.go {
+  background: linear-gradient(180deg, #ffd54a, #e8a200);
+  color: #fff;
+}
+@media (max-width: 560px) {
+  .nw-hero {
+    padding: 8px 10px;
+    gap: 10px;
+  }
+  .nw-s {
+    display: none;
+  }
+  .nw-btn {
+    flex: 1;
+    min-width: 0;
+    font-size: 15px;
+    line-height: 1.1;
+  }
+}
+@media (max-height: 500px) {
+  .nw-s {
+    display: none;
+  }
+  .nw-hero {
+    padding: 6px 10px;
+  }
+  .nw-burst {
+    width: 46px;
+  }
+}

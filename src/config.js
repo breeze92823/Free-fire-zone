@@ -390,18 +390,44 @@ export const WEAPONS = {
   ridgeback: { name: 'Ridgeback', cat: 'rifle', tier: 'basic', slot: 'primary', kind: 'rifle', hold: 'rifle', damage: 41, interval: 0.125, mag: 30, reserve: 150, reload: 2.4, spread: [2.8, 0.7], recoil: 1, range: 150, headMul: 2, auto: true, zoom: 50, price: 1500, model: 'ridge', icon: 'RB', desc: 'Hard-hitting battle rifle: fewer shots to drop a target, but it kicks. Tap-fire it at range.' },
   kestrel: { name: 'Kestrel BP', cat: 'rifle', slot: 'primary', kind: 'rifle', hold: 'rifle', damage: 33, interval: 0.095, mag: 30, reserve: 150, reload: 2.2, spread: [2, 0.45], recoil: 0.6, range: 160, headMul: 2, auto: true, zoom: 46, pierce: 0.5, price: 1800, model: 'bullpup', icon: 'KBP', desc: 'Fast, stable bullpup with armour-piercing rounds: vests and helmets stop half as much of its damage.' },
   tempest: { name: 'Tempest LMG', cat: 'rifle', slot: 'primary', kind: 'lmg', hold: 'rifle', damage: 31, interval: 0.085, mag: 60, reserve: 180, reload: 3.4, spread: [3.2, 1.3], recoil: 0.6, range: 130, headMul: 1.8, auto: true, zoom: 52, price: 2400, model: 'lmg', icon: 'LMG', desc: 'A 60-round belt for holding a lane. Long reload: pick your moment.' },
-  marksman: { name: 'Marksman DMR', cat: 'rifle', slot: 'primary', kind: 'dmr', hold: 'rifle', damage: 72, interval: 0.32, mag: 10, reserve: 60, reload: 2.4, spread: [3.5, 0.15], recoil: 2.4, range: 260, headMul: 2.2, auto: false, zoom: 30, scope: true, price: 2200, model: 'dmr', icon: 'DMR', desc: 'Scoped semi-auto rifle: quick follow-up shots at long range.' },
-  hawk: { name: 'Hawk-50 Sniper', cat: 'rifle', slot: 'primary', kind: 'sniper', hold: 'rifle', damage: 165, interval: 1.25, mag: 5, reserve: 30, reload: 3, spread: [6, 0], recoil: 5, range: 400, headMul: 2.5, auto: false, zoom: 20, scope: true, price: 3500, model: 'sniper', icon: 'SNP', desc: 'The longest reach and the biggest hit: a headshot drops anyone, helmet or not. Aim (right click) to scope in.' },
+  marksman: { name: 'Marksman DMR', cat: 'rifle', slot: 'primary', kind: 'dmr', hold: 'rifle', damage: 72, interval: 0.32, mag: 10, reserve: 60, reload: 2.4, spread: [3.5, 0.15], recoil: 2.4, range: 260, headMul: 2.2, auto: false, zoom: 30, scope: true, price: 2200, model: 'dmr', icon: 'DMR', shells: 'big', desc: 'Scoped semi-auto rifle: quick follow-up shots at long range.' },
+  hawk: { name: 'Hawk-50 Sniper', cat: 'rifle', slot: 'primary', kind: 'sniper', hold: 'rifle', damage: 165, interval: 1.25, mag: 5, reserve: 30, reload: 3, spread: [6, 0], recoil: 5, range: 400, headMul: 2.5, auto: false, zoom: 20, scope: true, price: 3500, model: 'sniper', icon: 'SNP', cycle: 'bolt', shells: 'big', desc: 'The longest reach and the biggest hit: a headshot drops anyone, helmet or not. Aim (right click) to scope in.' },
   viper: { name: 'Viper SMG', cat: 'smg', slot: 'secondary', kind: 'smg', hold: 'rifle', damage: 23, interval: 0.072, mag: 35, reserve: 175, reload: 1.7, spread: [2.8, 1.2], recoil: 0.45, range: 70, headMul: 1.8, auto: true, zoom: 58, price: 0, model: 'smg', icon: 'SMG', desc: 'The starter SMG: a fast-firing backup for close fights.' },
   wasp: { name: 'Wasp', cat: 'smg', tier: 'basic', slot: 'secondary', kind: 'smg', hold: 'rifle', damage: 19, interval: 0.058, mag: 32, reserve: 160, reload: 1.6, spread: [3, 1.4], recoil: 0.35, range: 60, headMul: 1.7, auto: true, zoom: 58, price: 900, model: 'wasp', icon: 'WSP', desc: 'A compact bullet hose: the highest fire rate in the arsenal, best up close.' },
   hornet: { name: 'Hornet P9', cat: 'pistol', tier: 'basic', slot: 'secondary', kind: 'pistol', hold: 'pistol', damage: 42, interval: 0.2, mag: 12, reserve: 96, reload: 1.3, spread: [2, 0.6], recoil: 1.2, range: 80, headMul: 2, auto: false, zoom: 58, price: 600, model: 'pistol', icon: 'P9', desc: 'Light, accurate sidearm with a quick reload.' },
   talon: { name: 'Talon .50', cat: 'pistol', tier: 'basic', slot: 'secondary', kind: 'pistol', hold: 'pistol', damage: 68, interval: 0.42, mag: 7, reserve: 49, reload: 1.6, spread: [2.4, 0.4], recoil: 2.6, range: 90, headMul: 2.2, auto: false, zoom: 54, price: 1200, model: 'heavy', icon: 'T50', desc: 'A hand cannon: seven heavy rounds that hit like a rifle. Make each one count.' },
-  thunder: { name: 'Thunder 12', cat: 'shotgun', tier: 'basic', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 19, pellets: 8, interval: 0.8, mag: 6, reserve: 36, reload: 2.6, spread: [6.5, 4.5], recoil: 4, range: 28, headMul: 1.5, auto: false, zoom: 60, price: 1200, model: 'shotgun', icon: 'SG', desc: 'Pump shotgun: six shells of close-range stopping power.' },
-  breaker: { name: 'Breaker-2', cat: 'shotgun', tier: 'basic', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 24, pellets: 9, interval: 0.3, mag: 2, reserve: 30, reload: 2.2, spread: [7, 5.5], recoil: 5, range: 22, headMul: 1.5, auto: false, zoom: 60, price: 1500, model: 'double', icon: 'B2', desc: 'Two barrels, two shots: the deadliest blast up close. Past 10 m it falls off fast.' },
-  cyclone: { name: 'Cyclone Auto', cat: 'shotgun', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 14, pellets: 7, interval: 0.28, mag: 10, reserve: 40, reload: 2.8, spread: [6, 4.2], recoil: 2.6, range: 24, headMul: 1.4, auto: true, zoom: 60, price: 2600, model: 'autoshot', icon: 'CYC', desc: 'Full-auto shotgun with a 10-shell box: hold the trigger and sweep a room.' },
+  thunder: { name: 'Thunder 12', cat: 'shotgun', tier: 'basic', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 19, pellets: 8, interval: 0.8, mag: 6, reserve: 36, reload: 2.6, spread: [6.5, 4.5], recoil: 4, range: 28, headMul: 1.5, auto: false, zoom: 60, price: 1200, model: 'shotgun', icon: 'SG', cycle: 'pump', shells: 'shell', desc: 'Pump shotgun: six shells of close-range stopping power.' },
+  breaker: { name: 'Breaker-2', cat: 'shotgun', tier: 'basic', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 24, pellets: 9, interval: 0.3, mag: 2, reserve: 30, reload: 2.2, spread: [7, 5.5], recoil: 5, range: 22, headMul: 1.5, auto: false, zoom: 60, price: 1500, model: 'double', icon: 'B2', reloadStyle: 'break', shells: 'none', desc: 'Two barrels, two shots: the deadliest blast up close. Past 10 m it falls off fast.' },
+  cyclone: { name: 'Cyclone Auto', cat: 'shotgun', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 14, pellets: 7, interval: 0.28, mag: 10, reserve: 40, reload: 2.8, spread: [6, 4.2], recoil: 2.6, range: 24, headMul: 1.4, auto: true, zoom: 60, price: 2600, model: 'autoshot', icon: 'CYC', shells: 'shell', desc: 'Full-auto shotgun with a 10-shell box: hold the trigger and sweep a room.' },
   ronin: { name: 'Ronin Blade', cat: 'special', slot: 'secondary', kind: 'sword', hold: 'melee', melee: true, damage: 70, interval: 0.6, range: 3.2, speedMul: 1.15, price: 2500, model: 'blade', icon: 'RON', desc: 'A long blade for your secondary slot: wider reach than the knife, and you run 15% faster while you hold it.' },
   mender: { name: 'Mender HP-2', cat: 'special', slot: 'secondary', kind: 'medic', hold: 'pistol', damage: 12, heal: 10, interval: 0.25, mag: 10, reserve: 60, reload: 2.4, spread: [1.6, 0.4], recoil: 0.4, range: 35, headMul: 1.5, auto: true, zoom: 56, price: 3000, model: 'mender', icon: 'MND', sound: 'pistol', desc: 'Every shot HEALS a teammate 10 HP up to 35 m, even a knocked one (it keeps them alive longer but does not revive). Enemies take a light sting.' },
-  knife: { name: 'Combat Knife', slot: 'melee', kind: 'knife', hold: 'melee', melee: true, damage: 60, interval: 0.55, range: 2.7, price: 0, model: 'knife', icon: 'KNF' },
+  // --- Second arsenal wave -------------------------------------------------------------------------
+  // Pistols (secondary)
+  gnat: { name: 'Gnat AP', cat: 'pistol', slot: 'secondary', kind: 'mpistol', hold: 'pistol', damage: 17, interval: 0.062, mag: 18, reserve: 126, reload: 1.4, spread: [3.6, 1.8], recoil: 0.55, range: 50, headMul: 1.7, auto: true, zoom: 58, price: 1100, model: 'gnat', icon: 'GAP', desc: 'A pistol that fires full-auto: 18 rounds gone in a second. Wild at range, vicious up close.' },
+  mantis: { name: 'Mantis MP', cat: 'pistol', slot: 'secondary', kind: 'mpistol', hold: 'pistol', damage: 21, interval: 0.08, mag: 20, reserve: 140, reload: 1.6, spread: [2.6, 1], recoil: 0.45, range: 65, headMul: 1.8, auto: true, zoom: 56, price: 1300, model: 'mantis', icon: 'MNT', desc: 'Compact machine pistol with a folding stock: steadier and longer-reaching than the Gnat.' },
+  drifter: { name: 'Drifter .38', cat: 'pistol', slot: 'secondary', kind: 'revolver', hold: 'pistol', damage: 62, interval: 0.38, mag: 6, reserve: 42, reload: 2.6, spread: [1.4, 0.15], recoil: 2, range: 110, headMul: 2.4, auto: false, zoom: 50, price: 800, model: 'revolver', icon: 'D38', reloadStyle: 'revolver', shells: 'none', desc: 'Six-shot revolver: pin-point accurate with a big headshot bonus, but a slow reload.' },
+  // Rifles (primary)
+  falcon: { name: 'Falcon F25', cat: 'rifle', slot: 'primary', kind: 'rifle', hold: 'rifle', damage: 27, interval: 0.07, mag: 25, reserve: 150, reload: 2.2, spread: [2.8, 0.7], recoil: 0.85, range: 120, headMul: 2, auto: true, zoom: 50, price: 2000, model: 'falcon', icon: 'F25', desc: 'Bullpup with the fastest rifle trigger in the store. A 25-round magazine empties quickly: control the climb.' },
+  sentinel: { name: 'Sentinel B3', cat: 'rifle', slot: 'primary', kind: 'rifle', hold: 'rifle', damage: 38, interval: 0.34, burst: 3, burstGap: 0.06, mag: 30, reserve: 150, reload: 2.3, spread: [2.2, 0.35], recoil: 0.5, range: 170, headMul: 2, auto: false, zoom: 46, price: 1900, model: 'sentinel', icon: 'B3', desc: 'Three-round burst rifle: every pull of the trigger sends a tight three-shot group downrange.' },
+  sparrow: { name: 'Sparrow DMR', cat: 'rifle', slot: 'primary', kind: 'dmr', hold: 'rifle', damage: 52, interval: 0.2, mag: 20, reserve: 100, reload: 2.2, spread: [3, 0.2], recoil: 1.3, range: 220, headMul: 2.1, auto: false, zoom: 38, scope: true, price: 2000, model: 'sparrow', icon: 'SPR', desc: 'Light marksman rifle: lower damage than the Marksman, but you can tap it as fast as you can click.' },
+  whisper: { name: 'Whisper SD', cat: 'rifle', slot: 'primary', kind: 'dmr', sound: 'silenced', hold: 'rifle', damage: 46, interval: 0.16, mag: 15, reserve: 90, reload: 2.4, spread: [2.6, 0.3], recoil: 0.9, range: 120, headMul: 2.1, auto: false, zoom: 40, scope: true, silenced: true, price: 2300, model: 'whisper', icon: 'WSD', desc: 'Integrally silenced rifle: no tracers, no muzzle flash, no map pings, and a whisper of a shot.' },
+  osprey: { name: 'Osprey Bolt', cat: 'rifle', slot: 'primary', kind: 'sniper', hold: 'rifle', damage: 132, interval: 1.05, mag: 5, reserve: 30, reload: 2.8, spread: [5, 0], recoil: 4.2, range: 330, headMul: 2.5, auto: false, zoom: 24, scope: true, price: 2600, model: 'osprey', icon: 'OSP', cycle: 'bolt', shells: 'big', desc: 'Classic bolt-action sniper: cycles faster than the Hawk-50 and a headshot drops anyone without a heavy helmet.' },
+  ranger: { name: 'Ranger Lever', cat: 'rifle', slot: 'primary', kind: 'lever', hold: 'rifle', damage: 88, interval: 0.6, mag: 8, reserve: 40, reload: 3, spread: [2.2, 0.1], recoil: 2.6, range: 200, headMul: 2.3, auto: false, zoom: 46, price: 1400, model: 'ranger', icon: 'RGR', cycle: 'lever', reloadStyle: 'shells', shells: 'big', desc: 'Lever-action rifle with iron sights: rack, fire, rack. Heavy rounds, no scope needed.' },
+  // SMGs (secondary)
+  bulldog: { name: 'Bulldog Drum', cat: 'smg', slot: 'secondary', kind: 'hsmg', hold: 'rifle', damage: 26, interval: 0.085, mag: 50, reserve: 150, reload: 2.9, spread: [3, 1.3], recoil: 0.55, range: 65, headMul: 1.8, auto: true, zoom: 56, price: 1600, model: 'bulldog', icon: 'BDG', reloadStyle: 'drum', desc: 'Heavy .45 rounds from a 50-round drum: hold the trigger and keep holding it.' },
+  swarm: { name: 'Swarm P50', cat: 'smg', slot: 'secondary', kind: 'smg', hold: 'rifle', damage: 18, interval: 0.06, mag: 50, reserve: 200, reload: 2.4, spread: [2.6, 1.1], recoil: 0.3, range: 70, headMul: 1.7, auto: true, zoom: 56, price: 1700, model: 'swarm', icon: 'P50', desc: 'Top-loading 50-round bullpup SMG: barely kicks, never seems to run dry.' },
+  // Shotguns
+  sawback: { name: 'Sawback', cat: 'shotgun', slot: 'secondary', kind: 'shotgun', hold: 'pistol', damage: 20, pellets: 8, interval: 0.25, mag: 2, reserve: 24, reload: 1.9, spread: [8.5, 7], recoil: 4.5, range: 16, headMul: 1.4, auto: false, zoom: 60, price: 1300, model: 'sawback', icon: 'SAW', reloadStyle: 'break', shells: 'none', desc: 'A sawn-off double barrel for your SECONDARY slot: two point-blank blasts in your back pocket.' },
+  rattler: { name: 'Rattler S8', cat: 'shotgun', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 17, pellets: 8, interval: 0.36, mag: 5, reserve: 30, reload: 2.4, spread: [6, 4], recoil: 3, range: 26, headMul: 1.5, auto: false, zoom: 60, price: 1800, model: 'rattler', icon: 'S8', shells: 'shell', desc: 'Semi-auto shotgun fed by a 5-shell box magazine: no pumping, just pull the trigger again.' },
+  // Melee (the melee slot: replaces the Combat Knife)
+  machete: { name: 'Machete', cat: 'melee', slot: 'melee', kind: 'machete', hold: 'melee', melee: true, damage: 78, interval: 0.7, range: 2.9, speedMul: 1.05, price: 700, model: 'machete', icon: 'MCH', desc: 'A long heavy blade for your melee slot: hits harder and reaches further than the knife.' },
+  crowbar: { name: 'Crowbar', cat: 'melee', slot: 'melee', kind: 'crowbar', hold: 'melee', melee: true, damage: 64, interval: 0.6, range: 2.6, wallMul: 4, price: 600, model: 'crowbar', icon: 'CRW', desc: 'Pries anything open: two swings smash an enemy Frost Wall to pieces.' },
+  pan: { name: 'Frying Pan', cat: 'melee', slot: 'melee', kind: 'pan', hold: 'melee', melee: true, damage: 58, interval: 0.62, range: 2.4, block: 0.65, price: 900, model: 'pan', icon: 'PAN', desc: 'Carried on your back, it stops 65% of the damage from body shots that hit you from behind. And it rings like a bell.' },
+  // Heavy (primary)
+  quill: { name: 'Quill Crossbow', cat: 'heavy', slot: 'primary', kind: 'crossbow', hold: 'rifle', damage: 120, interval: 0.4, mag: 1, reserve: 20, reload: 1.9, spread: [1.8, 0], recoil: 1.4, range: 160, headMul: 2.2, auto: false, zoom: 40, silenced: true, projectile: { speed: 78, gravity: 9, model: 'bolt' }, price: 2100, model: 'crossbow', icon: 'XBW', reloadStyle: 'string', shells: 'none', desc: 'Silent bolts that drop over distance: lead your target. A headshot is a knockout, helmet or not.' },
+  thumper: { name: 'Thumper GL', cat: 'heavy', slot: 'primary', kind: 'launcher', hold: 'rifle', damage: 165, blast: 4.5, interval: 0.5, mag: 1, reserve: 8, reload: 2.4, spread: [1.5, 0.6], recoil: 3.5, range: 120, headMul: 1, auto: false, zoom: 50, projectile: { speed: 38, gravity: 14, model: 'shell40' }, price: 3200, model: 'thumper', icon: 'GL', reloadStyle: 'tube', shells: 'none', desc: 'Lobs a 40 mm grenade that bursts on impact: arc it over cover. Keep your distance.' },
+  rhino: { name: 'Rhino RPG', cat: 'heavy', slot: 'primary', kind: 'rocket', hold: 'rifle', damage: 210, blast: 5.2, interval: 0.5, mag: 1, reserve: 4, reload: 3.4, spread: [2, 0.3], recoil: 5, range: 220, headMul: 1, auto: false, zoom: 44, projectile: { speed: 58, gravity: 0.8, model: 'rocket' }, price: 4000, model: 'rhino', icon: 'RPG', reloadStyle: 'rocket', shells: 'none', desc: 'One rocket, one huge blast. Flies almost flat and leaves a smoke trail they will remember.' },
+  knife: { name: 'Combat Knife', cat: 'melee', slot: 'melee', kind: 'knife', hold: 'melee', melee: true, damage: 60, interval: 0.55, range: 2.7, price: 0, model: 'knife', icon: 'KNF', desc: 'The standard-issue blade: quick swings, always with you.' },
   fists: { name: 'Fists', slot: 'fists', kind: 'fists', hold: 'fist', melee: true, damage: 22, interval: 0.42, range: 2.1, price: 0, model: 'fists', icon: 'FST' },
 }
 // Weapons Store categories (WEAPONS[id].cat; `grenade` lists GRENADES). Weapons, grenades and
@@ -413,6 +439,8 @@ export const WEAPON_CATS = [
   { id: 'rifle', name: 'Rifles' },
   { id: 'shotgun', name: 'Shotguns' },
   { id: 'smg', name: 'SMGs' },
+  { id: 'heavy', name: 'Heavy' },
+  { id: 'melee', name: 'Melee' },
   { id: 'grenade', name: 'Grenades' },
   { id: 'special', name: 'Specials' },
 ]
@@ -422,7 +450,31 @@ export const GRENADES = {
   frag: { name: 'Frag Grenade', damage: 170, radius: 6.5, fuse: 1.9, price: 0, model: 'frag', desc: 'The classic: bounces, then goes off after 1.9 s. Big damage in a 6.5 m radius.' },
   pulse: { name: 'Pulse Grenade', damage: 120, radius: 8.5, fuse: 1.2, price: 800, model: 'pulse', desc: 'A short fuse and the widest blast (8.5 m): less damage, but hard to run from.' },
   breach: { name: 'Breacher Charge', damage: 230, radius: 5, fuse: 2.4, price: 1200, model: 'breach', desc: 'Slow 2.4 s fuse, tight 5 m blast, and the heaviest damage of any throwable.' },
+  // effect: what goes off. 'sticky' = a blast that sticks to the first thing it touches (a player
+  // too); 'fire' = bursts on impact into a burning patch (damage = HP per second, burn = s);
+  // 'smoke' = a thick cloud (cloud = s) that hides players and their name tags; 'flash' = a
+  // blinding, deafening bang (radius = how far it blinds).
+  leech: { name: 'Leech Charge', effect: 'sticky', damage: 185, radius: 5, fuse: 2, price: 1000, model: 'leech', desc: 'Sticks to walls, floors and players, beeps, then goes off 2 s later. Nobody shakes it off.' },
+  molotov: { name: 'Firebottle', effect: 'fire', damage: 24, radius: 3.6, fuse: 5, burn: 7, price: 1100, model: 'molotov', desc: 'Shatters on impact into a 7-second pool of fire: 24 damage a second to anyone standing in it.' },
+  smoke: { name: 'Smoke Grenade', effect: 'smoke', damage: 0, radius: 6, fuse: 1.4, cloud: 13, price: 500, model: 'smoke', desc: 'A thick 13-second cloud: blocks sight lines and hides name tags. Cover for a revive or a push.' },
+  flash: { name: 'Stun Grenade', effect: 'flash', damage: 0, radius: 15, fuse: 1.6, blind: 3.5, price: 700, model: 'flash', desc: 'A deafening flash: anyone looking at it within 15 m is blinded for up to 3.5 s. Turn away!' },
 }
+// The lobby's "new arrivals" window (lobby.js newsWindow): shown once to every player after they
+// reach the lobby, until they close it; the newest id they closed is saved on their account
+// (profile.newsSeen, backend `newsSeen` message). To announce a new batch, raise `id` and list it.
+export const NEWS = {
+  id: 1,
+  title: 'New Arsenal!',
+  tagline: '23 new weapons and throwables just landed in the Weapons Store',
+  weapons: ['rhino', 'thumper', 'quill', 'osprey', 'whisper', 'falcon', 'sentinel', 'sparrow', 'ranger', 'bulldog', 'swarm', 'rattler', 'sawback', 'gnat', 'mantis', 'drifter', 'machete', 'crowbar', 'pan'],
+  grenades: ['leech', 'molotov', 'smoke', 'flash'],
+  // One line under each new item's name.
+  blurb: {
+    rhino: 'Rocket launcher', thumper: 'Grenade launcher', quill: 'Silent crossbow', osprey: 'Bolt-action sniper', whisper: 'Silenced rifle', falcon: 'Fast bullpup', sentinel: '3-round burst', sparrow: 'Light DMR', ranger: 'Lever-action', bulldog: '50-round drum', swarm: '50-round SMG', rattler: 'Semi-auto shotgun', sawback: 'Sawn-off (secondary)', gnat: 'Full-auto pistol', mantis: 'Machine pistol', drifter: 'Revolver', machete: 'Melee', crowbar: 'Melee: breaks walls', pan: 'Melee: blocks shots from behind',
+    leech: 'Sticky charge', molotov: 'Fire pool', smoke: 'Smoke cover', flash: 'Stun grenade',
+  },
+}
+
 // Weapon passes: unlock a set of weapons for good (and any added to the set later), in Gems.
 // The set is every weapon whose `tier` is the pass id (backend catalog.ts PASSES lists the same).
 export const PASSES = {
@@ -622,13 +674,14 @@ export const START_PROFILE = {
   gems: 0, // earned by eliminations; never bought
   rp: 0,
   owned: { weapons: ['striker', 'viper', 'knife', 'fists'], skins: ['standard'], operatives: ['rook'], emotes: ['wave'], grenades: ['frag'], passes: [] },
-  loadout: { primary: 'striker', secondary: 'viper', operative: 'rook', emote: 'wave', grenade: 'frag', skin: { striker: 'standard', viper: 'standard' } },
+  loadout: { primary: 'striker', secondary: 'viper', melee: 'knife', operative: 'rook', emote: 'wave', grenade: 'frag', skin: { striker: 'standard', viper: 'standard' } },
   upgrades: {}, // id -> level
   stats: { matches: 0, wins: 0, eliminations: 0, deaths: 0, damage: 0, best: 0 },
   mode: 'clash',
   missions: { day: '', week: '', daily: [], weekly: [] }, // slots { id, n, claimed }: the server's
   rankReward: 0, // highest RANKS index whose reward was paid
   tutorial: false, // the first-round tips are done
+  newsSeen: 0, // the newest NEWS id the player has closed (saved on the account)
 }
 // Store: permanent upgrades and emotes, all priced in coins. The server (backend catalog.ts) holds
 // the same prices and decides every purchase; keep the two in step.

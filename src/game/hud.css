@@ -1092,6 +1092,15 @@
   opacity: 0;
   transition: opacity 0.2s;
 }
+/* Stun grenade white-out (hud.js `flashed`). */
+.hud-flashed {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, #fff 55%, #f4f6ff 100%);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 40;
+}
 .hud-zonetint {
   position: absolute;
   inset: 0;

@@ -8,10 +8,10 @@
 // scoreboard (Tab). Event-driven where it can be; per-frame writes are cached.
 import './hud.css'
 import { Vector3 } from 'three'
-import { HEALTH, ITEMS, OPERATIVES, RANKS, REACTIONS, TEAMS, WEAPONS } from '../config.js'
+import { GRENADES, HEALTH, ITEMS, OPERATIVES, RANKS, REACTIONS, TEAMS, WEAPONS } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { G, on } from './state.js'
-import { SVG, svgData, weaponIcon } from './icons.js'
+import { SVG, itemIcon, svgData, weaponIcon } from './icons.js'
 import { portrait } from './characters.js'
 
 const h = (tag, cls = '', html = '') => {
@@ -128,6 +128,7 @@ export function initHud(callbacks) {
     <div class="hud-ping o"></div>
     <div class="hud-vignette"></div>
     <div class="hud-zonetint"></div>
+    <div class="hud-flashed"></div>
     <div class="hud-prompt"><div class="key">E</div><div><div class="t1"></div><div class="t2 o"></div></div></div>
     <div class="hud-toasts"></div>
     <div class="hud-notice"><div class="line1 o"></div><div class="line2 o"></div></div>
@@ -193,6 +194,7 @@ export function initHud(callbacks) {
     ping: q('.hud-ping'),
     vignette: q('.hud-vignette'),
     zonetint: q('.hud-zonetint'),
+    flashed: q('.hud-flashed'),
     prompt: q('.hud-prompt'),
     toasts: q('.hud-toasts'),
     notice: q('.hud-notice'),
@@ -487,9 +489,12 @@ function teamClass(a) {
 function feed(killer, victim, kind, weapon, streak = 0) {
   const r = h('div', 'kf')
   const wid = weapon && WEAPONS[weapon] ? weapon : null
-  const actText = kind === 'knock' ? 'Knocked down' : kind === 'head' ? 'Shot to the head' : kind === 'zone' ? 'Lost in the zone' : kind === 'frag' ? 'Blown up' : 'Eliminated'
+  const nade = weapon && GRENADES[weapon] ? weapon : null // a throwable (frag, molotov, leech, ...)
+  const burnt = GRENADES[weapon]?.effect === 'fire'
+  const blown = kind === 'frag' || (wid && WEAPONS[wid].blast && kind !== 'knock')
+  const actText = kind === 'knock' ? 'Knocked down' : kind === 'head' ? 'Shot to the head' : kind === 'zone' ? 'Lost in the zone' : burnt ? 'Burnt' : blown ? 'Blown up' : 'Eliminated'
   const actCls = kind === 'knock' ? 'knock' : kind === 'head' ? 'head' : 'elim'
-  const icon = wid ? weaponIcon(wid, 'standard', 160, 70) : svgData(kind === 'frag' ? SVG.frag : SVG.skull)
+  const icon = wid ? weaponIcon(wid, 'standard', 160, 70) : nade ? itemIcon(nade, 70) : svgData(kind === 'frag' ? SVG.frag : SVG.skull)
   r.innerHTML = `${streak > 1 ? `<span class="streak o">&lsaquo;${streak}&rsaquo;</span>` : ''}<img alt="" src="${icon}"><span class="a o ${teamClass(killer)}">${killer ? esc(killer.name) : ''}</span><span class="act o ${actCls}">${actText}</span><span class="a o ${teamClass(victim)}">${esc(victim.name)}</span>`
   el.feed.prepend(r)
   while (el.feed.children.length > 3) el.feed.lastChild.remove()
@@ -663,7 +668,7 @@ function wireEvents() {
     if (attacker === G.player) notice(`Knocked <em>${esc(target.name)}</em>`, '')
   })
   on('elimination', ({ target, killer, weapon, head, streak }) => {
-    feed(killer, target, weapon === 'zone' ? 'zone' : weapon === 'frag' ? 'frag' : head ? 'head' : 'elim', weapon, streak)
+    feed(killer, target, weapon === 'zone' ? 'zone' : weapon === 'frag' || GRENADES[weapon] ? 'frag' : head ? 'head' : 'elim', weapon, streak)
     if (killer === G.player) {
       hitmarker('kill')
       notice(`Eliminated <em>${esc(target.name)}</em>`, '')
@@ -704,8 +709,18 @@ function wireEvents() {
     for (const t of items) toast(t)
     if (!items.length) toast('Nothing new — you are stocked up')
   })
-  on('shot', ({ actor }) => {
-    if (!G.player || actor.team === G.player.team) return
+  // Blinded by a stun grenade: a white-out that fades over `dur` s.
+  on('flashed', ({ amount, dur }) => {
+    const f = el.flashed
+    f.style.transition = 'none'
+    f.style.opacity = Math.min(1, 0.35 + amount).toFixed(2)
+    void f.offsetWidth
+    f.style.transition = `opacity ${Math.max(0.6, dur * 0.7).toFixed(2)}s cubic-bezier(0.7, 0, 0.9, 0.4) ${(dur * 0.3).toFixed(2)}s`
+    f.style.opacity = '0'
+  })
+  on('shot', ({ actor, silent }) => {
+    // Silenced shots leave no ping on the map.
+    if (!G.player || actor.team === G.player.team || silent) return
     pings.push({ x: actor.pos.x, z: actor.pos.z, t: 2.5 })
     if (pings.length > 24) pings.shift()
   })

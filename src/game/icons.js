@@ -2,7 +2,7 @@
 // PNG data URLs for the HUD and shops, with one tiny offscreen renderer.
 // Also holds the hand-drawn SVG icons used across the UI.
 import { AmbientLight, Box3, DirectionalLight, OrthographicCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer, ACESFilmicToneMapping } from 'three'
-import { WEAPONS } from '../config.js'
+import { GRENADES, WEAPONS } from '../config.js'
 import { buildGrenade, buildMedkit, buildWeapon } from './weaponModels.js'
 
 let r = null
@@ -64,7 +64,7 @@ export function weaponIcon(id, skin = 'standard', w = 256, h = 110) {
   const def = WEAPONS[id]
   let url = ''
   if (def.model === 'fists') url = svgData(SVG.fist)
-  else url = snapshot(buildWeapon(def.model, skin), w, h, -Math.PI / 2, def.model === 'knife' || def.model === 'blade' ? 0.6 : 0.1)
+  else url = snapshot(buildWeapon(def.model, skin), w, h, -Math.PI / 2, def.melee ? 0.6 : 0.1)
   cache.set(key, url)
   return url
 }
@@ -93,7 +93,7 @@ export function itemIcon(kind, size = 96) {
   const key = `i:${kind}:${size}`
   if (cache.has(key)) return cache.get(key)
   let url = ''
-  if (kind === 'frag' || kind === 'pulse' || kind === 'breach') url = snapshot(buildGrenade(kind), size, size, 0.6, 0.2)
+  if (GRENADES[kind]) url = snapshot(buildGrenade(GRENADES[kind].model), size, size, 0.6, 0.2)
   else if (kind === 'frost') url = snapshot(buildGrenade('ice'), size, size, 0.6, 0.2)
   else if (kind === 'medkit') url = snapshot(buildMedkit(), size, size, 0.3, 0.1)
   cache.set(key, url)

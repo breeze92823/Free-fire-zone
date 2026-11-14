@@ -40,7 +40,8 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 | `RIG_HEIGHT`, `RIG`, `PROPORTIONS`, `ANIM`, `CHARACTER_COLORS`, `MATERIAL_PBR` | `avatar/` | no |
 | `WEAPONS`, `SCOPE_FOV`, `WEAPON_SCALE`, `BULLET` | combat, actor, HUD, lobby, models, test range | `rules.ts` `WEAPONS`, `FALLOFF_START`; Gem prices in `catalog.ts` `WEAPON_PRICES` |
 | `WEAPON_CATS` | the Weapons Store's category column | no |
-| `GRENADES` (`frag`, `pulse`, `breach`: `damage`, `radius`, `fuse`, Gem `price`, `model`, `desc`) | `items.js` (the throwable the loadout picks), lobby, test range | `rules.ts` `GRENADES`, `catalog.ts` `GRENADE_PRICES` |
+| `GRENADES` (`frag`, `pulse`, `breach`, `leech`, `molotov`, `smoke`, `flash`: `damage`, `radius`, `fuse`, Gem `price`, `model`, `desc`; `effect` `sticky` / `fire` (+ `burn` s; `damage` = HP per second) / `smoke` (+ `cloud` s) / `flash` (+ `blind` s; `radius` = blind range), none = a plain blast) | `items.js` (the throwable the loadout picks), `areas.js`, lobby, test range | `rules.ts` `GRENADES` (damage, radius, fuse, effect, burn), `catalog.ts` `GRENADE_PRICES` |
+| `NEWS` (`id`, `title`, `tagline`, `weapons`, `grenades`, `blurb`): the lobby's once-only "new arrivals" window ([ui.md](ui.md) 3.4) | `lobby.js newsWindow`, `save.js` | the account's `newsSeen` (backend `catalog.ts` profile; any number up to `NEWS_MAX`) |
 | `PASSES` (`basic`: name, desc, Gem `price`), `passWeapons(id)` (the weapons whose `tier` is the pass id) | lobby, `save.js buyPass` | `catalog.ts` `PASSES` (its own weapon list: keep it equal to the `tier: 'basic'` weapons) |
 | `SKINS` | `weaponModels.js`, lobby | `catalog.ts` `SKIN_PRICES` |
 | `OPERATIVES`, `ULT_CHARGE` | `items.js`, `actor.js`, lobby, HUD | `rules.ts` `OPERATIVES`, `ROOK_DAMAGE_TAKEN`, `JIN_HEAL`, `ULT_MIN_GAP_S`; prices in `catalog.ts` |
@@ -60,9 +61,11 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 
 ### Weapon definition fields (`WEAPONS[id]`)
 
-`name`, `cat` (Weapons Store category: `pistol`, `rifle`, `shotgun`, `smg`, `special`; knife and fists have none and are not sold), `tier` (`basic` = in the Field Arsenal Pass), `slot` (`primary` / `secondary` / `melee` / `fists`), `kind` (`rifle`, `smg`, `pistol`, `shotgun`, `lmg`, `dmr`, `sniper`, `sword`, `medic`, `knife`, `fists`: selects the shot sound and some effects), `sound` (overrides `kind` for `sfx.shot`), `hold` (`rifle` / `pistol` / `melee` / `fist`: the animator's arm pose in `ANIM.aim`), `melee` (a blow, not a shot: knife, fists, the Ronin Blade), `damage` (per bullet or pellet, against 200 HP), `pellets` (shotguns), `interval` (s between shots), `mag`, `reserve`, `reload` (s), `spread` `[hip, aimed]` in degrees, `recoil` (degrees per shot), `range` (m), `headMul`, `auto`, `zoom` (aimed FOV), `scope` (draws the scope overlay when `zoom <= SCOPE_FOV + 6`), `pierce` (share of the armour cut ignored, server-side: Kestrel 0.5), `heal` (HP a hit gives a teammate: the Mender's shots also land on allies), `speedMul` (move speed while held: the Ronin Blade 1.15, `controller.js`), `price` (Gems), `model` (key for `weaponModels.js buildWeapon`), `icon` (short label), `desc` (the store's description).
+`name`, `cat` (Weapons Store category: `pistol`, `rifle`, `shotgun`, `smg`, `heavy`, `melee`, `special`; fists have none and are not sold), `tier` (`basic` = in the Field Arsenal Pass), `slot` (`primary` / `secondary` / `melee` / `fists`), `kind` (`rifle`, `smg`, `hsmg`, `pistol`, `mpistol`, `revolver`, `shotgun`, `lmg`, `dmr`, `sniper`, `lever`, `crossbow`, `launcher`, `rocket`, `sword`, `medic`, `knife`, `machete`, `crowbar`, `pan`, `fists`: selects the shot / swing / hit sounds, the muzzle flash and some effects), `sound` (overrides `kind` for `sfx.shot`, e.g. `silenced`), `hold` (`rifle` / `pistol` / `melee` / `fist`: the animator's arm pose in `ANIM.aim`), `melee` (a blow, not a shot), `damage` (per bullet or pellet, against 200 HP; a launcher's blast at its centre), `pellets` (shotguns), `interval` (s between shots; for a burst weapon, from one burst's start to the next), `burst` + `burstGap` (shots per trigger pull and the s between them: the Sentinel 3 / 0.06), `mag`, `reserve`, `reload` (s), `spread` `[hip, aimed]` in degrees, `recoil` (degrees per shot), `range` (m), `headMul`, `auto`, `zoom` (aimed FOV), `scope` (draws the scope overlay when `zoom <= SCOPE_FOV + 6`), `pierce` (share of the armour cut ignored, server-side: Kestrel 0.5), `heal` (HP a hit gives a teammate: the Mender's shots also land on allies), `speedMul` (move speed while held: the Ronin Blade 1.15, `controller.js`), `silenced` (no tracers for others, a faint one for the shooter, no muzzle flash, no minimap ping, a quiet `silenced` sound), `projectile` (`{ speed, gravity, model }`: the round flies, `projectiles.js`), `blast` (radius of a launcher round's explosion), `block` (melee slot, the pan: share of body-shot damage from behind stopped while it is on the back, server-side), `wallMul` (melee damage multiplier against frost walls: the crowbar 4), `cycle` (`pump` / `bolt` / `lever`: the action worked after a shot, sound + case ejection timing + model animation), `reloadStyle` (`mag`, `drum`, `revolver`, `shells`, `break`, `string`, `tube`, `rocket`: the reload sound; the revolver and break-action dump their spent cases), `shells` (`brass` default, `big`, `shell` (red), `none`: the case ejected), `price` (Gems), `model` (key for `weaponModels.js buildWeapon`), `icon` (short label), `desc` (the store's description).
 
-The arsenal (store category: ids): Pistols `hornet`, `talon` (heavy .50); Rifles `striker` (starter), `ridgeback` (battle rifle), `kestrel` (armour-piercing bullpup), `tempest` (LMG), `marksman` (DMR), `hawk` (sniper); Shotguns `thunder` (pump), `breaker` (2-shot double barrel), `cyclone` (full auto); SMGs `viper` (starter), `wasp`; Specials `ronin` (blade, secondary slot), `mender` (medic pistol, secondary slot).
+The arsenal (store category: ids): Pistols `hornet`, `talon` (heavy .50), `gnat` (full-auto pistol), `mantis` (machine pistol), `drifter` (revolver); Rifles `striker` (starter), `ridgeback` (battle rifle), `kestrel` (armour-piercing bullpup), `falcon` (fast bullpup), `sentinel` (3-round burst), `tempest` (LMG), `marksman` (DMR), `sparrow` (light DMR), `whisper` (silenced DMR), `hawk` (sniper), `osprey` (bolt-action), `ranger` (lever-action, iron sights); Shotguns `thunder` (pump), `breaker` (2-shot double barrel), `cyclone` (full auto), `rattler` (semi-auto, box magazine), `sawback` (sawn-off, SECONDARY slot); SMGs `viper` (starter), `wasp`, `bulldog` (50-round drum), `swarm` (50-round top magazine); Heavy (primary) `quill` (crossbow: silent bolts that drop), `thumper` (grenade launcher), `rhino` (rocket launcher); Melee (the melee slot, `loadout.melee`) `knife` (free starter), `machete`, `crowbar` (wrecks frost walls), `pan` (blocks shots from behind while on the back); Specials `ronin` (blade, secondary slot), `mender` (medic pistol, secondary slot).
+
+The melee slot: `Actor.slots[2]` is the loadout's `melee` (`knife` by default; server state `melee`, so other clients draw the right one and the server accepts its blows). A frying pan there is also worn on the back (`Actor.panModel`) while another weapon is in hand.
 
 A gun is "anything with `mag`": `controller.js` uses `!!def.mag` to allow aiming and auto-reload; `combat.fire` sends any `melee` weapon to `melee`.
 
@@ -89,7 +92,8 @@ A gun is "anything with `mag`": `controller.js` uses `!!def.mag` to allow aiming
 
 | Event | Payload | Emitted by | Listeners |
 | --- | --- | --- | --- |
-| `shot` | `{ actor, pos, recoil }` | `combat.fire` (local), `online.js` `shot` handler (remote) | `hud.js` |
+| `shot` | `{ actor, pos, recoil, silent }` (`silent`: a silenced weapon, no minimap ping) | `combat.fire` (local), `online.js` `shot` handler (remote) | `hud.js` |
+| `flashed` | `{ amount 0..1, dur s }`: a stun grenade blinded the local player | `areas.flashBang` | `hud.js` (white-out), `testRange.js` |
 | `damage` | `{ target, attacker, amount, head, point, dir, zone, explosive }` | `online.js` (`dmg`) | `hud.js`, `controller.js` (hurt sound, shake) |
 | `knock` | `{ target, attacker, weapon, head }` | `online.js` (`knock`) | `hud.js` |
 | `elimination` | `{ target, killer, weapon, head, streak }` | `online.js` (`elim`) | `hud.js`, `main.js` (spectate, death screen) |
@@ -185,8 +189,8 @@ All actions are gated by `canAct()`: player alive and `G.phase === 'playing'`.
 
 Hitscan. `fire(actor, origin, dir, speed)`:
 
-1. Refuses while dead, cooling down, reloading, throwing or healing. Knife / fists go to `melee`. Empty magazine: dry-fire sound and `startReload`.
-2. Cooldown = `def.interval` (x0.77 during Nova's Overdrive). Firing breaks Shade's cloak.
+1. Refuses while dead, cooling down, reloading, throwing or healing. Melee weapons go to `melee`. Empty magazine: dry-fire sound and `startReload`.
+2. Cooldown = `def.interval` (x0.77 during Nova's Overdrive); a burst weapon sets `actor.burstLeft` and fires the rest of the burst `burstGap` apart (the controller keeps calling `fire` while `burstLeft > 0`, held or not). Firing breaks Shade's cloak. A `projectile` weapon launches its round instead (`fireProjectile` -> `projectiles.launchProjectile`) and relays `shot` with the launch velocity `v`.
 3. For each pellet: a direction inside the spread cone (`coneDir`), a world ray from the camera origin (`castWorld`, static colliders only), then `castActors` up to that distance. A second ray from the muzzle to the end point catches a wall right in front of the gun: if blocked, the pellet hits that wall instead and no player.
 4. Hits are grouped per target: `{ n pellets, h head pellets, d nearest distance }` and sent as `hit { t, w, s, n, h, d }` with `s` = this client's shot number (`shotSeq`, shared by all targets of one shot; the server uses it for the fire-rate check). The shot itself is sent as `shot { w, o: muzzle, e: up to 12 end points }` for the others' tracers and sound.
 5. A world hit on a frost wall collider (`wallColliders` map: collider handle -> wall) damages that wall locally; other surfaces get an impact effect.
@@ -206,8 +210,12 @@ Other exports:
 | `melee(actor)` / `resolveMelee(actor)` | starts the swing; then picks the nearest enemy within `def.range + 0.5`, within about 63 degrees of the facing direction and 1.6 m of height, and sends a `hit` |
 | `startReload(actor)`, `selectSlot(actor, i)` | reload start; slot switch (0.35 s minimum cooldown, cancels reload and aim) |
 | `finishReload(actor)` | unused; `match.js updateMatch` completes reloads inline |
-| `explode(pos, attacker, damage, radius)` | the local player's frag: visual + `boom { x, y, z, t: [netIds in radius with line of sight] }`; self-knockback impulse |
-| `explodeVisual(pos, radius, damage)` | fireball, sound, `explosion` event, damages nearby frost walls (x1.5) |
+| `explode(pos, attacker, damage, radius, kind)` | the local player's grenade blast: visual + `boom { x, y, z, t: [netIds in radius with line of sight] }`; self-knockback impulse |
+| `explodeVisual(pos, radius, damage, kind)` | fireball, sound, `explosion` event, damages nearby frost walls (x1.5); `kind` `rocket` / `launcher` sizes it |
+| `projectileHit(actor, weapon, seq, target, head, dist)` | a crossbow bolt landed on a player: reported as a `hit` |
+| `weaponBlast(actor, weapon, seq, pos)` | a launcher round went off: visual + `blast { w, s, x, y, z, t }` (test range: local damage) |
+| `flashStyle(def)` | the muzzle flash style for `fx.muzzleFlash` |
+| `localHitHandler()` | the test range's local hit handler (or null) |
 | `wallColliders` | registry frost walls add themselves to |
 | `operativeOf(a)` | unused helper |
 
@@ -216,14 +224,25 @@ Other exports:
 | Item | Flow |
 | --- | --- |
 | Frost wall (G) | `deployWall(actor)`: 2.4 m ahead on the floor found by a down ray; refused when a wall is closer than 1.2 m ahead. Builds a `FrostWall`: 5 slab segments on an arc, one Rapier cuboid collider each, registered in `wallColliders`. `hp` 450, `life` 12 s, grows in 0.22 s and melts in the last second. Sends `wall { x, y, z, yaw }`; other clients build the same wall with `remoteWall`. Wall health is per client |
-| Frag (T) | `startThrow` starts `throwT`; `updateActorItems` releases at 0.3 s (`release`): spawns a `Grenade` from the eye with `throwSpeed` + 4 m/s up + half the thrower's velocity, sends `throw { p, v }`. The grenade integrates with gravity 22, bounces off `castWorld` hits (x0.55 energy), and after `fuse` calls `combat.explode` for local grenades only; remote grenades (`remoteThrow`) just vanish and the blast arrives as `boom` |
+| Grenade (T) | `startThrow` starts `throwT`; `updateActorItems` releases at 0.3 s (`release`): spawns a `Grenade` of the loadout's kind from the eye with `throwSpeed` + 4 m/s up + half the thrower's velocity, sends `throw { p, v }`. The grenade integrates with gravity 22 and bounces off `castWorld` hits (x0.55 energy). By `effect`: a plain blast after `fuse` (`combat.explode`); `sticky` sticks to the first surface or player it touches (`playerOnPath`), rides along with that player and beeps faster until the fuse ends; `fire` bursts the moment it hits anything (`areas.fireArea`); `smoke` / `flash` go off after the fuse (`areas.smokeCloud` / `areas.flashBang`) and the thrower sends `boom { x, y, z, t: [] }`. Only the thrower's copy goes off: remote grenades (`remoteThrow`) just vanish and the effect arrives as `boom` (with `k`, the kind: `remoteBoom` draws fire / smoke / flash, otherwise `explodeVisual`) |
 | Medkit (X) | `startHeal`: `healT` runs for `ITEMS.medkit.time` (movement at crouch speed, no aiming); on completion the count drops, local `hp` rises and `heal` is sent |
 | Dash (F) | `dash(actor, dirX, dirZ)` returns `{ x, z, t }` for `body.push` or null on cooldown (`dashReadyAt`). Purely local |
 | Ability (Q) | `useUltimate(actor)` when `ult >= operativeDef.charge`: resets the charge, sends `ult`, calls `ultVisual`. `ultVisual(actor, opId)` also runs for other players' `ult` broadcasts: Jin heals locally for display (+90 self, +60 allies within 10 m; the server is authoritative), Shade sets `cloakUntil`, Rook / Nova set `ultActiveUntil` |
 
 Charge: `ULT_CHARGE.perSecond` in `updateActorItems`, `perDamage` per damage dealt in the `dmg` handler of `online.js`, +20 or full from crates. Operative effects on the client: Nova speed x1.3 (`controller.js`) and interval x0.77 (`combat.fire`); Shade opacity 0.08 for enemies / 0.35 for the team (`Actor.updateModel`) and silent shots. Rook's damage cut is server-side.
 
-Per-frame entry points (called from `match.js updateMatch`): `updateActorItems(actor, dt, aimDir)` for non-remote actors, `updateItems(dt)` for walls and grenades. `clearItems()` at round start and teardown. `activeGrenades()` and `ultReady(actor)` are accessors.
+Per-frame entry points (called from `match.js updateMatch`): `updateActorItems(actor, dt, aimDir)` for non-remote actors, `updateItems(dt)` for walls, grenades, projectiles (`projectiles.updateProjectiles`) and lingering effects (`areas.updateAreas`). `clearItems()` at round start and teardown (also clears projectiles and areas). `activeGrenades()` and `ultReady(actor)` are accessors; `remoteWall` returns the wall.
+
+### 7.1 Projectiles (`projectiles.js`)
+
+Rounds that fly (`WEAPONS[id].projectile`): crossbow bolts (gravity 9: they drop and stick in walls for 8 s), the Thumper's 40 mm grenades (gravity 14, burst on impact) and the Rhino's rockets (almost flat, a fire-and-smoke trail). Each step casts the world and the players' hitboxes (not the shooter's team). The shooter's own round decides: a bolt on a player -> `combat.projectileHit` (`hit`); a grenade or rocket landing (or still flying after 6 s) -> `combat.weaponBlast` (`blast`). Other players fly a copy from the relayed `shot` (`v`) for their eyes only; it is dropped when their `blast` arrives (`endRemote`). Exports: `launchProjectile(opts)`, `updateProjectiles(dt)`, `endRemote(owner, weapon)`, `clearProjectiles()`.
+
+### 7.2 Lingering grenade effects (`areas.js`)
+
+- `fireArea(pos, gdef, owner)`: a burning patch on the floor under `pos` for `burn` s: a scorched glow disc (pooled, 6 at most), flame bodies (blended) with hot cores (additive), embers and black smoke, a crackle every ~0.35 s. The server burns players standing in it (`MatchRoom` fires); in the offline test range it ticks damage on the dummies itself (`localHitHandler`).
+- `smokeCloud(pos, gdef)`: thick rolling smoke for `cloud` s. `smokeBlocks(a, b)` (a sight line through a thick cloud: `actor.js` hides enemy name tags behind it) and `smokeInside(pos, margin)`.
+- `flashBang(pos, owner, gdef)`: a white burst, a light, a bang; if it goes off within `radius` of the local player, in line of sight, the player is blinded for up to `blind` s, scaled by distance and by how directly the camera faced it (`flashed` event + `sfx.tinnitus`). Teammates and the thrower are not spared.
+- `updateAreas(dt)`, `clearAreas()`, `warmSamples()`.
 
 ## 8. Loot (`loot.js`)
 
@@ -270,11 +289,13 @@ Everything is pooled at `initFx(scene, preset)`; nothing allocates per shot and 
 | Function | Effect |
 | --- | --- |
 | `tracer(from, to, color?)` | travelling streak at `BULLET.tracerSpeed` |
-| `muzzleFlash(pos, dir, big, withLight)` | sprite + optional pooled light |
-| `shellCasing(pos, right, up)` | instanced brass with simple physics |
+| `muzzleFlash(pos, dir, style, withLight)` | sprite + optional pooled light; `style` `small`, `big`, `suppressed` (a wisp of gas), `none`, `puff` (launcher smoke), `rocket` (flash + a back-blast of fire and smoke behind the tube); `true` / `false` = big / small |
+| `shellCasing(pos, right, up, type)` | instanced casings with simple physics; `type` `brass`, `big` (rifle), `shell` (red shotgun shell) via instance colour and scale |
+| `panSparks(point, dir)` | sparks off the frying pan |
+| `flashLight(pos, peak, dur)` | a short burst of the pooled lights (stun grenade, fire) |
 | `impact(point, normal, material)` | sparks / dust + bullet hole; `material` is `stone`, `grass`, `dirt` (callers pass these) or `metal` (brighter sparks) |
 | `hitPuff(point, dir, head)` | hit on a character |
-| `explosion(pos, radius)` | fireball, ring, smoke, debris, light |
+| `explosion(pos, radius, size)` | fireball, ring, smoke, debris, light (`size` scales the particle counts: rockets 1.35) |
 | `ring(pos, r0, r1, dur, color, follow?, rise?)`, `beam(pos, color, dur, radius, height, follow?)` | ground ring, light column |
 | `healSparkles`, `iceBurst`, `poof`, `dustKick` | particle bursts |
 | `emitAdd(...)`, `emitBlend(...)` | raw particle: `x, y, z, vx, vy, vz, life, size, color, alpha, gravity, drag, grow` |
@@ -294,7 +315,7 @@ Everything is pooled at `initFx(scene, preset)`; nothing allocates per shot and 
 
 1. `src/config.js` `WEAPONS`: new entry with every field from section 2. `slot` must be `primary` or `secondary` to be equippable; `cat` puts it in a store category; `tier: 'basic'` adds it to the Field Arsenal Pass (then also add it to `PASSES.basic.weapons` in the backend `catalog.ts`).
 2. Backend `src/rules.ts` `WEAPONS` (slot, damage, interval, range, headMul, pellets, melee, pierce, heal) and `src/catalog.ts` `WEAPON_PRICES` (slot, Gem price). Without the first the server ignores its hits; without the second it cannot be bought or equipped.
-3. Model: a new `model` key needs a builder in `src/game/weaponModels.js` exposing `userData.muzzle`, `userData.ejector`, `userData.length` (see [ui.md](ui.md)); reuse an existing key to skip this.
+3. Model: a new `model` key needs a builder in `src/game/weaponModels.js` exposing `userData.muzzle`, `userData.ejector`, `userData.length` (see [ui.md](ui.md)); reuse an existing key to skip this. Put anything that should move (slide, magazine, bolt, lever...) in a `part()` group with one of the names `Actor.animateParts` knows; the warm kit (`warmkit.js`) bakes every weapon at boot by itself.
 4. Sound: `sfx.shot(kind)` is keyed by `kind`; a new kind needs a branch in `src/audio/sfx.js` (see [audio.md](audio.md)).
 5. A new `hold` value needs an arm pose in `ANIM.aim` and animator support ([avatar.md](avatar.md)).
 6. Check the Weapons Store (tile, big picture, stat bars), the HUD weapon panel and the icon ([ui.md](ui.md)), and try it with the store's TEST button: the test range picks its three steps from `heal` / `melee` / everything else (section 17).
@@ -357,7 +378,7 @@ The Weapons Store's TEST button (any weapon or grenade, owned or not) opens an o
 - **The field**: a grass disc (radius 38 m) out at sea at `ARENA` (0, 420), with a cliff skirt, bushes, an invisible fence of fixed colliders round the rim and a portal (`PORTAL`) back to the lobby. Built once, hidden between tests; its colliders are added and removed per test. Falling out (`body.onFellOut`) puts the player back at the start.
 - **People**: the player (blue; the tested weapon in its slot and held, the loadout's other gun, the tested or equipped grenade), an Instructor (blue, `untargetable`, holds the same weapon, demonstrates each step with visual-only shots or swings, then says "Now it's your turn!"), orange target dummies and, for the Mender, two blue allies. Dummies are `Actor`s with no `netId`; parked ones are `hidden` and `untargetable` until a step places them.
 - **No server**: `gameFrame` skips `reconcile`, `applyState`, `syncClock` and `sendPose` and advances `G.time` itself; `combat.setLocalHits(onLocalHit)` routes this client's hits on net-less actors (shots, melee blows, grenade blasts) to `testRange.js`, which applies the same damage maths as the server (falloff, head multiplier, melee damage, blast falloff; no armour), emits `damage`, `heal` and `elimination` for the HUD, and counts progress. `player.offline` stops `throw` from being sent. Nothing is rewarded.
-- **Steps** (`buildSteps`, by weapon type): guns: hit the target 5 times (scoped weapons stand 40 m off, shotguns 7 m), 2 headshots, then eliminate a strafing dummy at full health; the blade: 3 strikes, sprint to a ring (shows the speed bonus), eliminate the strafing dummy; the Mender: heal an ally from 30 to 100 HP, heal a knocked ally 3 times (its bleed-out pool), sting an enemy 5 times; grenades (6, refilled when empty): land a blast on the dummy, catch two dummies in one blast, eliminate the dummy. A step finishes with an "OK!" pop; after the third the card reads "Test complete!" and the portal is labelled "Back to the lobby".
+- **Steps** (`buildSteps`, by weapon type): guns: hit the target 5 times (scoped weapons stand 40 m off, shotguns 7 m), 2 headshots, then eliminate a strafing dummy at full health; the blade: 3 strikes, sprint to a ring (shows the speed bonus), eliminate the strafing dummy; the Mender: heal an ally from 30 to 100 HP, heal a knocked ally 3 times (its bleed-out pool), sting an enemy 5 times; other melee weapons: 3 strikes, then the speed ring (a `speedMul` above 1.04), smashing a frost wall (`wallMul`: the crowbar) or 3 strikes on the moving dummy, then eliminate it; launchers (`blast`): land 2 blasts, catch two dummies in one blast, eliminate the dummy; grenades (6, refilled when empty; fire counts once per pool): land the blast / fire on the dummy, catch two dummies in one, eliminate the dummy; smoke: throw it between you and the dummy (`smokeBlocks`), walk into it, push up to the dummy under it; stun: land one within range of the dummy, get blinded once (`flashed`), then turn away so one barely touches you. The tested gun's spare ammo is topped up so a test never runs dry. `__game.test(weaponId, grenadeId)` / `__game.exitTest()` open and close it from the console. A step finishes with an "OK!" pop; after the third the card reads "Test complete!" and the portal is labelled "Back to the lobby".
 - **UI** (`testRange.css`): the step card at the top centre (step n/3, title, text, progress bar, EXIT; below the platform toolbar when they would overlap; on short landscape phones narrower, without the step line, text clamped to two lines), floating labels projected over actors (the instructor's line, HP / knocked counters, hit counters, the portal label).
 
 ## 18. Missions, rank rewards and the first-round tips

@@ -12,6 +12,7 @@ import { buildCharacter, setFlash, setOpacity } from './characters.js'
 import { buildGrenade, buildWeapon } from './weaponModels.js'
 import { G } from './state.js'
 import { disposeLook } from '../avatar/look.js'
+import { smokeBlocks } from './areas.js'
 
 const tmpA = new Vector3()
 const tmpB = new Vector3()
@@ -20,6 +21,7 @@ const UP = new Vector3(0, 1, 0)
 
 // Weapon model, merged to one mesh per material, keeping the muzzle/ejector markers.
 const weaponCache = new Map()
+export const weaponModel = (id, skin = 'standard') => weaponMesh(id, skin)
 function weaponMesh(id, skin) {
   const def = WEAPONS[id]
   const key = `${def.model}:${skin}`
@@ -32,7 +34,10 @@ function weaponMesh(id, skin) {
     const ejector = new Object3D()
     ejector.position.copy(raw.userData.ejector.position)
     baked.add(muzzle, ejector)
-    baked.userData = { muzzleIndex: baked.children.length - 2, ejectorIndex: baked.children.length - 1, length: raw.userData.length }
+    // Moving parts (merge.js bakes each into a `part:<name>` child) and their rest pose.
+    const rest = {}
+    for (const c of baked.children) if (c.name.startsWith('part:')) rest[c.name.slice(5)] = { p: c.position.clone(), q: c.quaternion.clone(), s: c.scale.clone() }
+    baked.userData = { muzzleIndex: baked.children.length - 2, ejectorIndex: baked.children.length - 1, length: raw.userData.length, rest }
     proto = baked
     weaponCache.set(key, proto)
   }
@@ -41,6 +46,9 @@ function weaponMesh(id, skin) {
   g.userData = { ...proto.userData }
   g.userData.muzzle = g.children[proto.userData.muzzleIndex]
   g.userData.ejector = g.children[proto.userData.ejectorIndex]
+  g.userData.parts = {}
+  for (const c of g.children) if (c.name.startsWith('part:')) g.userData.parts[c.name.slice(5)] = c
+  g.userData.anim = { shotAt: -99, cyl: 0, cylTarget: 0, drum: 0, loaded: true }
   g.traverse((n) => {
     if (n.isMesh) n.castShadow = true
   })
@@ -93,11 +101,12 @@ export class Actor {
     this.lastShotAt = -99
     this.aimPoint = new Vector3()
 
-    // Weapons: 0 primary, 1 secondary, 2 knife, 3 fists
+    // Weapons: 0 primary, 1 secondary, 2 melee (the knife unless the loadout picks another), 3 fists
     const lo = opts.loadout || {}
     const skins = lo.skins || {}
     this.grenade = lo.grenade || 'frag' // GRENADES kind thrown with T
-    this.slots = [lo.primary || 'striker', lo.secondary || 'viper', 'knife', 'fists'].map((id) => {
+    const melee = WEAPONS[lo.melee]?.slot === 'melee' ? lo.melee : 'knife'
+    this.slots = [lo.primary || 'striker', lo.secondary || 'viper', melee, 'fists'].map((id) => {
       const def = WEAPONS[id]
       return { id, def, ammo: def.mag ?? 0, reserve: def.reserve ?? 0, skin: skins[id] || 'standard' }
     })
@@ -191,6 +200,8 @@ export class Actor {
     // The weapon not in hand rides on the back (primary or secondary).
     this.backModel = new Group()
     this.group.add(this.backModel)
+    // A frying pan in the melee slot is worn on the back (it stops shots from behind there).
+    this.panModel = this.slots[2].def.block ? weaponMesh(this.slots[2].id, this.slots[2].skin) : null
     this.refreshHeld()
   }
 
@@ -210,6 +221,12 @@ export class Actor {
       back.position.set(0.12, 1.12, -0.3)
       back.rotation.set(0.15, Math.PI, 0.9)
       this.backModel.add(back)
+    }
+    if (this.panModel && this.slot !== 2) {
+      // Flat across the lower back, cooking side in, handle down.
+      this.panModel.position.set(-0.02, 1.32, -0.27)
+      this.panModel.rotation.set(Math.PI / 2, 0, 0)
+      this.backModel.add(this.panModel)
     }
     if (scene && !this.grenadeModel.parent) scene.add(this.grenadeModel)
   }
@@ -367,6 +384,7 @@ export class Actor {
       tmpC.copy(held.position).add(tmpB)
       held.lookAt(tmpC)
       if (this.reloadT >= 0) held.rotateZ(Math.sin(Math.min(1, this.reloadT / (this.def.reload || 1)) * Math.PI) * 0.6)
+      this.animateParts(held, dt, reloadK)
     }
     // Grenade in hand while throwing.
     const gm = this.grenadeModel
@@ -398,12 +416,134 @@ export class Actor {
       const d = cam ? cam.position.distanceTo(this.group.position) : 20
       const friendly = G.player && G.player.team === this.team
       const tag = this.nameTag
-      tag.visible = this.life !== 'dead' && !this.hidden && G.phase !== 'results' && (friendly || d < 45)
+      // An enemy behind (or inside) a smoke cloud has no tag either.
+      tag.visible = this.life !== 'dead' && !this.hidden && G.phase !== 'results' && (friendly || (d < 45 && !(cam && smokeBlocks(cam.position, this.chest(tmpB)))))
       tag.material.depthTest = !friendly
       const k = Math.min(1, Math.max(0.25, d / 9))
       tag.scale.set(2.3 * k, 0.65 * k, 1)
       if (tag.visible) this.drawTag()
       tag.position.y = this.life === 'knocked' ? 0.9 : 2.4
+    }
+  }
+
+  // The held gun's moving parts: slides and bolts kick back on a shot, bolt / lever / pump actions
+  // cycle after it, a revolver cylinder turns, magazines drop out and come back on a reload,
+  // barrels tip open, a crossbow string is drawn and the loaded round shows. Driven by the actor's
+  // shot clock (lastShotAt, also set for other players by their `shot` relay) and its reload
+  // progress, so every client animates every player.
+  animateParts(held, dt, reloadK) {
+    const parts = held.userData.parts
+    if (!parts) return
+    const rest = held.userData.rest
+    const A = held.userData.anim
+    const def = this.def
+    if (this.lastShotAt !== A.shotAt) {
+      if (G.time - this.lastShotAt < 0.5) {
+        A.cylTarget += Math.PI / 3
+        A.drum += 0.35
+      }
+      A.shotAt = this.lastShotAt
+    }
+    const since = G.time - this.lastShotAt
+    const reloading = reloadK >= 0
+    for (const name in parts) {
+      const o = parts[name]
+      const r = rest[name]
+      o.position.copy(r.p)
+      o.quaternion.copy(r.q)
+      o.scale.copy(r.s)
+      o.visible = true
+    }
+    const empty = this.isPlayer && def.mag > 1 && this.weapon.ammo === 0 && !reloading
+    // Loaded? The player knows its ammo; for the others: not right after a shot until the reload is done.
+    if (this.isPlayer) A.loaded = (this.weapon.ammo > 0 && !reloading) || (reloading && reloadK > 0.62)
+    else A.loaded = reloading ? reloadK > 0.62 : !(def.mag === 1 && since < (def.reload || 1) + 0.6)
+    // Out (0.1-0.3), away (0.3-0.55), back in (0.55-0.72) of a reload.
+    const magOut = reloading ? (reloadK < 0.3 ? ease((reloadK - 0.1) / 0.2) : reloadK < 0.55 ? 1 : 1 - ease((reloadK - 0.55) / 0.17)) : 0
+    const magGone = reloading && reloadK > 0.3 && reloadK < 0.55
+    if (parts.slide) {
+      const travel = def.hold === 'pistol' ? 0.032 : 0.05
+      const k = empty ? 1 : since < 0.09 ? Math.sin((since / 0.09) * Math.PI) : 0
+      const rk = reloading ? bump(reloadK, 0.76, 0.98) : 0
+      parts.slide.position.z -= travel * Math.max(k, rk)
+    }
+    if (parts.mag && reloading) {
+      parts.mag.position.y -= magOut * 0.28
+      parts.mag.position.z -= magOut * 0.03
+      parts.mag.visible = !magGone
+    }
+    if (parts.drum) {
+      if (A.drum > Math.PI * 8) A.drum -= Math.PI * 8
+      parts.drum.rotateX(A.drum)
+      if (reloading) {
+        parts.drum.position.y -= magOut * 0.3
+        parts.drum.visible = !magGone
+      }
+    }
+    if (parts.cyl) {
+      A.cyl += (A.cylTarget - A.cyl) * Math.min(1, dt * 22)
+      if (A.cylTarget > Math.PI * 24) {
+        A.cylTarget -= Math.PI * 24
+        A.cyl -= Math.PI * 24
+      }
+      parts.cyl.rotateZ(-A.cyl)
+      if (reloading) {
+        // Swings out to the left, the spent cases fall, fresh rounds go in, it swings back.
+        const out = reloadK < 0.2 ? ease(reloadK / 0.2) : reloadK < 0.82 ? 1 : 1 - ease((reloadK - 0.82) / 0.15)
+        parts.cyl.position.x -= out * 0.045
+        parts.cyl.position.y -= out * 0.012
+      }
+    }
+    if (parts.hammer) {
+      const cock = def.cycle === 'lever' ? (since < 0.12 ? 0 : 1) : since < 0.05 ? 0 : Math.min(1, (since - 0.05) / 0.2)
+      parts.hammer.rotateX(-0.5 * cock)
+    }
+    if (parts.bolt && def.cycle === 'bolt') {
+      // Lift, pull back, push forward, lock: from 0.22 s after the shot (and on a reload).
+      const t = reloading ? Math.min(1, reloadK * 1.15) : (since - 0.22) / 0.6
+      if (t > 0 && t < 1) {
+        const lift = t < 0.2 ? t / 0.2 : t > 0.8 ? (1 - t) / 0.2 : 1
+        const back = t < 0.2 ? 0 : t < 0.5 ? (t - 0.2) / 0.3 : t < 0.8 ? 1 - (t - 0.5) / 0.3 : 0
+        parts.bolt.rotateZ(ease(lift) * 1.1)
+        parts.bolt.position.z -= ease(back) * 0.075
+      }
+    }
+    if (parts.lever) {
+      const t = (since - 0.1) / 0.42
+      if (!reloading && t > 0 && t < 1) parts.lever.rotateX(Math.sin(t * Math.PI) * 0.95)
+    }
+    if (parts.pump) {
+      const t = (since - 0.2) / 0.38
+      if (!reloading && t > 0 && t < 1) parts.pump.position.z -= Math.sin(t * Math.PI) * 0.09
+    }
+    if (parts.barrels && reloading) {
+      const open = reloadK < 0.18 ? ease(reloadK / 0.18) : reloadK < 0.82 ? 1 : 1 - ease((reloadK - 0.82) / 0.16)
+      parts.barrels.rotateX(open * 0.62)
+    }
+    if (parts.breech) {
+      if (reloading) {
+        const open = reloadK < 0.2 ? ease(reloadK / 0.2) : reloadK < 0.8 ? 1 : 1 - ease((reloadK - 0.8) / 0.18)
+        parts.breech.rotateX(open * 0.7)
+      }
+      if (parts.round) {
+        // The new round slides into the open breech.
+        const ins = reloadK < 0.35 ? 0 : reloadK < 0.7 ? (reloadK - 0.35) / 0.35 : 1
+        parts.round.visible = reloading && reloadK > 0.35 && reloadK < 0.8
+        parts.round.position.z -= (1 - ease(ins)) * 0.08
+        parts.round.position.y += (1 - ease(ins)) * 0.05
+      }
+    } else if (parts.round && !parts.stringL) parts.round.visible = A.loaded
+    if (parts.stringL && parts.stringR) {
+      // Drawn back to the latch while loaded (or cranked back during a reload).
+      const draw = reloading ? ease(Math.min(1, reloadK / 0.6)) : A.loaded ? 1 : since < 0.06 ? 1 - since / 0.06 : 0
+      const nockZ = 0.29 - 0.24 * draw
+      for (const [o, side] of [[parts.stringL, -1], [parts.stringR, 1]]) {
+        const dx = -side * 0.225
+        const dz = nockZ - 0.29
+        o.rotation.set(0, Math.atan2(-dz, dx), 0)
+        o.scale.set(Math.max(0.001, Math.hypot(dx, dz)), 1, 1)
+      }
+      if (parts.round) parts.round.visible = reloading ? reloadK > 0.65 : A.loaded
     }
   }
 
@@ -431,6 +571,9 @@ export class Actor {
     }
   }
 }
+
+const ease = (k) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k))
+const bump = (k, a, b) => (k <= a || k >= b ? 0 : Math.sin(((k - a) / (b - a)) * Math.PI)) // 0 -> 1 -> 0 over a..b
 
 // --- Ray math -------------------------------------------------------------------------
 // Distance along a unit ray to a sphere, or null.

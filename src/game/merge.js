@@ -62,14 +62,22 @@ export function mergeChildren(parent, material, { castShadow = true } = {}) {
 }
 
 // A whole weapon (any depth) -> one vertex-coloured mesh + its special parts, in the root's frame.
-export function bakeWeapon(root, { metal = false } = {}) {
+// Moving parts (groups with userData.part, see weaponModels.js part()) are baked on their own into
+// a child group named `part:<name>` that keeps the part's pivot transform, so it can be animated.
+export function bakeWeapon(root, { metal = false, material = null } = {}) {
   root.updateMatrixWorld(true)
   const inv = root.matrixWorld.clone().invert()
   const out = new Group()
   const geos = []
   const keep = new Map() // material -> geometries
+  const parts = []
+  const inPart = (o) => {
+    for (let p = o.parent; p && p !== root; p = p.parent) if (p.userData.part) return true
+    return false
+  }
   root.traverse((o) => {
-    if (!o.isMesh) return
+    if (o !== root && o.userData.part && !inPart(o)) parts.push(o)
+    if (!o.isMesh || inPart(o)) return
     rel.multiplyMatrices(inv, o.matrixWorld)
     if (special(o.material)) {
       if (!keep.has(o.material)) keep.set(o.material, [])
@@ -85,7 +93,7 @@ export function bakeWeapon(root, { metal = false } = {}) {
       keep.get(o.material).push(g)
     } else geos.push(coloured(o, rel))
   })
-  const mat = new MeshStandardMaterial({ vertexColors: true, roughness: metal ? 0.3 : 0.5, metalness: metal ? 0.85 : 0.4 })
+  const mat = material || new MeshStandardMaterial({ vertexColors: true, roughness: metal ? 0.3 : 0.5, metalness: metal ? 0.85 : 0.4 })
   if (geos.length) {
     const m = new Mesh(mergeGeometries(geos), mat)
     m.castShadow = true
@@ -97,5 +105,13 @@ export function bakeWeapon(root, { metal = false } = {}) {
     out.add(m)
   }
   for (const g of geos) g.dispose()
+  for (const p of parts) {
+    const baked = bakeWeapon(p, { metal, material: mat })
+    baked.name = `part:${p.userData.part}`
+    // The part's pivot in the root's frame.
+    rel.multiplyMatrices(inv, p.matrixWorld)
+    rel.decompose(baked.position, baked.quaternion, baked.scale)
+    out.add(baked)
+  }
   return out
 }

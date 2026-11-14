@@ -384,7 +384,7 @@ let generation = 0
 let avatarReady = false
 function loadoutForActor() {
   const lo = profile.loadout
-  return { primary: lo.primary, secondary: lo.secondary, skins: { [lo.primary]: lo.skin[lo.primary] || 'standard', [lo.secondary]: lo.skin[lo.secondary] || 'standard' } }
+  return { primary: lo.primary, secondary: lo.secondary, melee: lo.melee || 'knife', skins: { [lo.primary]: lo.skin[lo.primary] || 'standard', [lo.secondary]: lo.skin[lo.secondary] || 'standard' } }
 }
 function placeAvatarInLobby() {
   if (G.phase === 'lobby' || G.phase === 'queue' || G.phase === 'boot') lobbyScene.setPlayerAvatar(avatar, loadoutForActor())
@@ -524,7 +524,7 @@ function setMood(map) {
 function prewarmHudIcons() {
   const list = Object.keys(WEAPONS).map((id) => [id, 'standard', 160, 70])
   const lo = profile.loadout
-  for (const id of [lo.primary, lo.secondary, 'knife']) {
+  for (const id of [lo.primary, lo.secondary, lo.melee || 'knife']) {
     if (!WEAPONS[id]) continue
     const skin = lo.skin?.[id] || 'standard'
     list.push([id, skin, 160, 70], [id, skin, 256, 110])
@@ -1296,6 +1296,9 @@ if (import.meta.env.DEV || location.search.includes('debug')) {
     },
     // Press Play (the round starts once a second player has too).
     play: () => startMatchFlow(),
+    // The store's TEST button: the offline Weapon Test range with a weapon (or a grenade id).
+    test: (weaponId, grenadeId = null) => enterTest(weaponId, grenadeId),
+    exitTest: () => exitTest(false),
     net,
     teleport: (x, z, facing = 0) => {
       resetPlayer({ x, y: island.groundHeight(x, z) + 0.3, z }, facing)

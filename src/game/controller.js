@@ -183,15 +183,17 @@ export function updateController(dt, hud) {
   // Fire
   const fireHeld = inputState.fire && playing && alive
   if (fireHeld && !lastFireHeld) firedThisPress = false
-  if (fireHeld && p.healT < 0 && p.throwT < 0) {
-    if (def.auto || !firedThisPress) {
+  // A burst weapon finishes its burst once started, held or not.
+  if ((fireHeld || p.burstLeft > 0) && p.healT < 0 && p.throwT < 0 && alive && playing) {
+    if (def.auto || !firedThisPress || p.burstLeft > 0) {
       p.ready = 1
       const shot = fire(p, aimRay.origin, aimRay.dir, hspeed)
       if (shot) {
         firedThisPress = true
         const kick = (def.recoil || 0) * (p.aiming ? 0.55 : 1) * (p.crouch ? 0.8 : 1)
         addRecoil(kick, kick * 0.6)
-        if (def.kind === 'sniper' || def.kind === 'shotgun') addShake(0.25)
+        if (def.kind === 'sniper' || def.kind === 'shotgun' || def.kind === 'lever' || def.kind === 'revolver') addShake(0.25)
+        else if (def.kind === 'rocket' || def.kind === 'launcher') addShake(def.kind === 'rocket' ? 0.6 : 0.35)
       }
     }
   }

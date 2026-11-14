@@ -87,6 +87,33 @@ onNet('claimed', (msg) => {
   for (const fn of claimListeners) fn(msg)
 })
 
+// The lobby's announcement window (NEWS) was closed: never shown again. Saved on the account by the
+// server (profile.newsSeen); this browser keeps a copy too, for guests (nothing saved), a tab closed
+// before the server answered, or a save that failed. A newer local copy is sent back to the account.
+const NEWS_KEY = 'ffz.newsSeen'
+function localNews() {
+  try {
+    return Number(localStorage.getItem(NEWS_KEY)) || 0
+  } catch {
+    return 0
+  }
+}
+export function newsSeen() {
+  const local = localNews()
+  if (local > (profile.newsSeen || 0) && account.loaded) markNewsSeen(local)
+  return Math.max(profile.newsSeen || 0, local)
+}
+export function markNewsSeen(id) {
+  if (!(id > (profile.newsSeen || 0))) return
+  profile.newsSeen = id
+  send('newsSeen', { id })
+  try {
+    localStorage.setItem(NEWS_KEY, String(id))
+  } catch {
+    // Storage blocked: the server copy is enough for signed-in players.
+  }
+}
+
 // The first-round tips are finished or skipped: remembered on the account.
 export function finishTutorial() {
   if (profile.tutorial) return
@@ -174,6 +201,7 @@ export function equipWeapon(id) {
   equip('weapon', id, () => {
     if (w.slot === 'primary') profile.loadout.primary = id
     else if (w.slot === 'secondary') profile.loadout.secondary = id
+    else if (w.slot === 'melee') profile.loadout.melee = id
   })
 }
 export function equipSkin(weaponId, skinId) {

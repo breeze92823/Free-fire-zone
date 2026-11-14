@@ -246,6 +246,13 @@ const C = {
   white: new Color(2.5, 2.5, 2.5),
   red: new Color(3, 0.5, 0.4),
   gold: new Color(3, 2.2, 0.6),
+  faint: new Color(0.9, 0.9, 0.85),
+}
+// Casing colours (instance colours of the one casing mesh) and sizes.
+const CASING = {
+  brass: { color: new Color('#d9a640'), scale: [1, 1, 1] },
+  big: { color: new Color('#d4a23a'), scale: [1.9, 1.35, 1.35] },
+  shell: { color: new Color('#b3262a'), scale: [1.7, 1.9, 1.9] },
 }
 export const FX_COLORS = C
 
@@ -300,12 +307,13 @@ export function initFx(scene, preset) {
   // Shell casings: instanced brass.
   const cgeo = new CylinderGeometry(0.012, 0.012, 0.045, 6)
   cgeo.rotateZ(Math.PI / 2)
-  casings = new InstancedMesh(cgeo, new MeshStandardMaterial({ color: '#d9a640', metalness: 0.9, roughness: 0.3 }), 80)
+  casings = new InstancedMesh(cgeo, new MeshStandardMaterial({ color: '#ffffff', metalness: 0.9, roughness: 0.3 }), 80)
   casings.instanceMatrix.setUsage(DynamicDrawUsage)
   casings.frustumCulled = false
   for (let i = 0; i < 80; i++) {
-    casingState.push({ p: new Vector3(), v: new Vector3(), r: new Vector3(), w: new Vector3(), life: 0, floor: 0 })
+    casingState.push({ p: new Vector3(), v: new Vector3(), r: new Vector3(), w: new Vector3(), life: 0, floor: 0, s: new Vector3(1, 1, 1) })
     casings.setMatrixAt(i, m1.makeScale(0, 0, 0))
+    casings.setColorAt(i, CASING.brass.color)
   }
   scene.add(casings)
 
@@ -369,34 +377,77 @@ export function tracer(from, to, color = null) {
   t.mesh.quaternion.copy(q1)
 }
 
-export function muzzleFlash(pos, dir, big = false, withLight = true) {
-  const f = flashes.find((x) => x.t <= 0) || flashes[0]
-  f.t = 0.05
-  f.sprite.visible = true
-  f.sprite.position.copy(pos).addScaledVector(dir, 0.08)
-  const s = (big ? 0.85 : 0.55) * rnd(0.8, 1.2)
-  f.sprite.scale.set(s, s, 1)
-  f.sprite.material.rotation = rnd(0, Math.PI * 2)
+// style: 'small' (pistols, SMGs, rifles), 'big' (shotguns, snipers, revolvers, LMGs), 'suppressed'
+// (no flash: a wisp of gas), 'none', 'puff' (a launcher's thump of smoke), 'rocket' (flash +
+// a big back-blast of smoke behind the tube). `true` / `false` mean 'big' / 'small'.
+export function muzzleFlash(pos, dir, style = 'small', withLight = true) {
+  if (style === true) style = 'big'
+  else if (style === false) style = 'small'
+  if (style === 'none') return
+  if (style === 'suppressed') {
+    blend.emit(pos.x + dir.x * 0.1, pos.y + dir.y * 0.1, pos.z + dir.z * 0.1, dir.x * 0.8, 0.25, dir.z * 0.8, rnd(0.4, 0.7), 0.12, C.smoke, 0.25, 0.2, 2, 0.6)
+    return
+  }
+  const big = style === 'big' || style === 'rocket'
+  if (style !== 'puff') {
+    const f = flashes.find((x) => x.t <= 0) || flashes[0]
+    f.t = style === 'rocket' ? 0.09 : 0.05
+    f.sprite.visible = true
+    f.sprite.position.copy(pos).addScaledVector(dir, 0.08)
+    const s = (style === 'rocket' ? 1.4 : big ? 0.85 : 0.55) * rnd(0.8, 1.2)
+    f.sprite.scale.set(s, s, 1)
+    f.sprite.material.rotation = rnd(0, Math.PI * 2)
+  }
   if (withLight) {
     const l = lights.reduce((a, b) => (a.t < b.t ? a : b))
     l.t = l.dur
-    l.peak = big ? 14 : 8
-    l.light.position.copy(f.sprite.position)
+    l.peak = style === 'rocket' ? 30 : big ? 14 : style === 'puff' ? 4 : 8
+    l.light.position.copy(pos).addScaledVector(dir, 0.08)
   }
   // A puff of smoke and a few sparks.
-  const n = Math.round(3 * quality)
-  for (let i = 0; i < n; i++) add.emit(pos.x, pos.y, pos.z, dir.x * rnd(4, 9) + rnd(-1, 1), dir.y * rnd(4, 9) + rnd(-1, 1), dir.z * rnd(4, 9) + rnd(-1, 1), rnd(0.05, 0.12), rnd(0.03, 0.06), C.spark, 1, 0, 6)
-  blend.emit(pos.x + dir.x * 0.2, pos.y + dir.y * 0.2, pos.z + dir.z * 0.2, dir.x * 1.2, 0.4, dir.z * 1.2, rnd(0.35, 0.6), 0.18, C.smoke, 0.35, 0.3, 2, 0.9)
+  const n = Math.round((big ? 5 : 3) * quality)
+  if (style !== 'puff') for (let i = 0; i < n; i++) add.emit(pos.x, pos.y, pos.z, dir.x * rnd(4, 9) + rnd(-1, 1), dir.y * rnd(4, 9) + rnd(-1, 1), dir.z * rnd(4, 9) + rnd(-1, 1), rnd(0.05, 0.12), rnd(0.03, 0.06), C.spark, 1, 0, 6)
+  const puffs = style === 'puff' ? 5 : big ? 2 : 1
+  for (let i = 0; i < puffs; i++) blend.emit(pos.x + dir.x * 0.2, pos.y + dir.y * 0.2, pos.z + dir.z * 0.2, dir.x * rnd(0.8, 2) + rnd(-0.3, 0.3), 0.4 + rnd(0, 0.3), dir.z * rnd(0.8, 2) + rnd(-0.3, 0.3), rnd(0.35, 0.8), style === 'puff' ? 0.3 : 0.18, C.smoke, 0.4, 0.3, 2, 0.9)
+  if (style === 'rocket') {
+    // Back-blast: a cone of fire and a wall of smoke out of the back of the tube (1.6 m behind).
+    const bx = pos.x - dir.x * 1.6
+    const by = pos.y - dir.y * 1.6
+    const bz = pos.z - dir.z * 1.6
+    // (Pushed out fast and thin, so the shooter's own camera behind the tube is not buried in it.)
+    for (let i = 0; i < Math.round(12 * quality) + 4; i++) add.emit(bx, by, bz, -dir.x * rnd(6, 12) + rnd(-1.5, 1.5), -dir.y * rnd(4, 10) + rnd(-1, 1.5), -dir.z * rnd(6, 12) + rnd(-1.5, 1.5), rnd(0.08, 0.2), rnd(0.2, 0.42), C.fire, 1, 0, 4, 1)
+    for (let i = 0; i < Math.round(10 * quality) + 4; i++) blend.emit(bx, by, bz, -dir.x * rnd(4, 8) + rnd(-1.2, 1.2), rnd(0.2, 1.2), -dir.z * rnd(4, 8) + rnd(-1.2, 1.2), rnd(1.2, 2.2), rnd(0.5, 0.9), i % 2 ? C.smoke : C.darkSmoke, 0.38, 0.1, 2.2, 1.1)
+  }
 }
 
-export function shellCasing(pos, right, up) {
-  const s = casingState.find((x) => x.life <= 0) || casingState[Math.floor(Math.random() * casingState.length)]
+// type: 'brass' (default), 'big' (rifle case), 'shell' (red shotgun shell).
+export function shellCasing(pos, right, up, type = 'brass') {
+  const c = CASING[type] || CASING.brass
+  const i = casingState.findIndex((x) => x.life <= 0)
+  const k = i >= 0 ? i : Math.floor(Math.random() * casingState.length)
+  const s = casingState[k]
   s.p.copy(pos)
   s.v.copy(right).multiplyScalar(rnd(1.6, 2.6)).addScaledVector(up, rnd(1.4, 2.4))
   s.r.set(rnd(0, 6), rnd(0, 6), rnd(0, 6))
   s.w.set(rnd(-25, 25), rnd(-25, 25), rnd(-25, 25))
-  s.life = 2.2
+  s.life = type === 'brass' ? 2.2 : 3.2
   s.floor = pos.y - 1.3
+  s.s.set(...c.scale)
+  casings.setColorAt(k, c.color)
+  casings.instanceColor.needsUpdate = true
+}
+
+// The frying pan clanging: a spray of bright sparks off the point (dir: the blow / bullet).
+export function panSparks(point, dir) {
+  for (let i = 0; i < Math.round(14 * quality) + 4; i++) add.emit(point.x, point.y, point.z, -dir.x * rnd(1, 4) + rnd(-2.5, 2.5), rnd(0.5, 4), -dir.z * rnd(1, 4) + rnd(-2.5, 2.5), rnd(0.15, 0.4), rnd(0.03, 0.05), C.spark, 1, -14, 1.5)
+}
+
+// A short bright light at a point (stun flashes) from the fixed light pool.
+export function flashLight(pos, peak = 60, dur = 0.25) {
+  const l = lights.reduce((a, b) => (a.t < b.t ? a : b))
+  l.t = l.dur = dur
+  l.peak = peak
+  l.light.position.copy(pos).y += 1
 }
 
 // Bullet hitting the world: sparks, dust, a decal.
@@ -426,7 +477,14 @@ export function hitPuff(point, dir, head = false) {
   blend.emit(point.x, point.y, point.z, 0, 0.4, 0, 0.4, 0.3, C.smoke, 0.3, 0, 2, 1.2)
 }
 
-export function explosion(pos, radius = 6) {
+// size: extra scale for the particle counts and the fireball (rockets 1.35).
+export function explosion(pos, radius = 6, size = 1) {
+  const q0 = quality
+  quality *= size
+  explosionInner(pos, radius)
+  quality = q0
+}
+function explosionInner(pos, radius) {
   const fb = fireballs.find((x) => x.t <= 0) || fireballs[0]
   fb.t = fb.dur = 0.55
   fb.r = radius * 0.62
@@ -568,7 +626,7 @@ export function updateFx(dt) {
     s.r.addScaledVector(s.w, dt)
     q1.setFromAxisAngle(v1.set(1, 0, 0), s.r.x).multiply(q2.setFromAxisAngle(v2.set(0, 1, 0), s.r.y))
     const sc = s.life > 0 ? Math.min(1, s.life * 3) : 0
-    casings.setMatrixAt(i, m1.compose(s.p, q1, v1.set(sc, sc, sc)))
+    casings.setMatrixAt(i, m1.compose(s.p, q1, v1.copy(s.s).multiplyScalar(sc)))
   }
   if (any) casings.instanceMatrix.needsUpdate = true
   // Holes fade by shrinking at the end of their life.
