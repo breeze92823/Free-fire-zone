@@ -948,11 +948,22 @@
     font-size: max(4.2cqw, 12px);
   }
 }
-/* A corner badge on a map card (MAPS[i].tag, e.g. BIG MAP). */
-.mv-card .tag {
+/* Corner badges on a map card, stacked: MAPS[i].tag (e.g. BIG MAP) and VEHICLES (MAPS[i].vehicles). */
+.mv-card .tags {
   position: absolute;
   top: 5%;
   left: 5%;
+  right: 5%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: max(0.8cqw, 4px);
+  pointer-events: none;
+}
+.mv-card .tag {
+  position: static; /* (the shop's generic .tag is absolute) */
+  display: inline-flex;
+  align-items: center;
   padding: 0.25em 0.55em;
   font-size: max(1.9cqw, 10px);
   font-weight: 700;
@@ -961,6 +972,27 @@
   background: linear-gradient(180deg, #ffe08a, #f2b84a);
   border-radius: 3px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.mv-card .tag.veh {
+  color: #04222b;
+  background: linear-gradient(180deg, #b6f4ff, #45c8ea);
+  animation: vehTag 2.4s ease-in-out infinite;
+}
+.mv-card .tag.veh svg {
+  width: 1.75em;
+  height: 1.3em;
+  margin: -0.15em 0.35em -0.15em -0.1em;
+  flex: none;
+}
+@keyframes vehTag {
+  50% {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6), 0 0 0.9em rgba(110, 220, 255, 0.85);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mv-card .tag.veh {
+    animation: none;
+  }
 }
 .mv-card {
   position: relative;

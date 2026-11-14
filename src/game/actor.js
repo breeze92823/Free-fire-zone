@@ -345,7 +345,9 @@ export class Actor {
   updateModel(dt, aimDir, speed) {
     const g = this.group
     g.position.copy(this.pos)
-    g.rotation.y = this.facing
+    // Upright, facing `facing` (a seat below tilts it with the vehicle; set all three axes so no tilt
+    // is left over once out of the seat).
+    g.rotation.set(0, this.facing, 0)
     // In a vehicle seat (vehicles.js sets `seat`): the body tilts with the vehicle (pos = its feet
     // origin). The driver faces ahead (twisting toward its aim while it shoots its sidearm, one hand
     // on the wheel); passengers turn in their seat toward their aim; the gunner stands and turns

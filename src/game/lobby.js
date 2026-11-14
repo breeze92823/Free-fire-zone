@@ -771,14 +771,19 @@ function buildQueue(kind, info) {
   if (kind === 'vote') {
     const shots = cb.mapShots?.() || []
     body = `<div class="mv-maps${info.maps.length > 3 ? ' many' : ''}" style="--n:${info.maps.length}">${info.maps
-      .map(
-        (m, i) => `<button class="mv-card" data-i="${i}">
+      .map((m, i) => {
+        // Corner badges: the map's own tag (BIG MAP) and VEHICLES on a map with Jeeps and Buggies.
+        const tags = [
+          m.tag && `<span class="tag">${esc(m.tag)}</span>`,
+          m.vehicles && `<span class="tag veh" title="Jeeps and Dune Buggies to drive">${SVG.car}VEHICLES</span>`,
+        ].filter(Boolean)
+        return `<button class="mv-card" data-i="${i}">
           <span class="art" style="background-image:url(${shots[i] || cb.mapThumb?.() || ''})"></span>
-          <span class="shade"></span>${m.tag ? `<span class="tag">${esc(m.tag)}</span>` : ''}
+          <span class="shade"></span>${tags.length ? `<span class="tags">${tags.join('')}</span>` : ''}
           <span class="voters"></span>
           <span class="nm">${esc(m.name)}</span>
-        </button>`,
-      )
+        </button>`
+      })
       .join('')}</div>`
   } else {
     body = `<div class="mv-wait"><div class="spinner"></div><div class="big"></div><div class="sub"></div></div>`

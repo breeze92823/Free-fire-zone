@@ -579,7 +579,7 @@ Behaviour worth a second look:
 
 ## 8. Dustline Ridge (`src/world/ridge/`)
 
-The second world: a big arid island (about 520 m across, ~4x Coral Key's area) made for driving: long dirt roads, rolling dunes, rock ridges with passes, a mesa, a quarry pit and a dry canyon. Built after Coral Key (it reuses Coral Key's material set `M`, the building kit and the shared terrain shader), at the same coordinates, hidden with its colliders off until `main.js activateWorld('ridge')` (README section 4.1). Voted as the map `Dustline Ridge` (`MAPS[3]`, mood `desert`, tag BIG MAP).
+The second world: a big arid island (about 520 m across, ~4x Coral Key's area) made for driving: long dirt roads, rolling dunes, rock ridges with passes, a mesa, a quarry pit and a dry canyon. Built after Coral Key (it reuses Coral Key's material set `M`, the building kit and the shared terrain shader), at the same coordinates, hidden with its colliders off until `main.js activateWorld('ridge')` (README section 4.1). Voted as the map `Dustline Ridge` (`MAPS[3]`, mood `desert`, tag BIG MAP, `vehicles: true`: its vote card also shows a VEHICLES badge).
 
 | File | Role |
 |---|---|

@@ -724,8 +724,9 @@ export function updateVehicles(dt) {
   // Engine sound for the vehicle the player sits in.
   if (mine) {
     const v = mine
-    const rpm = clamp(Math.abs(v.speed) / v.def.topSpeed, 0, 1)
-    setEngine({ rpm: 0.12 + rpm * 0.88, load: mySeat === 0 ? Math.abs(v.throttle) : 0, kind: v.type })
+    // Throttle = driving the way it goes (or pulling away); braking against the motion does not rev.
+    const gas = mySeat === 0 && (v.throttle * v.speed >= 0 || Math.abs(v.speed) < 1) ? Math.abs(v.throttle) : 0
+    setEngine({ speed: clamp(Math.abs(v.speed) / v.def.topSpeed, 0, 1), throttle: gas, kind: v.type })
   }
   paintHud()
 }

@@ -670,11 +670,12 @@ export const MATCH = {
 // (offset from focus: [x, y, z], fov) rendered once at boot.
 // `world` is the island it is played on (WORLDS); Dustline Ridge is its own, larger island (built in
 // the background after boot, src/world/ridge/), so its zone covers the whole of it.
+// `vehicles`: the round parks Jeeps and Dune Buggies (backend VEHICLE_SPAWNS); the vote card says so.
 export const MAPS = [
   { id: 'villa', world: 'coral', name: 'THE VILLA', mood: 'day', tint: '#3fb6ff', focus: [0, 0], shot: [34, 30, 46, 50] },
   { id: 'farm', world: 'coral', name: 'Old Farm', mood: 'sunset', tint: '#ff9a3c', focus: [-66, 34], shot: [40, 42, 52, 52] },
   { id: 'dock', world: 'coral', name: 'Dockyard', mood: 'night', tint: '#5866ff', focus: [-98, -14], shot: [52, 30, 36, 52] },
-  { id: 'ridge', world: 'ridge', name: 'Dustline Ridge', tag: 'BIG MAP', mood: 'desert', tint: '#e0a35a', focus: [0, 0], shot: [-60, 46, 84, 56] },
+  { id: 'ridge', world: 'ridge', name: 'Dustline Ridge', tag: 'BIG MAP', vehicles: true, mood: 'desert', tint: '#e0a35a', focus: [0, 0], shot: [-60, 46, 84, 56] },
 ]
 
 // --- Safe zone ---------------------------------------------------------------------

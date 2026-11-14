@@ -24,7 +24,7 @@ import { PRIO } from './avatar/assets.js'
 import { disposeLook, lookFromJson, lookToJson, prewarmLook, streamLook } from './avatar/look.js'
 import { buildIsland } from './world/index.js'
 import { buildRidge } from './world/ridge/index.js'
-import { installAudio, setBreakMuted, setListener, setVolume, setDucked, sfx, spatial, updateAmbience } from './audio/index.js'
+import { installAudio, setBreakMuted, setEngine, setListener, setVolume, setDucked, sfx, spatial, updateAmbience } from './audio/index.js'
 import { hasEmoteClip, registerEmoteClip } from './avatar/animator.js'
 import { G, emit, on } from './game/state.js'
 import { initFx, setFxScale, updateFx } from './game/fx.js'
@@ -158,10 +158,15 @@ let lobbyHold = null // a lobby redraw waits for its shaders after a graphics sw
 // inside a lobby frame (frame() calls it right before the lobby's own render, so nothing shows).
 let warmState = '' // '' | 'compile' (wanted) | 'busy' | 'draw' (compiled, the draw is next)
 let warmKit = null // sample characters / guns / walls / drops (game/warmkit.js), kept for good
+// Not in the first moments after a round or a test closes: without parallel shader compiles (Firefox)
+// the warm-up can freeze the page for seconds, and the round's last sounds (the engine fading out,
+// the exit click) must finish first or a stalled audio output can keep buzzing them.
+let warmNotBefore = 0
 function scheduleWarmup() {
   warmState = 'compile'
 }
 function pumpWarmup() {
+  if (performance.now() < warmNotBefore) return
   if (warmState === 'compile') {
     warmState = 'busy'
     const [game, ...rest] = warmTargets()
@@ -911,6 +916,8 @@ function closeMatch() {
   hud.show(false)
   stopTutorial()
   clearVehicles() // a round's vehicles (online; the Test Drive clears its own), before the actors go
+  setEngine(null) // (clearVehicles does too; also when there were none)
+  warmNotBefore = performance.now() + 1200
   if (G.match) teardownMatch()
   // A graphics switch held back during the round (pendingGraphics) is NOT applied here: it recompiles
   // shaders and re-uploads textures (seconds on a weak GPU) and the lobby is not drawn meanwhile, which
