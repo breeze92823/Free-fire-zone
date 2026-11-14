@@ -5,43 +5,86 @@
 // reachable area (match.js spawnActor via randomWalkable).
 import { WATER, NAV } from '../config.js'
 import { RAPIER, world } from '../physics.js'
+import { nextTask } from '../nextTask.js'
 
 const STATIC = () => RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC | RAPIER.QueryFilterFlags.EXCLUDE_SENSORS
 const MAX_STEP = 0.55 // m of floor height difference between neighbouring cells
 
-export function buildNav(island) {
-  const cell = NAV.cell
+// Cell size, extent and probe come from the world: Coral Key uses NAV.cell and a character-sized box
+// test per cell; a big world (Dustline Ridge: navCell 2, navProbe 'rays') uses coarser cells and five
+// short down rays over the box's footprint instead (the box test cost ~0.37 ms a cell there).
+function setup(island) {
+  const cell = island.navCell ?? NAV.cell
   const { minX, maxX, minZ, maxZ } = island.bounds
   const w = Math.ceil((maxX - minX) / cell)
   const h = Math.ceil((maxZ - minZ) / cell)
-  const walk = new Uint8Array(w * h)
-  const floor = new Float32Array(w * h)
-  const comp = new Int32Array(w * h).fill(-1)
-  world.step() // make sure the query pipeline sees every collider
-  const ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })
-  const box = new RAPIER.Cuboid(0.34, 0.55, 0.34)
+  return { w, h, cell, minX, minZ, walk: new Uint8Array(w * h), floor: new Float32Array(w * h), comp: new Int32Array(w * h).fill(-1), main: -1 }
+}
+
+// Walkability of row j (floor heights and the walk flags).
+const ray = { r: null }
+function rasterRow(island, nav, j) {
+  const { w, cell, minX, minZ, walk, floor } = nav
+  const r = (ray.r ??= new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 }))
+  const box = (ray.box ??= new RAPIER.Cuboid(0.34, 0.55, 0.34))
   const rot = { x: 0, y: 0, z: 0, w: 1 }
   const flags = STATIC()
-  for (let j = 0; j < h; j++) {
-    for (let i = 0; i < w; i++) {
-      const x = minX + (i + 0.5) * cell
-      const z = minZ + (j + 0.5) * cell
-      const idx = j * w + i
-      const gh = island.groundHeight(x, z)
-      if (gh < WATER.level + 0.05) continue
-      ray.origin.x = x
-      ray.origin.y = gh + 2.2
-      ray.origin.z = z
-      const hit = world.castRay(ray, 3, true, flags)
-      const fy = hit ? gh + 2.2 - (hit.timeOfImpact ?? hit.toi) : gh
-      if (fy - gh > 0.7) continue
-      floor[idx] = fy
-      const c = world.intersectionWithShape({ x, y: fy + 0.5 + 0.55, z }, rot, box, flags)
-      if (!c) walk[idx] = 1
-    }
+  const rays = island.navProbe === 'rays'
+  for (let i = 0; i < w; i++) {
+    const x = minX + (i + 0.5) * cell
+    const z = minZ + (j + 0.5) * cell
+    const idx = j * w + i
+    const gh = island.groundHeight(x, z)
+    if (gh < WATER.level + 0.05) continue
+    r.origin.x = x
+    r.origin.y = gh + 2.2
+    r.origin.z = z
+    const hit = world.castRay(r, 3, true, flags)
+    const fy = hit ? gh + 2.2 - (hit.timeOfImpact ?? hit.toi) : gh
+    if (fy - gh > 0.7) continue
+    floor[idx] = fy
+    if (rays) {
+      // Anything between 0.45 and 2 m above the floor over the box's footprint blocks the cell.
+      let blocked = false
+      for (let k = 0; k < 5 && !blocked; k++) {
+        r.origin.x = x + (k === 1 ? 0.34 : k === 2 ? -0.34 : 0)
+        r.origin.z = z + (k === 3 ? 0.34 : k === 4 ? -0.34 : 0)
+        r.origin.y = fy + 2
+        blocked = !!world.castRay(r, 1.55, true, flags)
+      }
+      if (!blocked) walk[idx] = 1
+    } else if (!world.intersectionWithShape({ x, y: fy + 0.5 + 0.55, z }, rot, box, flags)) walk[idx] = 1
   }
+}
 
-  const nav = { w, h, cell, minX, minZ, walk, floor, comp, main: -1 }
+export function buildNav(island) {
+  const nav = setup(island)
+  world.step() // make sure the query pipeline sees every collider
+  for (let j = 0; j < nav.h; j++) rasterRow(island, nav, j)
+  return finishNav(nav)
+}
+
+// The same grid built a few rows at a time (about `budget` ms per slice, one slice per macrotask: nextTask.js), so a
+// big world's grid does not freeze the lobby. Before each slice `enter()` makes the world's colliders
+// the active ones (the physics world is shared) and `leave()` puts the previous state back; while
+// `pause()` is true (a round or the test range is running) it waits.
+export async function buildNavAsync(island, { budget = 8, enter = () => {}, leave = () => {}, pause = () => false } = {}) {
+  const nav = setup(island)
+  let j = 0
+  while (j < nav.h) {
+    while (pause()) await new Promise((r) => setTimeout(r, 400))
+    enter()
+    world.step()
+    const t0 = performance.now()
+    while (j < nav.h && performance.now() - t0 < budget) rasterRow(island, nav, j++)
+    leave()
+    await nextTask()
+  }
+  return finishNav(nav)
+}
+
+function finishNav(nav) {
+  const { w, h, walk, comp } = nav
   const nb = [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]]
   nav.nb = nb
 

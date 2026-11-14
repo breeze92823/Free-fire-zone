@@ -267,6 +267,7 @@ Returned object:
 | `addLamp(x, y, z, bulbMaterial)` | Adds a point light, re-applies the blend, returns the light. No removal. Called by `world/index.js` for the highest-priority lamps (16, or 8 when detail < 0.5, or `maxLamps`). |
 | `isNight()` | `target === 1`. |
 | `setMoods({ day, night })` | Swaps both slots, `apply()`, re-bakes the environment. No-op when both objects are identical (by reference) to the current ones. |
+| `setLampsOn(lights, on)` | Switches lamps (lights returned by `addLamp`) on or off: off = intensity 0, the light stays in the scene, so the light count and the shaders do not change. `main.js activateWorld` mutes Coral Key's lamps while Dustline Ridge is active. |
 | `toggleDayNight()` | Flips `target`; the blend then runs in `update`. Dev harness only. |
 | `setShadows(preset)` | `castShadow`, shadow map size (disposes the old map), shadow box range. Toggling `castShadow` changes every material's shader: `main.applyGraphics` only does that between rounds. |
 | `setShadowsActive(on)` | Shadows off/on without a shader change: `sun.shadow.intensity` 0/1 and `renderer.shadowMap.autoUpdate` (the shadow pass is skipped). Used when the graphics drop mid-round. |
@@ -490,7 +491,6 @@ Dead code and unused exports (no importer found under `src/`):
 
 Stale comments in the files:
 - `postfx.js` header mentions "neon lane rails, the waterfall, the VIP gate" (not this game).
-- `lighting.js` says "Lamps (none placed right now)" although `world/index.js` adds them, and the `setMoods` comment refers to `WORLDS`, which does not exist.
 - `physics.js` `segmentClear` comment mentions "crates, balls".
 - `main.js` says the FPS readout is in the bottom-right corner; its CSS places it bottom-left.
 - config.js says "the rest of src/ holds no theme values", but these modules contain tuning constants of their own (scope eye heights 1.58 / 1.3, spectate shoulder 0.3, the 15 m snap distance, recoil and shake factors in `camera.js`; sky radius 500, sun distance 90 and shadow biases in `lighting.js`; the -2 and -6 m/s thresholds in `player.js`; the cloud layout in `world.js`).

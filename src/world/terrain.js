@@ -3,7 +3,7 @@
 // weights, and collided as a Rapier trimesh of the same triangles
 // (groundHeight() interpolates the identical triangles). Also the shallow-water
 // rim, the animated foam line and the invisible boundary fence.
-import { BufferAttribute, BufferGeometry, DoubleSide, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector2 } from 'three'
+import { BufferAttribute, BufferGeometry, DoubleSide, Mesh, MeshBasicMaterial, MeshStandardMaterial, Vector2, Vector3 } from 'three'
 import { WATER } from '../config.js'
 import { paintRock, toTexture } from '../textures.js'
 import { ribbonGeo, staticBox, staticTris } from './geom.js'
@@ -38,6 +38,37 @@ export function groundHeight(x, z) {
 
 function noise2(x, z) {
   return 0.5 + 0.25 * Math.sin(x * 0.045 + 0.7) * Math.cos(z * 0.052 + 1.1) + 0.15 * Math.sin(x * 0.11 - z * 0.08 + 0.3) + 0.1 * Math.sin(z * 0.17 + x * 0.02)
+}
+
+// The terrain material: per-vertex weights (attribute aW: grass, sand, rock, dirt) blend four
+// world-space textures. Every world uses this one shader program (same source and cache key);
+// only the textures and the rock tint (a grey-scaled rock times `rockTint`) differ.
+export function terrainMaterial({ grass, sand, rock, dirt, rockTint = [1.18, 1.2, 1.28] }) {
+  const mat = new MeshStandardMaterial({ roughness: 0.95, metalness: 0, vertexColors: true })
+  mat.name = 'terrain'
+  mat.onBeforeCompile = (s) => {
+    s.uniforms.tGrass = { value: grass }
+    s.uniforms.tSand = { value: sand }
+    s.uniforms.tRock = { value: rock }
+    s.uniforms.tDirt = { value: dirt }
+    s.uniforms.rockTint = { value: new Vector3(...rockTint) }
+    s.vertexShader = 'attribute vec4 aW;\nvarying vec4 vW;\nvarying vec2 vXZ;\n' + s.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvW = aW;\nvXZ = position.xz;')
+    s.fragmentShader =
+      'uniform sampler2D tGrass;\nuniform sampler2D tSand;\nuniform sampler2D tRock;\nuniform sampler2D tDirt;\nuniform vec3 rockTint;\nvarying vec4 vW;\nvarying vec2 vXZ;\n' +
+      s.fragmentShader.replace(
+        '#include <map_fragment>',
+        `vec3 g1 = texture2D(tGrass, vXZ / 5.5).rgb;
+         vec3 g2 = texture2D(tGrass, vXZ / 15.0 + vec2(0.37, 0.71)).rgb;
+         vec3 gr = mix(g1, g2, 0.4);
+         vec3 sa = texture2D(tSand, vXZ / 5.0).rgb;
+         vec3 ro0 = texture2D(tRock, vXZ / 6.0).rgb;
+         vec3 ro = vec3(dot(ro0, vec3(0.34, 0.33, 0.33))) * rockTint;
+         vec3 di = texture2D(tDirt, vXZ / 4.0).rgb;
+         diffuseColor.rgb *= gr * vW.x + sa * vW.y + ro * vW.z + di * vW.w;`,
+      )
+  }
+  mat.customProgramCacheKey = () => 'islandTerrain'
+  return mat
 }
 
 export function buildTerrain(scene) {
@@ -106,33 +137,12 @@ export function buildTerrain(scene) {
   g.setIndex(new BufferAttribute(new Uint32Array(idx), 1))
   g.computeBoundingSphere()
 
-  const tGrass = toTexture(paintGrassTop().color, { srgb: true })
-  const tSand = toTexture(paintBeachSand().color, { srgb: true })
-  const tRock = toTexture(paintRock(256).color, { srgb: true })
-  const tDirt = toTexture(paintSoil(256, 4242, 0).color, { srgb: true })
-  const mat = new MeshStandardMaterial({ roughness: 0.95, metalness: 0, vertexColors: true })
-  mat.name = 'terrain'
-  mat.onBeforeCompile = (s) => {
-    s.uniforms.tGrass = { value: tGrass }
-    s.uniforms.tSand = { value: tSand }
-    s.uniforms.tRock = { value: tRock }
-    s.uniforms.tDirt = { value: tDirt }
-    s.vertexShader = 'attribute vec4 aW;\nvarying vec4 vW;\nvarying vec2 vXZ;\n' + s.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvW = aW;\nvXZ = position.xz;')
-    s.fragmentShader =
-      'uniform sampler2D tGrass;\nuniform sampler2D tSand;\nuniform sampler2D tRock;\nuniform sampler2D tDirt;\nvarying vec4 vW;\nvarying vec2 vXZ;\n' +
-      s.fragmentShader.replace(
-        '#include <map_fragment>',
-        `vec3 g1 = texture2D(tGrass, vXZ / 5.5).rgb;
-         vec3 g2 = texture2D(tGrass, vXZ / 15.0 + vec2(0.37, 0.71)).rgb;
-         vec3 gr = mix(g1, g2, 0.4);
-         vec3 sa = texture2D(tSand, vXZ / 5.0).rgb;
-         vec3 ro0 = texture2D(tRock, vXZ / 6.0).rgb;
-         vec3 ro = vec3(dot(ro0, vec3(0.34, 0.33, 0.33))) * vec3(1.18, 1.2, 1.28);
-         vec3 di = texture2D(tDirt, vXZ / 4.0).rgb;
-         diffuseColor.rgb *= gr * vW.x + sa * vW.y + ro * vW.z + di * vW.w;`,
-      )
-  }
-  mat.customProgramCacheKey = () => 'islandTerrain'
+  const mat = terrainMaterial({
+    grass: toTexture(paintGrassTop().color, { srgb: true }),
+    sand: toTexture(paintBeachSand().color, { srgb: true }),
+    rock: toTexture(paintRock(256).color, { srgb: true }),
+    dirt: toTexture(paintSoil(256, 4242, 0).color, { srgb: true }),
+  })
   const mesh = new Mesh(g, mat)
   mesh.name = 'terrain'
   mesh.receiveShadow = true
@@ -148,19 +158,20 @@ export function buildTerrain(scene) {
 }
 
 // Shoreline loop (waterline radius) as [x, z] points, `n` samples, closed.
-function shoreLoop(n = 360, offset = 0) {
+function shoreLoop(n = 360, offset = 0, shore = shoreR) {
   const pts = []
   for (let k = 0; k <= n; k++) {
     const a = (k / n) * Math.PI * 2
-    const r = shoreR(a) + offset
+    const r = shore(a) + offset
     pts.push([Math.cos(a) * r, Math.sin(a) * r])
   }
   return pts
 }
 
-// Shallow-water rim and the foam line. Returns an update(elapsed) for the foam.
-export function buildShore(scene) {
-  const pts = shoreLoop(360)
+// Shallow-water rim and the foam line along a waterline `shore(a)` (Coral Key's by default).
+// Returns an update(elapsed) for the foam.
+export function buildShore(scene, shore = shoreR, samples = 360) {
+  const pts = shoreLoop(samples, 0, shore)
   // shallow rim: lighter turquoise fading out to sea
   const band = ribbonGeo(pts, -3, 22, WATER.level + 0.035)
   const uv = band.attributes.uv

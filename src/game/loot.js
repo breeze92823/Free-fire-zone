@@ -25,7 +25,7 @@ import {
   DoubleSide,
 } from 'three'
 import { ITEMS, LOOT } from '../config.js'
-import { solidBox } from '../propkit.js'
+import { RAPIER, addFixed, world } from '../physics.js'
 import { sfx } from '../audio/index.js'
 import { G, emit } from './state.js'
 import * as fx from './fx.js'
@@ -106,21 +106,27 @@ function crateParts() {
   }
 }
 
-const crates = []
+// One crate set per world (worlds.js): the active world's set is the one in play. Its crate index is
+// the index the server knows (`open { c }`), so each world's list keeps its own order.
+const sets = new Map() // world id -> { crates, meshes, iconMesh, colliders }
+let crates = [] // the active set's crates
 let parts = null
 let meshes = []
 let iconMesh = null
 let H = 0.62
 let D = 0.75
 const lidLocal = new Matrix4()
+let def = null
 
-export function buildLoot(scene, spots) {
-  const def = crateParts()
+// Builds the crates of world `id` at `spots`; the first set built becomes the active one.
+export function buildLoot(scene, spots, id = 'coral') {
+  def ??= crateParts()
   H = def.H
   D = def.D
   parts = def.parts
   const n = spots.length
-  meshes = parts.map(([geo, mat]) => {
+  const set = { crates: [], colliders: [], meshes: null, iconMesh: null }
+  set.meshes = parts.map(([geo, mat]) => {
     const im = new InstancedMesh(geo, mat, n)
     im.castShadow = true
     im.receiveShadow = true
@@ -129,17 +135,51 @@ export function buildLoot(scene, spots) {
     return im
   })
   // Floating holographic icon above closed crates.
-  iconMesh = new InstancedMesh(new OctahedronGeometry(0.16, 0), new MeshStandardMaterial({ color: '#9ff6ff', emissive: '#33e0ff', emissiveIntensity: 2.6, transparent: true, opacity: 0.9 }), n)
-  iconMesh.instanceMatrix.setUsage(DynamicDrawUsage)
-  scene.add(iconMesh)
+  set.iconMesh = new InstancedMesh(new OctahedronGeometry(0.16, 0), new MeshStandardMaterial({ color: '#9ff6ff', emissive: '#33e0ff', emissiveIntensity: 2.6, transparent: true, opacity: 0.9 }), n)
+  set.iconMesh.instanceMatrix.setUsage(DynamicDrawUsage)
+  scene.add(set.iconMesh)
   spots.forEach((s, i) => {
     // The same yaw on every client (the collider turns with it): from the spot's position.
     const yaw = s.yaw ?? spotYaw(s.x, s.z)
     const c = { i, pos: new Vector3(s.x, s.y, s.z), yaw, open: 0, opened: false, refillAt: 0, phase: Math.random() * 6 }
-    crates.push(c)
-    solidBox(def.W / 2, H / 2, D / 2, s.x, s.y + H / 2, s.z, yaw)
+    set.crates.push(c)
+    const q = { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) }
+    set.colliders.push(addFixed(RAPIER.ColliderDesc.cuboid(def.W / 2, H / 2, D / 2), { x: s.x, y: s.y + H / 2, z: s.z }, q))
   })
+  sets.set(id, set)
+  const first = sets.size === 1
+  showSet(set, first)
+  if (first) useLoot(id)
+  else {
+    // drawn once so the instance matrices are valid when it is switched on
+    const keep = [crates, meshes, iconMesh]
+    ;[crates, meshes, iconMesh] = [set.crates, set.meshes, set.iconMesh]
+    for (const c of crates) writeCrate(c, 0)
+    for (const m of meshes) m.instanceMatrix.needsUpdate = true
+    iconMesh.instanceMatrix.needsUpdate = true
+    ;[crates, meshes, iconMesh] = keep
+  }
+}
+
+function showSet(set, on) {
+  for (const m of set.meshes) m.visible = on
+  set.iconMesh.visible = on
+  for (const c of set.colliders) if (world.getCollider(c.handle)) c.setEnabled(on)
+}
+
+// Makes world `id`'s crates the ones in play (visible, solid, used by crateNear / markOpened).
+export function useLoot(id) {
+  const set = sets.get(id)
+  if (!set) return false
+  for (const [k, other] of sets) if (k !== id) showSet(other, false)
+  showSet(set, true)
+  crates = set.crates
+  meshes = set.meshes
+  iconMesh = set.iconMesh
   for (const c of crates) writeCrate(c, 0)
+  for (const m of meshes) m.instanceMatrix.needsUpdate = true
+  iconMesh.instanceMatrix.needsUpdate = true
+  return true
 }
 
 function writeCrate(c, t) {

@@ -113,6 +113,7 @@ export async function buildIsland(scene, { lighting, preset = {}, maxLamps } = {
   await tick()
 
   // Point lights: the highest-priority lamps, spread out (>= 16 m apart).
+  const lamps = []
   if (lighting?.addLamp) {
     const picked = []
     lampCandidates.sort((a, b) => b.prio - a.prio)
@@ -120,13 +121,15 @@ export async function buildIsland(scene, { lighting, preset = {}, maxLamps } = {
       if (picked.length >= MAX_LAMPS) break
       if (picked.every((p) => Math.hypot(p.x - c.x, p.z - c.z) > 16)) picked.push(c)
     }
-    for (const p of picked) lighting.addLamp(p.x, p.y, p.z, M.bulb)
+    for (const p of picked) lamps.push(lighting.addLamp(p.x, p.y, p.z, M.bulb))
   }
 
   const landmarks = Object.values(DISTRICTS).map((d) => ({ name: d.name, x: d.x, z: d.z }))
   const ripple = M.water.userData.ripple
   const flagTime = M.flag.userData.time
+  let active = true
   return {
+    id: 'coral',
     root,
     timings,
     colliders: colliders.length,
@@ -136,6 +139,16 @@ export async function buildIsland(scene, { lighting, preset = {}, maxLamps } = {
     lootSpots,
     spawnAreas: { blue: { ...SPAWNS.blue }, orange: { ...SPAWNS.orange } },
     landmarks,
+    lamps,
+    // Shown with its colliders on (the round's world), or hidden with them off (worlds.js).
+    setActive(on) {
+      if (on === active) return
+      active = on
+      root.visible = on
+      for (const c of colliders) if (world.getCollider(c.handle)) c.setEnabled(on)
+      if (lamps.length) lighting?.setLampsOn?.(lamps, on)
+    },
+    isActive: () => active,
     // Remove the island from the scene and the physics world (lamps added via
     // lighting.addLamp stay: lighting.js has no removal hook).
     dispose() {

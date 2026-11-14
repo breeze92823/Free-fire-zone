@@ -128,15 +128,21 @@ export function createLighting(scene, renderer, preset) {
     bakedAt = night
   }
 
-  // --- Lamps (none placed right now) ---
-  const lamps = [] // { light, bulb }
+  // --- Lamps (Coral Key's street lamps: world/index.js) ---
+  const lamps = [] // { light, bulb, on }
   function addLamp(x, y, z, bulbMaterial) {
     const light = new PointLight(LIGHT.lampColor, 0, LIGHT.lampDistance, 2)
     light.position.set(x, y, z)
     scene.add(light)
-    lamps.push({ light, bulb: bulbMaterial })
+    lamps.push({ light, bulb: bulbMaterial, on: true })
     apply()
     return light
+  }
+  // Switch lamps (lights returned by addLamp) on or off. Off = intensity 0: the light stays in the
+  // scene, so the light count (and every shader) is unchanged. Used when another world is active.
+  function setLampsOn(lights, on) {
+    for (const lamp of lamps) if (lights.includes(lamp.light)) lamp.on = on
+    apply()
   }
 
   // --- Day/night blend ---
@@ -170,7 +176,7 @@ export function createLighting(scene, renderer, preset) {
     skyMaterial.uniforms.sunDir.value.copy(dir)
     const lampLevel = lerp(D.lampIntensity, N.lampIntensity, t)
     for (const lamp of lamps) {
-      lamp.light.intensity = lampLevel
+      lamp.light.intensity = lamp.on ? lampLevel : 0
       lamp.bulb.emissiveIntensity = 0.3 + (lampLevel / N.lampIntensity) * 3
     }
   }
@@ -181,6 +187,7 @@ export function createLighting(scene, renderer, preset) {
   return {
     sun,
     addLamp,
+    setLampsOn,
     isNight: () => target === 1,
     // A world's sky { day, night } (WORLDS): swapped at once, keeping day or night as it is.
     setMoods(sky) {

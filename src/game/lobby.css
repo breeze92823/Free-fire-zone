@@ -898,8 +898,32 @@
 .mv-maps {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4.4cqw;
+  grid-template-columns: repeat(var(--n, 3), 1fr);
+  gap: calc(13.2cqw / var(--n, 3));
+}
+/* Four or more maps on a narrow panel (portrait phones): two per row, so the cards stay big enough to read. */
+@container (max-width: 480px) {
+  .mv-maps.many {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 4.4cqw;
+  }
+  .mv-maps.many .mv-card .nm {
+    font-size: max(4.2cqw, 12px);
+  }
+}
+/* A corner badge on a map card (MAPS[i].tag, e.g. BIG MAP). */
+.mv-card .tag {
+  position: absolute;
+  top: 5%;
+  left: 5%;
+  padding: 0.25em 0.55em;
+  font-size: max(1.9cqw, 10px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #2a1a06;
+  background: linear-gradient(180deg, #ffe08a, #f2b84a);
+  border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 .mv-card {
   position: relative;

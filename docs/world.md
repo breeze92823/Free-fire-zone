@@ -1,6 +1,6 @@
 # World: the island (`src/world/`)
 
-Reference for everything under `src/world/` plus the dev harness `world-test.html`. The island ("Coral Key") is fully procedural: terrain, shore, roads, eight districts, vegetation, the boundary fence and all static physics are generated at load by `buildIsland`. Nothing here is loaded from a file.
+Reference for everything under `src/world/` plus the dev harness `world-test.html`. Sections 1 to 7 are Coral Key; section 8 is the second, larger world, Dustline Ridge (`src/world/ridge/`). The island ("Coral Key") is fully procedural: terrain, shore, roads, eight districts, vegetation, the boundary fence and all static physics are generated at load by `buildIsland`. Nothing here is loaded from a file.
 
 Written from a full read of the code. Numbers such as the loot-spot count are derived by reading, not measured at runtime, unless stated.
 
@@ -391,7 +391,7 @@ With the current candidates the 16 light slots are filled by the priority-3 plaz
 4. Register loot (`ctx.loot`), lamps (`ctx.lamp`) and animations (`ctx.anim`).
 5. Connect it: a `ROADS` entry and/or a `DIRT_PATHS` entry (5.7).
 6. Check the hand-placed lists in `fields.js scatter` (`walls`, `clumps`, logs): `walls` entries are not tested against `isFree` and will be built through your district.
-7. If it should be a votable map, that is outside this folder: `MAPS` in `src/config.js` and `MAP_FOCUS` in the backend's `rules.ts`.
+7. If it should be a votable map, that is outside this folder: `MAPS` in `src/config.js` and `MAPS` in the backend's `rules.ts` (same `world` and `focus`, same index).
 8. Test (5.9): jump to it, walk through every door and stair with `walkTest`, compare `probe` against expected floor heights.
 
 ### 5.2 Add a prop or building to a district
@@ -430,7 +430,7 @@ With the current candidates the 16 light slots are filled by the priority-3 plaz
 | Old Farm | Rectangles passed to `barn`, `silo`, `cropField`, `windmill` and the prop coordinates in `farm.js`; `occupy`; `DIRT_RECTS`, `DIRT_PATHS[1]`; `ROADS.farmTrack`; `FLAT_RECTS[4]` |
 | Lookout | `DISTRICTS.lookout` and the first Gaussian in `hills` (the hill must stay under the tower); `DIRT_PATHS[0]` |
 
-If the district is a votable map, also update `MAPS[].focus` (`src/config.js`) and `MAP_FOCUS` (backend).
+If the district is a votable map, also update `MAPS[].focus` (`src/config.js`) and `MAPS[].focus` in the backend's `rules.ts`.
 
 ### 5.6 Change terrain height or shape
 
@@ -439,7 +439,7 @@ If the district is a votable map, also update `MAPS[].focus` (`src/config.js`) a
 - Flatten an area: `FLAT_RECTS` / `FLAT_CIRCLES`.
 - Ground colour: `DIRT_PATHS` / `DIRT_RECTS`; sand, rock and grass follow from the shape automatically.
 - The mesh, the collider and `groundHeight` all derive from `terrainHeight` sampled every 2 m, so features narrower than about 4 m are lost. Districts drawn at fixed heights must stay inside flat zones. Slopes above 50 deg are not walkable.
-- If the island grows, also check `EXTENT` (160), `bounds` (150), the returned `radius` and the backend's `ISLAND_RADIUS`.
+- If the island grows, also check `EXTENT` (160), `bounds` (150), the returned `radius`, `WORLDS.coral.radius` in `src/config.js` and the backend's `ISLAND_RADIUS`.
 
 ### 5.7 Add a road
 
@@ -510,8 +510,8 @@ Mirrored outside this folder:
 
 | Here | Elsewhere |
 |---|---|
-| `radius: 125` in `buildIsland`'s return | Backend `ISLAND_RADIUS = 125` (`rules.ts`), client fallback in `game/zone.js` |
-| `DISTRICTS.villa / farm / dock` positions | `MAPS[].focus` in `src/config.js` and `MAP_FOCUS` in the backend (same order) |
+| `radius: 125` in `buildIsland`'s return | `WORLDS.coral.radius` in `src/config.js` (what `game/zone.js` uses) and backend `ISLAND_RADIUS = 125` (`rules.ts WORLDS.coral`) |
+| `DISTRICTS.villa / farm / dock` positions | `MAPS[].focus` in `src/config.js` and `MAPS[].focus` in the backend's `rules.ts` (same order) |
 | `lootSpots.length` (52) | Backend `LOOT.crates = 200` upper bound for crate indexes |
 | Capsule and controller numbers in `devview.js` | `PLAYER_DIMS` and `PHYSICS` in `src/config.js` (hard-coded copies) |
 | `WATER.level` | Imported from `src/config.js` by `terrain.js`; `layout.js` hard-codes the matching `-0.6` shore profile |
@@ -576,3 +576,39 @@ Behaviour worth a second look:
 - `maple.js houseA` passes `chimney` to `gableRoof` and also calls `chimney()` at the same spot (a lower stack inside the house plus the roof stack); looks intentional.
 - Lamp selection gives every light slot to priority 2 and 3 candidates, so the spoke, villa-avenue and pier lamps registered with priority 1 never receive a point light at the current cap.
 - Nothing in `src/world/` touches currency or purchases; the brand names on signs and posters (FIZZ COLA, ZOOM ENERGY, CAFE AROMA, OCEANIX, BLUWAVE) are invented, consistent with `CLAUDE.md`.
+
+## 8. Dustline Ridge (`src/world/ridge/`)
+
+The second world: a big arid island (about 520 m across, ~4x Coral Key's area) made for driving: long dirt roads, rolling dunes, rock ridges with passes, a mesa, a quarry pit and a dry canyon. Built after Coral Key (it reuses Coral Key's material set `M`, the building kit and the shared terrain shader), at the same coordinates, hidden with its colliders off until `main.js activateWorld('ridge')` (README section 4.1). Voted as the map `Dustline Ridge` (`MAPS[3]`, mood `desert`, tag BIG MAP).
+
+| File | Role |
+|---|---|
+| `layout.js` | Pure maths: `EXTENT` 300, `CELL` 2.5, `BOUNDS` ±285, `RADIUS` 250 (the zone's land radius = `WORLDS.ridge.radius` = backend `rules.ts`), outline `shoreR` (`CTRL` every 30 deg), `BEACH` 14 / `BLUFF` 34 / `PLATEAU` 4.5, `PLACES`, `SPAWNS`, `ROADS` (dirt tracks painted into the terrain and levelled), `FLAT_RECTS` / `FLAT_CIRCLES`, `RIDGES`, `MESA`, `QUARRY`, `CREEK`, `terrainHeight`, `paintWeights`, its own occupancy (`occupy`, `isFree`) |
+| `terrain.js` | `buildRidgeTerrain(root)` (async, sliced): the height grid, the mesh with `terrainMaterial` from `../terrain.js` (dry-grass, sand, red rock, soil textures; same shader program as Coral Key), the trimesh collider, `groundHeight`; `buildRidgeFence()` (invisible boxes 5 m into the shallows) |
+| `places.js` | The places, each `build(ctx)` with the kit: `town`, `camp(ctx, 'west' / 'east')`, `quarry`, `mesa`, `depot`, `mills`, `roadside` (cover along the roads + the wild scatter) |
+| `index.js` | `buildRidge(scene, { preset })`: root group `ridge` (hidden), terrain, shore (`buildShore(root, shoreR, 480)`), fence, places, nature (`createNature({ rockTint })`), `flushColliders()` then every collider `setEnabled(false)`. Returns the `buildIsland` API plus `id`, `setActive(on)`, `isActive()`, `navCell` 2, `navProbe: 'rays'`, `lamps: []` |
+
+Places (`PLACES`, +X east, -Z north):
+
+| Place | Centre | What is there |
+|---|---|---|
+| Dustline Town | 0, 0 | 13 adobe shops in rows along the main road (doors on the street side, windows, flat roofs) and the General Store; three of them have outside stairs, a landing and a railed roof; a water tower; a gas-station canopy; wrecks and crates on the road |
+| West Camp (blue start) | -165, 15 | Concrete apron, an open **vehicle bay** facing the town (16 x 9 m, bay lines: vehicles park here in a later milestone), containers, sandbag lines, a watchtower outside the back fence, the blue flag |
+| East Camp (orange start) | 165, -15 | The same, mirrored, orange |
+| Red Quarry | 34, -158 | A pit 3.9 m deep with a ramp toward the road (south-west), rock piles, a conveyor up the north wall, a site office, containers |
+| Radio Mesa | -46, 158 | A table 11 m above the plateau, steep all round except a long slope facing east-north-east (the road climbs it); a lattice mast, a bunker, a sandbag ring |
+| Fuel Depot | 138, 128 | Three tanks, a pipe rack, an open warehouse, containers and barrels |
+| Windmill Flats | -140, -128 | Four windmills (rotors spun by `ctx.anim`), a farmhouse, hay, fence posts |
+| Dry Creek | label 168, 74 | A canyon 3.8 m deep in the south-east, forded where a road crosses it, fading out before the coast (it never lets the sea in) |
+
+Roads (`ROADS`): `main` (camp to camp through the town, half-width 5), `ring` (r 92 round the town), `loop` (r 196, the outer loop), and tracks to the quarry, the mesa, the depot, the windmills and from each camp. Terrain within ~16 m of a road is levelled (dunes removed, ridges cut to passes); roads are painted with the dirt channel (no ribbons, so nothing floats or clips on slopes).
+
+Spawns: `SPAWNS.blue` (-168, 15) and `SPAWNS.orange` (168, -15), r 14, about 330 m apart. Loot: 60 crates (town 19, camps 2 x 5, quarry 5, mesa 5, depot 6, mills 4, roadside 11).
+
+Gotchas:
+
+- Coral Key must be built first (`M`, the kit's materials). The two worlds share the collider grid of `geom.js` (`flushColliders` empties it), so two builds must never interleave.
+- Everything is placed from the seeded `ctx.rand` (mulberry32 9137) and fixed coordinates, so the crate order (the wire index) and the colliders match on every client. Do not use `Math.random()` for anything with a collider or a crate.
+- The plateau (4.5 m) keeps the quarry floor (~0.6 m) and the creek bed above the sea (`WATER.level` -0.6); the quarry, mesa and creek are levelled pads so dunes cannot dig them below it.
+- Changing `RADIUS` or the zone plan means `config.js WORLDS.ridge` and backend `rules.ts WORLDS.ridge` together (backend `test/Zone.test.ts`).
+

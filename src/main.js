@@ -23,12 +23,13 @@ import { applyProportions } from './avatar/loader.js'
 import { PRIO } from './avatar/assets.js'
 import { disposeLook, lookFromJson, lookToJson, prewarmLook, streamLook } from './avatar/look.js'
 import { buildIsland } from './world/index.js'
+import { buildRidge } from './world/ridge/index.js'
 import { installAudio, setBreakMuted, setListener, setVolume, setDucked, sfx, spatial, updateAmbience } from './audio/index.js'
 import { hasEmoteClip, registerEmoteClip } from './avatar/animator.js'
 import { G, emit, on } from './game/state.js'
 import { initFx, setFxScale, updateFx } from './game/fx.js'
-import { buildLoot } from './game/loot.js'
-import { buildNav } from './game/navgrid.js'
+import { buildLoot, useLoot } from './game/loot.js'
+import { buildNav, buildNavAsync } from './game/navgrid.js'
 import { createMatch, initMatchSystems, spawnActor, teardownMatch, updateMatch } from './game/match.js'
 import { endTest, startTest, testStartPose, updateTest } from './game/testRange.js'
 import { bindKeys, interactPress, playEmote, updateController, useItem, useUlt, view } from './game/controller.js'
@@ -263,32 +264,119 @@ const world = createWorld(scene, preset) // the sea + clouds
 showLoading(true, 'Building the island', 0.25)
 bloxity.loadingStep('Building the island')
 await new Promise((r) => setTimeout(r, 0))
-const island = await buildIsland(scene, { lighting, preset })
+const island = await buildIsland(scene, { lighting, preset }) // Coral Key, the default world
 G.island = island
+G.world = 'coral'
+island.ready = true
 showLoading(true, 'Placing supplies', 0.6)
-buildLoot(scene, island.lootSpots)
+buildLoot(scene, island.lootSpots, 'coral')
 createPlayerBody()
 body.frozen = true
 resetPlayer({ x: island.spawnAreas.blue.x, y: island.groundHeight(island.spawnAreas.blue.x, island.spawnAreas.blue.z) + 0.1, z: island.spawnAreas.blue.z }, 0)
 showLoading(true, 'Mapping routes', 0.7)
 await new Promise((r) => setTimeout(r, 0))
-G.nav = buildNav(island)
+G.nav = island.nav = buildNav(island)
 initFx(scene, preset)
 initMatchSystems(scene)
 showLoading(true, 'Drawing the map', 0.8)
 const mapImg = renderMapImage(renderer, scene, lighting, island.bounds, island.landmarks)
+island.mapImg = mapImg
 const mapThumb = (() => {
   const c = document.createElement('canvas')
   c.width = c.height = 256
   c.getContext('2d').drawImage(mapImg.clean, 0, 0, 256, 256)
   return c.toDataURL('image/jpeg', 0.8)
 })()
-// The map vote's cards: each map's district in its own mood, rendered once.
+// The map vote's cards: each map's district in its own mood, rendered once. Maps on a world that is
+// not built yet (Dustline Ridge, built in the background after boot) show a plain card until it is.
 const mapShots = MAPS.map((m) => {
+  if (m.world !== 'coral') return placeholderShot(m)
   setMood(m)
   return renderMapShot(renderer, scene, lighting, m, island.groundHeight)
 })
 setMood(MAPS[0])
+
+// --- Worlds -------------------------------------------------------------------------------------------
+// Each map is played on a world (MAPS[i].world, WORLDS in config.js): Coral Key (built above) or
+// Dustline Ridge (src/world/ridge/, built in the background after boot). Both sit at the origin; only
+// the active one is shown and solid (setActive), with its own crates (useLoot), nav grid and map
+// picture. G.island is always the active world.
+const worlds = { coral: island }
+const worldJobs = {}
+const WORLD_BUILDERS = { ridge: () => buildRidge(scene, { preset: G.preset }) }
+// A card for a map whose world is not built yet: the map's tint over a dusk gradient.
+function placeholderShot(m) {
+  const c = document.createElement('canvas')
+  c.width = 360
+  c.height = 416
+  const g = c.getContext('2d')
+  const sky = g.createLinearGradient(0, 0, 0, 416)
+  sky.addColorStop(0, '#3b78c4')
+  sky.addColorStop(0.55, '#f1d7ae')
+  sky.addColorStop(1, m.tint || '#e0a35a')
+  g.fillStyle = sky
+  g.fillRect(0, 0, 360, 416)
+  g.fillStyle = 'rgba(120, 60, 30, 0.55)'
+  g.beginPath()
+  g.moveTo(0, 300)
+  for (const [x, y] of [[60, 250], [110, 250], [140, 280], [230, 280], [260, 230], [330, 230], [360, 270], [360, 416], [0, 416]]) g.lineTo(x, y)
+  g.fill()
+  return c.toDataURL('image/jpeg', 0.8)
+}
+// Shows world `id` (and hides the others) for the next round. Synchronous and cheap.
+function activateWorld(id) {
+  const w = worlds[id]
+  if (!w) return false
+  for (const k in worlds) worlds[k].setActive(k === id)
+  useLoot(id)
+  G.island = w
+  G.world = id
+  if (w.nav) G.nav = w.nav
+  if (w.mapImg) hud.setMapImage(w.mapImg)
+  return true
+}
+// Builds world `id` once (in the background: the builder yields between its stages), then, outside a
+// round, switches it on for a moment for its nav grid, map picture and vote cards. Resolves to the world.
+function loadWorld(id) {
+  if (worlds[id]?.ready) return Promise.resolve(worlds[id])
+  if (!WORLD_BUILDERS[id]) return Promise.resolve(null)
+  worldJobs[id] ??= (async () => {
+    const t0 = performance.now()
+    const w = await WORLD_BUILDERS[id]()
+    buildLoot(scene, w.lootSpots, id)
+    worlds[id] = w
+    const built = performance.now() - t0
+    // The nav grid, a few rows per macrotask with this world's colliders switched in for each slice
+    // (never during a round or the test range: those pause it).
+    const t1 = performance.now()
+    const busy = () => !!(G.match || G.test)
+    const was = G.world
+    w.nav = await buildNavAsync(w, { enter: () => activateWorld(id), leave: () => activateWorld(was), pause: busy })
+    const tNav = performance.now() - t1
+    // The pictures: one synchronous switch.
+    while (busy()) await new Promise((r) => setTimeout(r, 400))
+    const t2 = performance.now()
+    activateWorld(id)
+    const maps = MAPS.map((m, i) => [m, i]).filter(([m]) => m.world === id)
+    setMood(maps[0]?.[0] ?? MAPS[0])
+    w.mapImg = renderMapImage(renderer, scene, lighting, w.bounds, w.landmarks, 1536)
+    for (const [m, i] of maps) {
+      setMood(m)
+      mapShots[i] = renderMapShot(renderer, scene, lighting, m, w.groundHeight)
+    }
+    setMood(MAPS[0])
+    activateWorld(was)
+    w.ready = true
+    scheduleWarmup() // its textures and the forced draw, from the lobby
+    console.info(`[world] ${id}: built in ${Math.round(built)} ms (${JSON.stringify(w.timings)}), nav ${Math.round(tNav)} ms (sliced), pictures ${Math.round(performance.now() - t2)} ms, ${w.lootSpots.length} crates, ${w.colliders} colliders`)
+    return w
+  })().catch((err) => {
+    console.error(`[world] ${id} failed to build`, err)
+    delete worldJobs[id]
+    return null
+  })
+  return worldJobs[id]
+}
 
 // --- UI ------------------------------------------------------------------------------
 hud.init({
@@ -543,6 +631,7 @@ async function startMatchFlow() {
     }
   }
   lobby.status('')
+  loadWorld('ridge') // usually done already; a round there waits for it
   G.phase = 'queue'
   queuedAt = performance.now()
   send('play', { mode: profile.mode })
@@ -570,7 +659,15 @@ function queueInfo() {
 function enterRound() {
   const st = net.state
   const mine = me()
-  currentMap = MAPS[st.map] ?? MAPS[0]
+  const map = MAPS[st.map] ?? MAPS[0]
+  // The round's world must be built here first (Dustline Ridge builds in the background after boot).
+  if (!worlds[map.world]?.ready) {
+    loadWorld(map.world)
+    lobby.showQueue({ ...queueInfo(), loading: map.name })
+    return
+  }
+  activateWorld(map.world)
+  currentMap = map
   lobby.hideQueue()
   lobby.show(false)
   setMood(currentMap)
@@ -829,6 +926,7 @@ function enterTest(weaponId, grenadeId) {
   lobby.show(false)
   lobbyScene.releasePlayer()
   setMood(MAPS[0])
+  activateWorld('coral') // the range is out at sea off Coral Key
   G.test = true
   const name = bloxity.displayName() === 'Offline' ? 'You' : bloxity.displayName()
   const start = startTest({ weaponId, grenadeId, playerName: name, playerAvatar: avatar, playerPortrait: bloxity.getPfp() || portrait(playerOutfit), onExit: () => exitTest(true) })
@@ -1040,6 +1138,8 @@ prewarmHudIcons()
 showLoading(false)
 G.phase = 'lobby'
 lobby.show(true)
+// Dustline Ridge builds in the background once the lobby is up (or at once when PLAY is pressed).
+setTimeout(() => loadWorld('ridge'), 2500)
 bloxity.showAdScreen('lobby')
 setGameInput(false)
 setTouchActive(false)
@@ -1188,9 +1288,9 @@ function gameFrame(dt) {
   t = span()
   updateView()
   world.update(dt, clock.elapsedTime, camera.position)
-  island.update?.(dt, clock.elapsedTime)
+  G.island.update?.(dt, clock.elapsedTime)
   lighting.update(dt, focus)
-  const shore = Math.max(0, Math.min(1, (Math.hypot(focus.x, focus.z) - (island.radius - 35)) / 30))
+  const shore = Math.max(0, Math.min(1, (Math.hypot(focus.x, focus.z) - (G.island.radius - 35)) / 30))
   ambLevel += (1 - ambLevel) * Math.min(1, dt)
   updateAmbience(dt, ambLevel, shore)
   spanEnd('world', t)
@@ -1275,7 +1375,13 @@ window.addEventListener('beforeunload', () => {
 // Dev-only console hook.
 if (import.meta.env.DEV || location.search.includes('debug')) {
   window.__game = {
-    G, scene, renderer, camera, body, governor, applyGraphics, currentPreset, island, lobbyScene, WEAPONS, profile, sfx, inputState, setView, useItem, hud, combat,
+    G, scene, renderer, camera, body, governor, applyGraphics, currentPreset, lobbyScene, WEAPONS, profile, sfx, inputState, setView, useItem, hud, combat,
+    get island() {
+      return G.island
+    },
+    worlds,
+    loadWorld,
+    activateWorld,
     hitches, // frames over 50 ms with their slowest parts (prof.js); heap: allocation per frame + GC count
     heap,
     get avatar() {
@@ -1301,8 +1407,8 @@ if (import.meta.env.DEV || location.search.includes('debug')) {
     exitTest: () => exitTest(false),
     net,
     teleport: (x, z, facing = 0) => {
-      resetPlayer({ x, y: island.groundHeight(x, z) + 0.3, z }, facing)
-      if (G.player) G.player.pos.set(x, island.groundHeight(x, z), z)
+      resetPlayer({ x, y: G.island.groundHeight(x, z) + 0.3, z }, facing)
+      if (G.player) G.player.pos.set(x, G.island.groundHeight(x, z), z)
       setView(facing + Math.PI, CAMERA.startPitch)
       snapFollow()
     },

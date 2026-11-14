@@ -74,6 +74,22 @@ export const TIME_OF_DAY = {
     stars: 0.1,
     exposure: 1.0,
   },
+  // Dustline Ridge: a hot, hazy afternoon (sandy horizon and fog, warm sun, ochre bounce light).
+  desert: {
+    zenith: '#2a78d0',
+    horizon: '#f1d7ae',
+    sunColor: '#ffe6bf',
+    sunIntensity: 2.6,
+    sunElevation: 44,
+    sunAzimuth: 128,
+    hemiSky: '#fbe9cf',
+    hemiGround: '#c49a68',
+    hemiIntensity: 0.8,
+    envIntensity: 0.5,
+    lampIntensity: 0,
+    stars: 0,
+    exposure: 0.96,
+  },
   night: {
     zenith: '#050b22',
     horizon: '#24345e',
@@ -546,10 +562,13 @@ export const MATCH = {
 // The maps players vote for: a district of Coral Key at a time of day. The safe zone closes in on
 // `focus` (same planner + MAP_FOCUS on the server, same order); `shot` is the vote card's camera
 // (offset from focus: [x, y, z], fov) rendered once at boot.
+// `world` is the island it is played on (WORLDS); Dustline Ridge is its own, larger island (built in
+// the background after boot, src/world/ridge/), so its zone covers the whole of it.
 export const MAPS = [
-  { id: 'villa', name: 'THE VILLA', mood: 'day', tint: '#3fb6ff', focus: [0, 0], shot: [34, 30, 46, 50] },
-  { id: 'farm', name: 'Old Farm', mood: 'sunset', tint: '#ff9a3c', focus: [-66, 34], shot: [40, 42, 52, 52] },
-  { id: 'dock', name: 'Dockyard', mood: 'night', tint: '#5866ff', focus: [-98, -14], shot: [52, 30, 36, 52] },
+  { id: 'villa', world: 'coral', name: 'THE VILLA', mood: 'day', tint: '#3fb6ff', focus: [0, 0], shot: [34, 30, 46, 50] },
+  { id: 'farm', world: 'coral', name: 'Old Farm', mood: 'sunset', tint: '#ff9a3c', focus: [-66, 34], shot: [40, 42, 52, 52] },
+  { id: 'dock', world: 'coral', name: 'Dockyard', mood: 'night', tint: '#5866ff', focus: [-98, -14], shot: [52, 30, 36, 52] },
+  { id: 'ridge', world: 'ridge', name: 'Dustline Ridge', tag: 'BIG MAP', mood: 'desert', tint: '#e0a35a', focus: [0, 0], shot: [-60, 46, 84, 56] },
 ]
 
 // --- Safe zone ---------------------------------------------------------------------
@@ -564,6 +583,28 @@ export const ZONE = {
   damage: [4, 7, 11], // HP/s outside, per phase reached
   wallHeight: 90,
   color: '#7ec8ff',
+}
+
+// --- Worlds ------------------------------------------------------------------------
+// The islands a map can be played on. `radius`: the land the zone stays over (a circle never centres
+// further out than radius - 0.6 x its own radius); `zone`: that world's plan (start radius, phases,
+// damage; ZONE's wallHeight / color are shared). Mirrored by the backend's rules.ts WORLDS: the zone
+// planner runs on both sides from the same seed, so these numbers must match there.
+export const WORLDS = {
+  coral: { name: 'Coral Key', radius: 125, zone: ZONE },
+  ridge: {
+    name: 'Dustline Ridge',
+    radius: 250,
+    zone: {
+      start: 330, // covers the whole island
+      phases: [
+        { at: 30, shrink: 35, radius: 190 },
+        { at: 95, shrink: 35, radius: 115 },
+        { at: 160, shrink: 30, radius: 60 },
+      ],
+      damage: [4, 7, 11],
+    },
+  },
 }
 
 // --- Loot --------------------------------------------------------------------------

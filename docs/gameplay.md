@@ -48,8 +48,9 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 | `ITEMS` (`frostWall`, `frag`, `medkit`, `dash`) | `items.js`, `loot.js`, `match.js`, HUD | `rules.ts` `ITEMS` (frag damage / radius / fuse, medkit heal / time) |
 | `HEALTH` | `actor.js`, `controller.js`, HUD | `rules.ts` `HEALTH` (plus server-only `reviveRange`, `spawnProtection`) |
 | `MATCH_MODES`, `MATCH` (only `introFlyover` and `spawnSafeDistance` are read) | `match.js`, `main.js`, lobby | `rules.ts` `MODES`, `PHASES`, `STREAK_WINDOW` |
-| `MAPS` (`id`, `name`, `mood`, `tint`, `focus`, `shot`) | `main.js`, `mapimage.js`, lobby vote, `zone.js` | `rules.ts` `MAP_FOCUS` (same order) |
-| `ZONE` | `zone.js`, HUD | `rules.ts` `ZONE`, `ISLAND_RADIUS` |
+| `MAPS` (`id`, `world`, `name`, `tag`, `mood`, `tint`, `focus`, `shot`) | `main.js`, `mapimage.js`, lobby vote, `zone.js` | `rules.ts` `MAPS` (`world`, `focus`; same order) |
+| `ZONE` | `zone.js`, HUD (Coral Key's plan; `wallHeight`, `color` shared) | `rules.ts` `ZONE`, `ISLAND_RADIUS` |
+| `WORLDS` (`name`, `radius`, `zone`) | `zone.js` (the round's plan and land radius), `main.js` worlds | `rules.ts` `WORLDS` |
 | `LOOT` | `loot.js` | `rules.ts` `LOOT` |
 | `NAV` (`cell` 1.25 m) | `navgrid.js` | no |
 | `MISSIONS` (`daily`, `weekly`: `{ id, stat, goal, coins, gems }`; `text`: how each stat reads) | `save.js`, `lobby.js`, `results.js` | `progress.ts` `MISSIONS` (ids, goals, rewards) |
@@ -246,7 +247,7 @@ Rounds that fly (`WEAPONS[id].projectile`): crossbow bolts (gravity 9: they drop
 
 ## 8. Loot (`loot.js`)
 
-- `buildLoot(scene, island.lootSpots)` runs once at boot: every crate part is one `InstancedMesh` across all crates (plus a floating icon mesh), and each crate gets a static box collider (`propkit.solidBox`). The crate index `i` in that array is the id used on the wire, so the order of `island.lootSpots` must be identical on every client (it is deterministic from the island build).
+- `buildLoot(scene, spots, worldId)` runs once per world (Coral Key at boot, Dustline Ridge when it is built): every crate part is one `InstancedMesh` across that world's crates (plus a floating icon mesh), and each crate gets a static box collider (kept so it can be switched off). `useLoot(worldId)` makes a world's set the one in play (visible, solid, the `crates` that `crateNear` / `markOpened` / `syncCrates` / `allCrates` use) and hides the others; `main.js activateWorld` calls it. The crate index `i` in a world's list is the id used on the wire, so the order of that world's `lootSpots` must be identical on every client (it is deterministic from its build).
 - `crateNear(actor)` returns the closest unopened crate within `LOOT.interactRange`, or a landed drop.
 - `openCrate(actor, c)` marks it open locally, sends `open { c: index }` or `open { d: dropId }`, and calls `grant`: ammo for both guns (2 mags, 4 for a drop, capped at twice the base reserve), then one random utility (35% medkit, 25% +2 walls, 20% frag, 20% +20 ability charge); a drop gives +3 frags, +3 walls, +2 medkits and a full ability. Armour is rolled by the server and arrives through the synced `vest` / `helmet` fields.
 - Server sync: `markOpened(c, d)` for the `opened` broadcast, `syncCrates(map)` on entering a round (`net.state.crates`: index -> refill time), `syncDrops(list)` every frame (`net.state.drops`: spawns unseen drops with their age, marks opened ones).
@@ -255,9 +256,9 @@ Rounds that fly (`WEAPONS[id].projectile`): crossbow bolts (gravity 9: they drop
 
 ## 9. Safe zone (`zone.js`)
 
-`createZone(scene)` returns `{ state, reset(seed, focus), info(t), outside(x, z, margin), distanceInside(x, z), update(t, dt), setVisible(on) }`. `state` = `{ center (Vector2: x, y = world x, z), radius, from, fromR, next, nextR, phase, shrinking, damage }`.
+`createZone(scene)` returns `{ state, reset(seed, focus, world), info(t), outside(x, z, margin), distanceInside(x, z), update(t, dt), setVisible(on) }`. `state` = `{ center (Vector2: x, y = world x, z), radius, from, fromR, next, nextR, phase, shrinking, damage }`.
 
-The circles are deterministic: `reset(seed, focus)` seeds `mulberry32` with the server's `zoneSeed`; `planNext(i)` draws exactly two random numbers per phase (angle, then distance), aims at the voted map's `focus` with jitter, never leaves the previous circle (85% of the slack), and keeps the centre within `island.radius - radius * 0.6`. The server's `zone.ts` runs the same planner for zone damage. Any change to the number or order of `rand()` calls, to `ZONE`, to the island radius (125) or to a map's `focus` must be made on both sides.
+The circles are deterministic: `reset(seed, focus, world)` seeds `mulberry32` with the server's `zoneSeed` and takes the plan (`start`, `phases`, `damage`) and land radius of `WORLDS[world]` (Coral Key: `ZONE`, 125 m; Dustline Ridge: start 330 m, phases to 190 / 115 / 60 m, 250 m); `planNext(i)` draws exactly two random numbers per phase (angle, then distance), aims at the voted map's `focus` with jitter, never leaves the previous circle (85% of the slack), and keeps the centre within `land radius - circle radius * 0.6`. The wall is hidden while the circle is at its start size. The server's `zone.ts` runs the same planner for zone damage. Any change to the number or order of `rand()` calls, to `WORLDS` / `ZONE`, to a world's radius or to a map's `focus` must be made on both sides.
 
 `update(t, dt)` advances phases from the round clock `G.time`, so a late joiner gets the right circle by replaying from the seed (`createMatch` calls `zone.update(G.time, 0)`; note that a join after phase 1 has finished only replays one step per frame, which catches up within a few frames).
 
@@ -306,7 +307,7 @@ Everything is pooled at `initFx(scene, preset)`; nothing allocates per shot and 
 
 ## 13. Support modules
 
-- `navgrid.js`: `buildNav(island)` rasterises walkability from the physics world at `NAV.cell` (1.25 m): a floor ray per cell and a character-sized box overlap test; flood fill marks the largest connected component as `main`. The game only uses `randomWalkable(nav, x, z, r, ok?, tries?)` for spawn points. `cellOf`, `cellX`, `cellZ` and `nearestWalkable` have no callers outside the file (the bots' A* pathfinding was removed).
+- `navgrid.js`: `buildNav(island)` rasterises walkability from the physics world at `island.navCell ?? NAV.cell` (1.25 m): a floor ray per cell and a character-sized box overlap test (or, with `island.navProbe === 'rays'`, five short down rays over the box's footprint: Dustline Ridge, where the box test cost ~0.37 ms a cell); flood fill marks the largest connected component as `main`. `buildNavAsync(island, { budget, enter, leave, pause })` builds the same grid a few rows per task (README section 4.1). The game only uses `randomWalkable(nav, x, z, r, ok?, tries?)` for spawn points. `cellOf`, `cellX`, `cellZ` and `nearestWalkable` have no callers outside the file (the bots' A* pathfinding was removed).
 - `merge.js`: `mergeChildren(parent, material)` merges plain coloured child meshes into one vertex-coloured mesh; `bakeWeapon(root, { metal })` flattens a weapon model into one mesh plus one mesh per "special" material (textured, emissive, transparent). Used by `actor.js weaponMesh` and `characters.js`.
 
 ## 14. Recipes
@@ -334,11 +335,11 @@ Edit the number in `config.js` `WEAPONS` and the same number in backend `rules.t
 
 ### Add a map to the vote
 
-`config.js` `MAPS`: `{ id, name, mood, tint, focus: [x, z], shot: [x, y, z, fov] }` (`mood` is a `TIME_OF_DAY` key). Backend `rules.ts` `MAP_FOCUS`: the same `focus` at the same index. The vote card picture is rendered at boot by `mapimage.js renderMapShot`. A new mood needs a `TIME_OF_DAY` entry.
+`config.js` `MAPS`: `{ id, world, name, tag?, mood, tint, focus: [x, z], shot: [x, y, z, fov] }` (`world` is a `WORLDS` key, `mood` a `TIME_OF_DAY` key, `tag` an optional corner badge on the vote card). Backend `rules.ts` `MAPS`: the same `world` and `focus` at the same index. The vote card picture is rendered by `mapimage.js renderMapShot` (at boot for Coral Key, when its world is built otherwise). A new mood needs a `TIME_OF_DAY` entry. A new world: a builder returning the `buildIsland` API plus `id`, `setActive(on)`, `navCell` / `navProbe` (see `src/world/ridge/index.js`), an entry in `WORLD_BUILDERS` (`main.js`), `WORLDS` in `config.js` and backend `rules.ts`.
 
 ### Change the zone
 
-`config.js` `ZONE` and backend `rules.ts` `ZONE` together. Do not add or reorder `rand()` calls in `planNext` without doing the same in backend `zone.ts`.
+`config.js` `ZONE` / `WORLDS[id].zone` and backend `rules.ts` `ZONE` / `WORLDS` together (backend `test/Zone.test.ts` checks the circles stay over each world's land). Do not add or reorder `rand()` calls in `planNext` without doing the same in backend `zone.ts`.
 
 ### Change round length, score target, team size
 

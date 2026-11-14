@@ -766,11 +766,11 @@ function buildQueue(kind, info) {
   let body
   if (kind === 'vote') {
     const shots = cb.mapShots?.() || []
-    body = `<div class="mv-maps">${info.maps
+    body = `<div class="mv-maps${info.maps.length > 3 ? ' many' : ''}" style="--n:${info.maps.length}">${info.maps
       .map(
         (m, i) => `<button class="mv-card" data-i="${i}">
           <span class="art" style="background-image:url(${shots[i] || cb.mapThumb?.() || ''})"></span>
-          <span class="shade"></span>
+          <span class="shade"></span>${m.tag ? `<span class="tag">${esc(m.tag)}</span>` : ''}
           <span class="voters"></span>
           <span class="nm">${esc(m.name)}</span>
         </button>`,
@@ -824,9 +824,11 @@ function patchQueue(info) {
     })
   } else {
     const missing = Math.max(0, info.need - info.ready)
-    const big = queueState === 'wait' ? `${info.ready} / ${info.need} ready` : 'Next round soon'
-    const sub =
-      queueState === 'wait'
+    // info.loading: the round's map is still being built on this device (main.js enterRound).
+    const big = info.loading ? `Loading ${info.loading}…` : queueState === 'wait' ? `${info.ready} / ${info.need} ready` : 'Next round soon'
+    const sub = info.loading
+      ? 'Building the map on this device. You join the round as soon as it is ready.'
+      : queueState === 'wait'
         ? `The map vote starts as soon as ${missing === 1 ? 'one more player joins' : `${missing} more players join`}. Real players only: invite friends from the Bloxity menu.`
         : "A round is finishing on this server. You'll vote for the next map with everyone."
     const b = box.querySelector('.mv-wait .big')

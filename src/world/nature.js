@@ -282,7 +282,9 @@ function logGeo() {
 }
 
 // --- Collector ---------------------------------------------------------------------------
-export function createNature() {
+// opts.rockTint: [r, g, b] multipliers on the rocks' grey (Dustline Ridge: red-brown).
+export function createNature(opts = {}) {
+  const rockTint = opts.rockTint ?? [1, 0.99, 1.02]
   const L = { tree: [], cypress: [], palm: [], bush: [], rock: [], flower: [], tuft: [], log: [] }
   return {
     lists: L,
@@ -428,7 +430,7 @@ export function createNature() {
             const y = (r.y ?? ground(r.x, r.z)) - r.s * 0.2
             place(m, i, r.x, y, r.z, r.x * 3 + r.z, r.s, r.s * (0.8 + (i % 3) * 0.15), r.s * (0.9 + (i % 2) * 0.2))
             const g = 0.4 + ((i * 37) % 10) * 0.02
-            m.setColorAt(i, col.setRGB(g, g * 0.99, g * 1.02))
+            m.setColorAt(i, col.setRGB(g * rockTint[0], g * rockTint[1], g * rockTint[2]))
             if (r.s > 0.7) staticBox(r.s * 0.7, r.s * 0.55, r.s * 0.65, m4.makeRotationY(r.x * 3 + r.z).setPosition(r.x, y + r.s * 0.15, r.z))
           })
         }

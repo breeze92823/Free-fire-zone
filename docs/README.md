@@ -111,17 +111,29 @@ main.js                      boot, phase flow, frame loop, dev hooks
 4. Apply portal settings (except `graphics_quality`; `master_volume` only with the SDK).
 5. `await initPhysics()` (Rapier wasm).
 6. `createLighting`, `setTextureQuality`, `createWorld` (sea + clouds).
-7. `await buildIsland(scene, { lighting, preset })` -> `G.island`.
-8. `buildLoot(scene, island.lootSpots)`, `createPlayerBody()` (frozen at the blue spawn).
+7. `await buildIsland(scene, { lighting, preset })` -> `G.island` (Coral Key, the default world; `G.world = 'coral'`).
+8. `buildLoot(scene, island.lootSpots, 'coral')`, `createPlayerBody()` (frozen at the blue spawn).
 9. `buildNav(island)`, `initFx`, `initMatchSystems` (the zone).
-10. `renderMapImage` (top-down map for the minimap) and one `renderMapShot` per `MAPS` entry (vote cards), each in its own mood.
+10. `renderMapImage` (top-down map for the minimap) and one `renderMapShot` per Coral Key `MAPS` entry (vote cards), each in its own mood; maps on another world get a placeholder card until it is built.
 11. `hud.init`, `installTouch`, `bindKeys`, `createLobbyScene` + its own post-fx composer, `initLobby`.
 12. Avatar: a blocky stand-in first; `loadAvatar()` streams the Bloxity look in (`streamLook`).
 13. `bloxity.subscribeAuth`: the first settled auth state calls `net.connect()`; later sign-in changes send `auth`.
 14. Portal hooks: avatar / proportion changes, respawn request, emotes, chat bubbles; `initOnline()`.
 15. Bus listeners (`spawn`, `elimination`, `matchEnd`), `body.onFellOut`.
 16. "Preparing graphics": the lobby scene's shaders compile in parallel behind the loading screen; the warm kit is built and the game scene's warm-up is scheduled for the lobby frames ([engine.md](engine.md), `warmup.js`).
-17. `G.phase = 'lobby'`, `renderer.setAnimationLoop(frame)`.
+17. `G.phase = 'lobby'`, `renderer.setAnimationLoop(frame)`. 2.5 s later (or at once on PLAY) `loadWorld('ridge')` builds Dustline Ridge in the background (section 4.1).
+
+### 4.1 Worlds (`main.js`, "Worlds" section)
+
+A map is played on a world (`MAPS[i].world`, `WORLDS` in `config.js`): **Coral Key** (`src/world/`, built at boot) or **Dustline Ridge** (`src/world/ridge/`, the big desert island, about 4x the area; [world.md](world.md) section 8). Both are built at the origin; only one is active at a time.
+
+| Function | Does |
+| --- | --- |
+| `activateWorld(id)` | Shows world `id` and hides the others (`setActive`: mesh root visibility + every static collider `setEnabled`; Coral Key's lamps muted through `lighting.setLampsOn`), switches the crate set (`loot.js useLoot`), sets `G.island`, `G.world`, `G.nav` and the HUD map picture. Synchronous and cheap; `enterRound` calls it for the round's map, `enterTest` for Coral Key |
+| `loadWorld(id)` | Builds a world once (`WORLD_BUILDERS`) and resolves to it. The build is sliced (`nextTask.js`: MessageChannel yields, not clamped in background tabs); its nav grid is built a few rows per task with `navgrid.js buildNavAsync` (the world's colliders switched in for each slice, paused while `G.match` / `G.test`); then, outside a round, one synchronous switch renders its map picture (`mapImg`, 1536 px) and its vote cards. Sets `w.ready`, schedules a warm-up, logs `[world] ridge: built in ... ms` |
+| `enterRound()` | If the round's world is not `ready` it calls `loadWorld`, keeps the queue panel up with "Loading <map>…" (`info.loading`) and returns; `syncFlow` retries every frame |
+
+Measured on an Intel Iris Plus laptop (Auto: Low): Ridge build ~2.1 s, nav ~2.3 s, pictures ~0.3 s, all in slices; the longest single block is the picture render (~0.3 s), then the collider flush (~0.12 s). A built world stays in memory (hidden, colliders off) for the rest of the session.
 
 Load-time vs live graphics: texture resolution (`texScale`), model `detail`, particle pool sizes and antialias are fixed by the preset active at boot. Pixel ratio, view distance and shadow map size change live; shadows on/off, bloom on/off and anisotropy recompile or re-upload everything, so during a round they only fade (no shader change) and the real switch waits for the round to end (`applyGraphics`, [engine.md](engine.md)).
 
@@ -193,7 +205,8 @@ Progress (coins, rank, items, loadout, stats) is not stored in the browser: the 
 | Change the Weapon Test range (TEST button) | `src/game/testRange.js`; [gameplay.md](gameplay.md) section 17 |
 | Change the HUD or a menu | [ui.md](ui.md); respect reserved areas, touch and small screens |
 | Add a key or touch control | [engine.md](engine.md) (`input.js`, `touch.js`), `controller.js bindKeys`. Never bind P |
-| Change the island | [world.md](world.md); data in `src/world/layout.js` |
+| Change the island | [world.md](world.md); data in `src/world/layout.js` (Coral Key) or `src/world/ridge/layout.js` (Dustline Ridge) |
+| Add a world (a new island) | README section 4.1, [gameplay.md](gameplay.md) "Add a map to the vote", [world.md](world.md) section 8 |
 | Change how characters look or animate | [avatar.md](avatar.md) |
 | Add a sound | [audio.md](audio.md) |
 | Change missions, rank rewards or the first-round tips | [gameplay.md](gameplay.md) section 18; `MISSIONS` / `RANKS` in `config.js` and the backend's `progress.ts` |
