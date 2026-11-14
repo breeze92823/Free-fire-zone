@@ -96,6 +96,7 @@ export function initLobby(callbacks) {
     const room = window.innerWidth - right
     const bar = root.querySelector('.lb-top')
     bar.classList.toggle('compact', room < 440)
+    bar.classList.toggle('dropped', room < 230)
     if (room < 230) {
       root.style.setProperty('--res-right', '0px')
       bar.style.top = `${bottom + 6}px`

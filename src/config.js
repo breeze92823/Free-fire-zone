@@ -212,6 +212,8 @@ export const CAMERA = {
   crouchHeight: 1.15,
   knockedHeight: 0.9,
   aimFov: 52, // degrees when aiming without a scope
+  fitAspect: 0.9, // narrower screens (portrait) widen every FOV so the sides stay in view (camera.js fitFov)
+  fitMax: 98, // degrees: the widest the normal view gets on a tall screen
   aimEase: 14, // 1/s the aim zoom glides
   followLerp: 22, // 1/s smoothing on the followed point
   lookSensitivity: 0.0024, // rad per pixel of mouse movement

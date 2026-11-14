@@ -48,10 +48,10 @@
 }
 
 .joy-base {
-  --size: clamp(100px, 26vmin, 146px);
+  --size: var(--t-joy, clamp(100px, 26vmin, 146px));
   position: absolute;
-  left: calc(var(--safe-l) + var(--pad) + var(--size) / 2 + 64px);
-  top: calc(100% - var(--safe-b) - var(--pad) - var(--size) / 2 - 10px);
+  left: calc(var(--safe-l) + var(--t-pad, var(--pad)) + var(--size) / 2 + 64px); /* the squad chips sit left of it */
+  top: calc(100% - var(--safe-b) - var(--t-pad, var(--pad)) - var(--size) / 2);
   width: var(--size);
   height: var(--size);
   margin: calc(var(--size) / -2) 0 0 calc(var(--size) / -2);
@@ -110,23 +110,44 @@
   stroke-linejoin: round;
 }
 
-/* Right thumb cluster */
-.touch-cluster {
-  --fire: clamp(78px, 21vmin, 108px);
-  --side: clamp(48px, 12.5vmin, 64px);
+/* Right thumb cluster: the standard mobile-shooter layout. A big FIRE in the bottom-right corner,
+   an inner ring round it (CROUCH left, AIM up-left, JUMP up) and an outer ring (RELOAD, then the
+   HUD's frag, frost wall, medkit and dash buttons, placed by hud.css from the same variables).
+   The sizes live on body.touch-ui so hud.css can use them too. */
+body.touch-ui {
+  --t-pad: clamp(10px, 2.4vmin, 20px);
+  --t-fire: clamp(70px, 20vmin, 104px);
+  --t-side: clamp(44px, 12vmin, 60px);
+  --t-item: clamp(40px, 10.5vmin, 54px);
+  --t-joy: clamp(100px, 26vmin, 146px);
+  --t-r1: calc(var(--t-fire) / 2 + var(--t-side) / 2 + 8px);
+  --t-r2: calc(var(--t-r1) + var(--t-side) / 2 + var(--t-item) / 2 + 12px);
+  /* FIRE's centre, from the right and bottom edges */
+  --t-fx: calc(env(safe-area-inset-right, 0px) + var(--t-pad) + var(--t-fire) / 2);
+  --t-fy: calc(env(safe-area-inset-bottom, 0px) + var(--t-pad) + var(--t-fire) / 2);
+  /* how far the whole cluster reaches from the right / bottom edge */
+  --t-reach: calc(var(--t-fx) + var(--t-r2) + var(--t-item) / 2);
+}
+/* A button on a ring round FIRE: --cx / --sy are the cosine / sine of its angle (180 = left,
+   90 = up), --r the ring, --s its size. */
+.t-ring {
   position: absolute;
-  right: calc(var(--safe-r) + var(--pad));
-  bottom: calc(var(--safe-b) + var(--pad));
-  width: calc(var(--fire) + var(--side) * 2 + 16px);
-  height: calc(var(--fire) + var(--side) * 2 + 16px);
+  width: var(--s);
+  height: var(--s);
+  right: calc(var(--t-fx) - var(--cx) * var(--r) - var(--s) / 2);
+  bottom: calc(var(--t-fy) + var(--sy) * var(--r) - var(--s) / 2);
+}
+.touch-cluster {
+  position: absolute;
+  inset: 0;
   pointer-events: none;
 }
 .touch-cluster .touch-btn {
   position: absolute;
 }
 .touch-btn.fire {
-  width: var(--fire, 92px);
-  height: var(--fire, 92px);
+  width: var(--fire);
+  height: var(--fire);
   background: rgba(230, 70, 40, 0.5);
   border-color: rgba(255, 220, 200, 0.85);
 }
@@ -134,49 +155,52 @@
   background: rgba(255, 80, 40, 0.85);
 }
 .touch-btn.fire.main {
-  right: 0;
-  bottom: 0;
-}
-/* The second FIRE sits right of the platform's chat area (top-left), above the joystick side. */
-.touch-btn.fire.left {
-  --fire: clamp(58px, 15vmin, 76px);
-  position: absolute;
-  left: calc(var(--safe-l) + 41vw);
-  top: 40%;
-}
-.touch-btn.aim {
-  right: calc(var(--fire) + 10px);
-  bottom: calc(var(--fire) * 0.55);
-  width: var(--side);
-  height: var(--side);
-}
-.touch-btn.jump {
-  right: calc(var(--fire) * 0.15);
-  bottom: calc(var(--fire) + 10px);
-  width: var(--side);
-  height: var(--side);
+  --fire: var(--t-fire);
+  right: calc(env(safe-area-inset-right, 0px) + var(--t-pad));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--t-pad));
 }
 .touch-btn.crouch {
-  right: calc(var(--fire) + 10px);
-  bottom: 0;
-  width: calc(var(--side) * 0.86);
-  height: calc(var(--side) * 0.86);
+  --cx: -1;
+  --sy: 0;
+  --r: var(--t-r1);
+  --s: var(--t-side);
+}
+.touch-btn.aim {
+  --cx: -0.7071;
+  --sy: 0.7071;
+  --r: var(--t-r1);
+  --s: var(--t-side);
+}
+.touch-btn.jump {
+  --cx: 0;
+  --sy: 1;
+  --r: var(--t-r1);
+  --s: var(--t-side);
 }
 .touch-btn.reload {
-  right: calc(var(--fire) + var(--side) * 0.75);
-  bottom: calc(var(--fire) + var(--side) * 0.35);
-  width: calc(var(--side) * 0.8);
-  height: calc(var(--side) * 0.8);
+  --cx: -1;
+  --sy: 0;
+  --r: var(--t-r2);
+  --s: var(--t-item);
 }
 
-/* Portrait phones: smaller cluster. */
+/* The second FIRE (left index finger / thumb): beside the joystick's resting spot, clear of the
+   platform's chat in the top-left corner and of the character in the middle of the view. */
+.touch-btn.fire.left {
+  --fire: clamp(56px, 15vmin, 76px);
+  position: absolute;
+  left: calc(var(--safe-l) + var(--t-pad) + 64px + var(--t-joy) + 4px);
+  bottom: calc(var(--safe-b) + var(--t-pad) + var(--t-joy) * 0.85);
+}
+
+/* Portrait: no squad column beside the joystick, so it rests at the left edge, and the second
+   FIRE sits right above it. */
 @media (orientation: portrait) {
-  .touch-cluster {
-    --fire: clamp(70px, 19vmin, 92px);
-    --side: clamp(44px, 11vmin, 56px);
+  .joy-base {
+    left: calc(var(--safe-l) + var(--t-pad, var(--pad)) + var(--size) / 2);
   }
   .touch-btn.fire.left {
-    top: 52%;
-    left: calc(var(--safe-l) + 64px);
+    left: calc(var(--safe-l) + var(--t-pad) + var(--t-joy) / 2 - var(--fire) / 2);
+    bottom: calc(var(--safe-b) + var(--t-pad) + var(--t-joy) + 18px);
   }
 }

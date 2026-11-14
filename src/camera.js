@@ -55,6 +55,17 @@ export function snapFollow() {
   initialised = false
 }
 
+// Narrow screens (portrait phones): the FOV is vertical, so a tall screen would see only a
+// sliver sideways and the character would fill it. Below CAMERA.fitAspect the view widens
+// (every FOV by the same tangent factor, so aim and scope zoom keep their ratios), up to
+// CAMERA.fitMax.
+const TAN_MAX = Math.tan((CAMERA.fitMax * Math.PI) / 360) / Math.tan((CAMERA.fov * Math.PI) / 360)
+export function fitFov(fov, aspect) {
+  if (!(aspect > 0) || aspect >= CAMERA.fitAspect) return fov
+  const k = Math.min(CAMERA.fitAspect / aspect, TAN_MAX)
+  return (Math.atan(Math.tan((fov * Math.PI) / 360) * k) * 360) / Math.PI
+}
+
 // The aim ray of the last update (camera position + forward).
 export const aimRay = { origin: new Vector3(), dir: new Vector3(0, 0, -1) }
 
@@ -88,8 +99,9 @@ export function update(camera, dt, opts) {
 
   aimK += ((opts.aim ? 1 : 0) - aimK) * (1 - Math.exp(-CAMERA.aimEase * dt))
   fovNow += (fovTarget - fovNow) * (1 - Math.exp(-CAMERA.aimEase * dt))
-  if (Math.abs(camera.fov - fovNow) > 0.01) {
-    camera.fov = fovNow
+  const fovShown = fitFov(fovNow, camera.aspect)
+  if (Math.abs(camera.fov - fovShown) > 0.01) {
+    camera.fov = fovShown
     camera.updateProjectionMatrix()
   }
 

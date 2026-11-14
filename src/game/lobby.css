@@ -119,6 +119,11 @@
 .lb-spacer {
   flex: 1;
 }
+/* Dropped under the toolbar + chat (narrow phones): it would reach the Players online dock's
+   column on the right edge, so it stops short of it. */
+.lb-top.dropped {
+  right: calc(var(--safe-r) + var(--pt-tile, 46px) + 12px);
+}
 .lb-top.compact .chip.profile,
 .lb-top.compact .chip.rank .rk {
   display: none;
@@ -1135,6 +1140,17 @@
     display: none;
   }
 }
+@media (orientation: portrait) {
+  /* The PLAY column fills the bottom right: the connection line goes above its mode chip (where
+     "Leave the team" shows instead while queued or in a team, when this line is hidden). */
+  .lb-net {
+    left: auto;
+    transform: none;
+    right: calc(var(--safe-r) + var(--pad));
+    bottom: calc(var(--safe-b) + var(--pad) + clamp(64px, 14vmin, 130px) + 76px);
+    max-width: calc(100vw - var(--pad) * 2);
+  }
+}
 @media (max-height: 460px) {
   /* Short landscape phones: a 2 x 2 grid of menu buttons in the bottom-left corner. */
   .lb-menu {
@@ -1148,6 +1164,13 @@
   }
   .menubtn {
     height: clamp(40px, 12vh, 52px);
+  }
+  /* The 2 x 2 menu takes the bottom left: the connection line goes under the top bar. */
+  .lobby .lb-net,
+  .lobby.queued .lb-net,
+  .lobby.in-team .lb-net {
+    bottom: auto;
+    top: calc(var(--safe-t) + 8px + clamp(38px, 7vmin, 58px) + 6px);
   }
   .menubtn .tx {
     font-size: clamp(13px, 4.4vh, 18px);

@@ -5,7 +5,8 @@
 //   right zone  - one-finger drag -> look
 //   FIRE        - two of them (right thumb + left index); held = shoot, and
 //                 dragging a held FIRE button also turns the view
-//   AIM, JUMP, CROUCH, RELOAD buttons; items/weapons are the HUD's own buttons.
+//   AIM, JUMP, CROUCH, RELOAD on rings round the right FIRE (touch.css); the HUD puts its
+//   item buttons on the same outer ring and its weapon bar above the health bar.
 import './touch.css'
 import { COARSE_POINTER, TOUCH } from './config.js'
 import { inputState, setTouchMove, setTouchSprint } from './input.js'
@@ -182,19 +183,19 @@ export function installTouch(actions) {
   let crouched = false
   cluster.append(
     fireBtn('main'),
-    button('aim', ICONS.aim, (b) => {
+    button('aim t-ring', ICONS.aim, (b) => {
       inputState.aim = !inputState.aim
       b.classList.toggle('on', inputState.aim)
     }),
-    button('jump', ICONS.jump, () => {
+    button('jump t-ring', ICONS.jump, () => {
       inputState.jump = true
     }),
-    button('crouch', ICONS.crouch, (b) => {
+    button('crouch t-ring', ICONS.crouch, (b) => {
       crouched = !crouched
       b.classList.toggle('on', crouched)
       actions.crouch?.(crouched)
     }),
-    button('reload', ICONS.reload, () => actions.reload?.()),
+    button('reload t-ring', ICONS.reload, () => actions.reload?.()),
   )
   root.append(stick, fireBtn('left'), cluster)
   document.body.append(pads, root)

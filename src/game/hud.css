@@ -839,24 +839,6 @@
 .item.busy {
   border-color: #6dff9c;
 }
-.touch-ui .hud-items {
-  flex-direction: row;
-  right: auto;
-  left: 50%;
-  transform: translateX(-50%);
-  bottom: calc(var(--safe-b) + clamp(54px, 9vmin, 72px));
-  gap: 6px;
-}
-.touch-ui .item .k {
-  display: none;
-}
-.touch-ui .item {
-  width: clamp(40px, 6.6vmin, 52px);
-  height: clamp(40px, 6.6vmin, 52px);
-}
-.touch-ui .hud-feed {
-  bottom: calc(var(--safe-b) + clamp(110px, 20vmin, 160px));
-}
 
 /* --- Crosshair / markers ------------------------------------------------------------------- */
 .hud-cross {
@@ -1525,35 +1507,7 @@
   }
 }
 
-/* --- Touch phones: compact right column, slim squad list ----------------------------------- */
-.touch-ui .hud-minimap-wrap {
-  width: clamp(88px, 17vmin, 140px);
-  height: clamp(88px, 17vmin, 140px);
-}
-.touch-ui .hud-weapons {
-  width: clamp(170px, 30vmin, 250px);
-  gap: 4px;
-}
-.touch-ui .wcard {
-  height: clamp(38px, 8vmin, 64px);
-}
-.touch-ui .wcard .ammo {
-  font-size: clamp(16px, 4.4vmin, 30px);
-}
-.touch-ui .wcard .rl {
-  bottom: 2px;
-  font-size: 11px;
-}
-.touch-ui .wcard .wname,
-.touch-ui .wslot .k {
-  display: none;
-}
-.touch-ui .wslot {
-  height: clamp(32px, 7vmin, 52px);
-}
-.touch-ui .wslot.fistslot {
-  display: none;
-}
+/* --- Touch: slim squad list on short screens (the rest of the touch layout is at the end) --- */
 @media (max-height: 520px) {
   .touch-ui .hud-squad {
     width: auto;
@@ -1628,14 +1582,6 @@
   .hud-toasts {
     top: 40%;
   }
-  .touch-ui .hud-items {
-    flex-direction: column;
-    left: calc(var(--safe-l) + 8px);
-    right: auto;
-    top: 42%;
-    bottom: auto;
-    transform: none;
-  }
 }
 
 /* Weapon Test range (hud.setTest): no score bar, zone timer, zone tint or minimap. */
@@ -1644,4 +1590,283 @@
 .hud.test .hud-zonetint,
 .hud.test .hud-minimap-wrap {
   display: none;
+}
+
+/* --- Touch layout (body.touch-ui) -----------------------------------------------------------
+   The standard mobile-shooter arrangement, sized from touch.css's --t-* variables:
+   top: score + zone timer in the centre, the minimap alone in the top-right corner (beside the
+   platform's chat in portrait) with the emote button next to it and the kill feed under it;
+   left: squad chips under the chat, the joystick bottom-left with the second FIRE beside it;
+   right: the FIRE cluster, whose outer ring holds the item buttons (frag, frost wall, medkit,
+   dash); bottom centre: the weapon bar over the health bar (ability diamond at its end).
+   Nothing persistent sits in the middle of the view. */
+.touch-ui .hud-right {
+  top: calc(var(--safe-t) + var(--res-mmtop, 0px) + var(--pad));
+}
+.touch-ui .hud-minimap-wrap {
+  width: var(--mm, 88px);
+  height: var(--mm, 88px);
+}
+/* Weapon bar: the active gun's ammo, then one button per weapon (the fists are hidden). */
+.touch-ui .hud-weapons {
+  --wh: clamp(40px, 9vmin, 54px);
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(var(--safe-b) + clamp(44px, 9vmin, 62px));
+  width: auto;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: clamp(76px, 18vmin, 110px);
+  grid-auto-columns: clamp(46px, 12vmin, 70px);
+  gap: 4px;
+}
+.touch-ui .wcard {
+  grid-column: auto;
+  height: var(--wh);
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 8px;
+}
+.touch-ui .wcard img,
+.touch-ui .wcard .rl,
+.touch-ui .wcard .wname,
+.touch-ui .wslot .k,
+.touch-ui .wslot.fistslot {
+  display: none;
+}
+.touch-ui .wcard .ammo {
+  font-size: clamp(17px, 4.4vmin, 28px);
+}
+.touch-ui .wcard .prog {
+  left: 8px;
+  right: 8px;
+  bottom: 4px;
+  width: auto;
+  height: 3px;
+}
+.touch-ui .wcard .rtime {
+  right: auto;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: clamp(20px, 5vmin, 32px);
+}
+.touch-ui .wcard.reloading .ammo {
+  opacity: 0;
+}
+.touch-ui .wslot {
+  height: var(--wh);
+}
+.touch-ui .wslot img {
+  inset: 2% 6% 36% 6%;
+  height: 62%;
+}
+.touch-ui .wslot .n {
+  font-size: clamp(9px, 2.4vmin, 13px);
+  line-height: 1;
+  bottom: 6px;
+}
+.touch-ui .wslot .bar {
+  bottom: 2px;
+}
+.touch-ui .hud-health {
+  width: min(40vw, 320px);
+  bottom: calc(var(--safe-b) + 4px);
+  grid-template-columns: auto 1fr auto;
+}
+.touch-ui .hud-health .armor .pc {
+  width: clamp(22px, 5vmin, 32px);
+  height: clamp(22px, 5vmin, 32px);
+}
+.touch-ui .hud-health .ult {
+  position: relative;
+  right: auto;
+  width: clamp(40px, 9vmin, 54px);
+  height: clamp(40px, 9vmin, 54px);
+  margin-bottom: -2px;
+}
+.touch-ui .ult .k {
+  display: none;
+}
+/* Items: each button on the FIRE cluster's outer ring (see touch.css .t-ring). */
+.touch-ui .hud-items {
+  display: contents;
+}
+.touch-ui .item {
+  position: absolute;
+  --r: var(--t-r2);
+  --s: var(--t-item);
+  width: var(--s);
+  height: var(--s);
+  right: calc(var(--t-fx) - var(--cx) * var(--r) - var(--s) / 2);
+  bottom: calc(var(--t-fy) + var(--sy) * var(--r) - var(--s) / 2);
+}
+.touch-ui .item .k {
+  display: none;
+}
+.touch-ui .item .c {
+  font-size: clamp(12px, 3vmin, 16px);
+}
+.touch-ui .item[data-id='frag'] {
+  --cx: -0.9239;
+  --sy: 0.3827;
+}
+.touch-ui .item[data-id='frostWall'] {
+  --cx: -0.7071;
+  --sy: 0.7071;
+}
+.touch-ui .item[data-id='medkit'] {
+  --cx: -0.3827;
+  --sy: 0.9239;
+}
+.touch-ui .item[data-id='dash'] {
+  --cx: 0;
+  --sy: 1;
+}
+/* The emote is not a fight control: a small button beside the minimap. */
+.touch-ui .item[data-id='emote'] {
+  --s: clamp(34px, 8vmin, 44px);
+  top: calc(var(--safe-t) + var(--res-mmtop, 0px) + var(--pad));
+  right: calc(var(--safe-r) + var(--pad) + var(--mm, 88px) + 8px);
+  bottom: auto;
+}
+/* Kill feed: right-aligned under the minimap, the two newest rows. */
+.touch-ui .hud-feed {
+  left: auto;
+  right: calc(var(--safe-r) + var(--pad));
+  bottom: auto;
+  top: calc(var(--safe-t) + var(--res-mmtop, 0px) + var(--pad) + var(--mm, 88px) + 6px);
+  transform: none;
+  width: auto;
+  max-width: 24vw;
+  align-items: flex-end;
+  gap: 2px;
+}
+.touch-ui .kf {
+  font-size: 11px;
+  padding: 2px 6px 2px 14px;
+  gap: 5px;
+  max-width: 100%;
+  background: linear-gradient(90deg, rgba(40, 40, 46, 0), rgba(40, 40, 46, 0.78) 18%);
+}
+.touch-ui .kf img {
+  height: 14px;
+}
+.touch-ui .kf .a {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.touch-ui .kf:nth-child(n + 3) {
+  display: none;
+}
+/* Pickup toasts: left of the FIRE cluster's outer ring, the three newest. */
+.touch-ui .hud-toasts {
+  right: calc(var(--t-reach) + 8px);
+  top: 30%;
+}
+.touch-ui .toast {
+  white-space: nowrap;
+  font-size: 12px;
+  padding: 3px 10px 3px 24px;
+}
+.touch-ui .toast:nth-last-child(n + 4) {
+  display: none;
+}
+/* Under the crosshair: the kill notice, then the crate / revive prompt right above the weapon
+   bar (never under the FIRE cluster). */
+.touch-ui .hud-notice {
+  top: calc(50% + 20px);
+}
+.touch-ui .hud-prompt {
+  left: 50%;
+  top: auto;
+  bottom: calc(var(--safe-b) + clamp(44px, 9vmin, 62px) + clamp(40px, 9vmin, 54px) + 6px);
+  transform: translateX(-50%);
+  padding: 4px 14px 4px 4px;
+}
+.touch-ui .hud-prompt .key {
+  width: 44px;
+  height: 44px;
+}
+.touch-ui .hud-prompt .t2 {
+  font-size: 15px;
+  white-space: nowrap;
+}
+.touch-ui .hud-notice {
+  white-space: nowrap;
+}
+/* Announcements stay clear of the score bar, the zone timer and the multi-kill banner under it. */
+.touch-ui .hud-announce {
+  top: max(26%, calc(var(--safe-t) + var(--res-top) + clamp(48px, 7.6vmin, 68px) + 66px));
+}
+
+@media (orientation: portrait) {
+  .touch-ui .hud-health {
+    width: min(72vw, 320px);
+    bottom: calc(var(--t-reach) + clamp(40px, 9vmin, 54px) + 18px);
+  }
+  .touch-ui .hud-weapons {
+    bottom: calc(var(--t-reach) + 10px);
+  }
+  /* Under the minimap; the score bar is lower, under the chat. */
+  .touch-ui .item[data-id='emote'] {
+    top: calc(var(--safe-t) + var(--res-mmtop, 0px) + var(--pad) + var(--mm, 88px) + 6px);
+    right: calc(var(--safe-r) + var(--pad));
+  }
+  /* The feed goes under the zone timer: the minimap's column is too narrow for it. */
+  .touch-ui .hud-feed {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+    top: calc(var(--safe-t) + var(--res-top) + clamp(48px, 7.6vmin, 68px) + 32px);
+    max-width: 94vw;
+    align-items: center;
+  }
+  .touch-ui .kf {
+    padding: 2px 10px;
+    background: linear-gradient(90deg, rgba(40, 40, 46, 0.2), rgba(40, 40, 46, 0.78) 15%, rgba(40, 40, 46, 0.78) 85%, rgba(40, 40, 46, 0.2));
+  }
+  .touch-ui .hud-toasts {
+    right: calc(var(--safe-r) + var(--pad));
+    top: 40%;
+  }
+  /* The weapons left the right column, so the kill popup goes back right of the crosshair. */
+  .touch-ui .hud-reward {
+    right: auto;
+    left: calc(50% + clamp(26px, 4.5vmin, 46px));
+    max-width: calc(50vw - clamp(26px, 4.5vmin, 46px) - var(--safe-r) - 8px);
+    align-items: flex-start;
+  }
+  .touch-ui .hud-reward .rw {
+    justify-content: flex-start;
+    transform-origin: left center;
+  }
+  /* The multi-kill badge: left side, under the squad chips. */
+  .touch-ui .hud-banner {
+    top: calc(var(--res-bottom) + 172px);
+    left: calc(var(--safe-l) + var(--pad) + min(60px, 16vw));
+  }
+  /* Under the crosshair: the kill notice, then the crate / revive prompt above the health bar. */
+  .touch-ui .hud-notice {
+    top: calc(50% + 30px);
+  }
+  .touch-ui .hud-prompt {
+    bottom: calc(var(--t-reach) + 2 * clamp(40px, 9vmin, 54px) + 32px);
+  }
+  /* Under the kill feed's two rows. */
+  .touch-ui .hud-announce {
+    top: max(26%, calc(var(--safe-t) + var(--res-top) + clamp(48px, 7.6vmin, 68px) + 78px));
+  }
+}
+/* Very narrow phones (320 px): a tighter score bar, clear of the squad chips on its left. */
+@media (max-width: 340px) {
+  .hud-score .team {
+    min-width: 56px;
+    padding: 0 6px;
+  }
+  .hud-score .mid {
+    min-width: 74px;
+    padding: 2px 10px;
+  }
 }

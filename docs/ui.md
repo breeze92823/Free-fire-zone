@@ -120,7 +120,7 @@ All selectors are under `div.hud`. "Built" says when the inner DOM is created: `
 | Weapon panel | `.hud-weapons`: `.wcard` + one `.wslot` per `G.player.slots` entry | begin (`buildWeapons`) | `update`: active slot, ammo / magazine, reserve on the Reload button, reload countdown (`.reloading`, `.rtime`), progress bar; per-slot total and bar | slots are buttons (`onSlot`); the fists slot has `.fistslot` (hidden under `body.touch-ui`) |
 | Health and armour | `.hud-health`: `.armor` (`.pc.helm`, `.pc.vest`), `.hpwrap` (`.hpv`, `.hpbar` > `.lag`, `.fill`, `.shield`), `.ult` | init; armour pieces in `begin` (`buildArmor`) | `update`: hp fraction (knocked: bleed pool), `.hpbar.low` under 30 % or knocked, armour levels and durability vs `HEALTH.armorDurability`, `.shield` width = vest level / 3 | `.lag` trails with a CSS transition |
 | Ability diamond | `button.ult` inside `.hud-health` | init | `update`: `p.ult / operativeDef.charge` as `--k`; `.ready` at 100 % | colour `--opc` from the operative; key label Q |
-| Items | `.hud-items` > `button.item` x 5 | begin (`buildItems`) | `update`: counts (`.c`), `.empty`, medkit `.busy` while healing, dash cooldown `--cd` + seconds from `ITEMS.dash.cooldown` | order: emote Z, frost wall G, frag T, medkit X, dash F |
+| Items | `.hud-items` > `button.item[data-id]` x 5 | begin (`buildItems`) | `update`: counts (`.c`), `.empty`, medkit `.busy` while healing, dash cooldown `--cd` + seconds from `ITEMS.dash.cooldown` | order: emote Z, frost wall G, frag T, medkit X, dash F; touch places each by `data-id` (2.9) |
 | Crosshair | `.hud-cross` (`i.t/.b/.l/.r/.d`) | init | `update`: gap `--s` from `info.spread` and `camera.fov`, min 5 px; `.enemy` (red) when `info.onEnemy`; `.hide` unless alive, not scoped, `playing`, not spectating | |
 | Hit marker | `.hud-hit` | init | `damage` event by the player (`head` variant), `elimination` by the player (`kill`, 380 ms) | |
 | Damage numbers | `.hud-nums` > 24 pooled `.dmgnum` | init | `damage` event when `attacker === G.player`, the target is someone else and `point` is set; animated in `update` (0.9 s, projected with `camera`) | `.head` variant |
@@ -169,8 +169,9 @@ Both draw from the `mapImg` set with `setMapImage`: the minimap crops `mapImg.cl
 | --- | --- | --- |
 | `--res-bottom` | lowest bottom edge of the areas whose `left < 40` (toolbar + chat column) | `.hud-squad` `top` |
 | `--res-top` | pushed-down offset for the top-centre group: an area that overlaps the score bar's band by 90 px or more, or that reaches past the screen centre, moves the group below it | `.hud-score`, `.hud-zone`, `.hud-banner`, portrait `.hud-right` |
-| `--score-shift` | a small overlap (under 90 px including an 8 px gap, area ending left of centre) slides the score bar right by that amount instead | `.hud-score`, `.hud-zone` `left` |
+| `--score-shift` | a small overlap (under 90 px including an 8 px gap, 120 px on screens up to 500 px tall, area ending left of centre) slides the score bar right by that amount instead | `.hud-score`, `.hud-zone` `left` |
 | `--res-rtop` | lowest bottom edge of areas reaching into the right 260 px | `.hud-right` `top` |
+| `--res-mmtop`, `--mm` | touch layout: the minimap alone in the top-right corner, under the areas that reach into the corner (the full-width toolbar on narrow phones) and shrunk (`--mm`, 64 px at least, else `clamp(88px, 17vmin, 140px)`) to fit right of the ones beside it (the chat); if it would land on the score bar's band it goes under the score bar | touch `.hud-right`, the emote button, the kill feed |
 
 The score bar's width and height are re-derived in JS from the same `clamp()` formulas as the CSS (`sw`, `sh`); change both together.
 
@@ -193,7 +194,7 @@ Per-widget variables written from JS: `--s` (`.hud-cross`, crosshair gap), `--k`
 
 Sizing is `clamp(min, N vmin, max)` almost everywhere, so the HUD scales with the smaller screen dimension. Desktop layout: score top-centre, squad top-left under the platform chat, minimap + weapons top-right, items bottom-right, health bottom-centre, feed above the health bar, toasts at the right edge at 52 %.
 
-`body.touch-ui` (set by `touch.js` `setVisible`, i.e. on coarse-pointer devices or after a finger touches the screen; a mouse `pointerdown` removes it): items move to a centred row above the bottom edge (a left-edge column in portrait), key labels (`.item .k`, `.wslot .k`, `.wname`) are hidden, the minimap, weapon card and slots shrink, the fists slot is hidden, the kill feed moves up.
+`body.touch-ui` (set by `touch.js` `setVisible`, i.e. on coarse-pointer devices or after a finger touches the screen; a mouse `pointerdown` removes it) switches to the standard mobile-shooter layout (the "Touch layout" block at the end of `hud.css`, sized from `touch.css`'s `--t-*` variables, see [engine.md](engine.md) touch.js): top: score + zone timer in the centre, the minimap alone in the top-right corner (beside the platform chat in portrait, `--res-mmtop` / `--mm`), the emote button beside it (below it in portrait), the kill feed under it (two newest rows; under the zone timer in portrait); left: squad chips under the chat, the joystick and second FIRE; right: the FIRE cluster, whose outer ring holds the frag, frost wall, medkit and dash buttons (`.hud-items` is `display: contents` and each `.item[data-id]` is placed on the ring); bottom centre: the weapon bar (`.hud-weapons` is `position: fixed`, out of the right column: the ammo card without picture / Reload label, then one button per weapon; fists hidden) over the health bar with the ability diamond at its end (in portrait both sit just above the cluster, `--t-reach`). Transient widgets keep out of each other's way per group (kill: feed, notice, popup, banner; loot: prompt, toasts; zone: announce): the notice and the crate / revive prompt sit between the crosshair and the weapon bar, toasts left of the cluster (portrait: right edge at 40 %), announcements under the zone timer and banner. Key labels (`.item .k`, `.wslot .k`, `.ult .k`) are hidden. Nothing persistent sits in the middle of the view.
 
 Media queries:
 
@@ -208,7 +209,8 @@ Media queries:
 | `(max-height: 520px)` + `.touch-ui` | squad rows shrink to picture + health bar chips (no name / status), max 4 rows |
 | `(orientation: portrait)` (reward block) | kill popup left of the crosshair; compact two-line multi-kill banner under the zone timer |
 | `(orientation: landscape) and (max-height: 500px)` | multi-kill banner one row under the zone timer; kill popup: only the newest row, 18 px chips, wrapped before the weapon panel |
-| `(orientation: portrait)` | right column starts below the score bar (`max(--res-rtop, --res-top)` + offset); squad rows are the same chips; health sits above the joystick (`bottom: clamp(190px, 27vh, 230px)`), ability button hangs off its right end; feed above the health bar; toasts at 40 %; touch items in a column on the left edge at 42 % |
+| `(orientation: portrait)` | right column starts below the score bar (`max(--res-rtop, --res-top)` + offset); squad rows are the same chips; health sits above the joystick (`bottom: clamp(190px, 27vh, 230px)`), ability button hangs off its right end; feed above the health bar; toasts at 40 % (desktop-pointer portrait windows; touch uses the touch layout) |
+| `(max-width: 340px)` | tighter score bar (320 px phones), clear of the squad chips |
 
 ## 3. `lobby.js`
 
@@ -360,14 +362,14 @@ Structure: shared root rules for `.lobby`, `.results`, `.loading` + `.o`; top ba
 | `--gold` | `#ffcf3d` | accent |
 | `--hex` | set inline on `.mv` | the vote plate's hex pattern image |
 
-Reserved areas (`initLobby`): for areas with `top < 20` (the toolbar) take the rightmost edge `right`; for areas with `left < 40` take the lowest edge `bottom`. With `room = innerWidth - right`: `.lb-top.compact` when `room < 440`; when `room < 230` the bar drops under the toolbar and chat (`--res-right: 0px`, inline `top = bottom + 6px`), otherwise `--res-right = right`. `--res-bottom = bottom` always. The lobby adds no `resize` listener of its own; it depends on `onReservedAreas` firing again.
+Reserved areas (`initLobby`): for areas with `top < 20` (the toolbar) take the rightmost edge `right`; for areas with `left < 40` take the lowest edge `bottom`. With `room = innerWidth - right`: `.lb-top.compact` when `room < 440`; when `room < 230` the bar drops under the toolbar and chat (`.lb-top.dropped`, `--res-right: 0px`, inline `top = bottom + 6px`; it then stops short of the Players online dock's column on the right edge), otherwise `--res-right = right`. `--res-bottom = bottom` always. The lobby adds no `resize` listener of its own; it depends on `onReservedAreas` firing again.
 
 Responsive rules:
 
 - Sizes are `clamp(..., vmin, ...)`; window grids are `repeat(auto-fill, minmax(clamp(150px, 26vmin, 220px), 1fr))`; `.win` is `min(96vw, 1040px)` by `max-height: min(92vh, 760px)` with a scrolling body.
 - The vote panel `.mv` is a size container (`container-type: inline-size`): width `min(94vw, 900px, (100dvh - safe insets - 28px) * 1.66)`, and everything inside uses `cqw` with pixel floors (`max(4.2cqw, 17px)` etc.), so it scales like a picture and always fits the height.
-- `(orientation: portrait)`: `.lb-leave` moves into the PLAY column above the mode chip; the queued net line is hidden; `.summary` is centred; `.lb-menu` is 46vw wide; `.lb-stats` is hidden (the Players online dock stays, narrower).
-- `(max-height: 460px)`: the menu becomes a 2 x 2 grid in the bottom-left corner with shorter buttons; `.lb-stats` hidden.
+- `(orientation: portrait)`: `.lb-leave` moves into the PLAY column above the mode chip, and so does the connection line `.lb-net` (they never show together: the line is hidden while queued or in a team); the queued net line is hidden; `.summary` is centred; `.lb-menu` is 46vw wide; `.lb-stats` is hidden (the Players online dock stays, narrower).
+- `(max-height: 460px)`: the menu becomes a 2 x 2 grid in the bottom-left corner with shorter buttons; `.lb-stats` hidden; `.lb-net` moves under the top bar (it sat on the menu).
 - Touch: buttons use `touch-action: manipulation`; there are no `.touch-ui` rules in this file. All lobby handlers are `click` or `pointerdown`; hover effects (`.menubtn:hover`, `.playbtn:hover`, `.mv-card:hover`, the hover sound) are cosmetic only.
 
 ## 4. `save.js`
@@ -597,7 +599,7 @@ In a match the models are not used directly: `actor.js` `weaponMesh` bakes each 
 
 - Reserved areas: do not hard-code offsets for the portal toolbar. In the HUD use `--res-bottom` (left column), `--res-top` / `--score-shift` (top centre), `--res-rtop` (right column); in the lobby `--res-right` and `--res-bottom`. If a new element needs a different rule, compute it in `layoutReserved` (HUD) or the `onReservedAreas` callback (lobby) and expose a new variable.
 - Safe areas: add `var(--safe-*)` to every edge offset.
-- Touch: use Pointer Events (`pointerdown`, or `click` for menu buttons); no hover-only behaviour; at least 44 px targets (`clamp(44px, ...)`); `touch-action: none` on in-match controls (already set for `.hud button`), `manipulation` in menus. In a match, HUD buttons sit above the move / look pads but below the touch buttons (7.1): keep them clear of the FIRE cluster and the second FIRE.
+- Touch: use Pointer Events (`pointerdown`, or `click` for menu buttons); no hover-only behaviour; at least 44 px targets (`clamp(44px, ...)`); `touch-action: none` on in-match controls (already set for `.hud button`), `manipulation` in menus. In a match, HUD buttons sit above the move / look pads but below the touch buttons (7.1): keep them clear of the FIRE cluster and the second FIRE. A new HUD button on touch gets a free ring slot or a spot outside `--t-reach`; check 375 x 812, 360 x 640, 740 x 360 and 844 x 390 with no box overlapping another, the reserved areas or the screen edge.
 - Small screens: size with `clamp()` and `vmin`; test 375 x 812 (portrait: the HUD's portrait block and the lobby's portrait rules apply), 740 x 360 (the `max-height: 460px` / `520px` rules apply) and desktop. Names and long labels need `white-space: nowrap` + ellipsis or a compact variant.
 - Resizing: CSS handles most of it; anything computed in JS from the window size must listen to `resize` (as `layoutReserved` does).
 
@@ -632,7 +634,7 @@ Functional gaps
 - `cb.onEmote` (Inventory emote pills) is not supplied by `main.js`.
 - Equipping a weapon, or buying a skin (which also equips it), does not call `cb.onLoadout`; only "Apply" on an owned skin does. The lobby platform keeps showing the old weapon / skin until `main.js` next rebuilds the player actor (roster change, avatar reload, return from a round).
 - `results.js`: the root's `pointerdown` handler meant to reveal the summary early cannot fire before the summary is shown, because `.results` and its non-button children have `pointer-events: none` and the only button is hidden until the reveal. The handler is also added again on every `showResults` call (the root element is reused), so listeners accumulate across rounds.
-- Sub-44 px touch targets: `.buy` and `.pill` (40 px high), `.mv-x` (min 40 px), `.tab` (one text line + 16 px padding), `.touch-ui .item` (min 40 px), `.touch-ui .wslot` (min 32 px), `.arrow` (min 34 px), `.wcard .rl` (text-sized).
+- Sub-44 px touch targets: `.buy` and `.pill` (40 px high), `.mv-x` (min 40 px), `.tab` (one text line + 16 px padding), `.touch-ui .item` (min 40 px), `.touch-ui .wslot` (min 40 px), `.arrow` (min 34 px), `.wcard .rl` (text-sized).
 
 Leftovers from single-player / bots
 

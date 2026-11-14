@@ -279,6 +279,7 @@ function buildItems() {
   el.itemBtns = {}
   for (const d of defs) {
     const b = h('button', 'item silent')
+    b.dataset.id = d.id // the touch layout places each one by id (hud.css)
     b.innerHTML = `<img alt=""><div class="cd"></div><span class="k o">${d.key}</span><span class="c o"></span>`
     b.querySelector('img').src = svgData(d.icon)
     b.addEventListener('pointerdown', (e) => {
@@ -331,13 +332,29 @@ function layoutReserved() {
       const left = w / 2 - sw / 2 + shift
       if (a.top >= top + sh || a.top + a.height <= top || right <= left) continue
       const overlap = right - left + 8
-      if (overlap < 90 && right < w / 2) shift += overlap
+      // Short screens slide the bar further rather than pushing it down into the view.
+      if (overlap < (window.innerHeight <= 500 ? 120 : 90) && right < w / 2) shift += overlap
       else top = Math.max(top, a.top + a.height)
     }
   }
   // The right column only moves for areas that actually reach it.
   let rtop = 0
   for (const a of reserved) if (a.left + a.width > w - 260) rtop = Math.max(rtop, a.top + a.height)
+  // Touch layout: the minimap alone sits in the top-right corner (beside the chat in portrait):
+  // below the areas that reach into the corner (the toolbar on narrow phones), shrunk to fit
+  // right of the ones it can sit beside (the chat), never under 64 px; if it would still land on
+  // the score bar's band, it goes under the score bar instead.
+  const pad = Math.min(16, Math.max(8, 1.6 * vmin))
+  let mm = Math.min(140, Math.max(88, 17 * vmin))
+  let mmTop = 0
+  for (const a of reserved) if (a.left + a.width > w - pad - 64) mmTop = Math.max(mmTop, a.top + a.height)
+  for (const a of reserved) {
+    if (a.left + a.width > w - pad - 64 || a.top + a.height <= mmTop || a.top >= mmTop + pad + mm) continue
+    mm = Math.max(64, Math.min(mm, w - pad - (a.left + a.width) - 4))
+  }
+  if (w / 2 + sw / 2 + shift > w - pad - mm && mmTop + pad + mm > top && mmTop < top + sh) mmTop = top + sh + 8
+  root.style.setProperty('--mm', `${Math.round(mm)}px`)
+  root.style.setProperty('--res-mmtop', `${mmTop}px`)
   root.style.setProperty('--res-bottom', `${bottom}px`)
   root.style.setProperty('--res-top', `${top}px`)
   root.style.setProperty('--res-rtop', `${rtop}px`)
