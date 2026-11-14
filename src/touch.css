@@ -204,3 +204,34 @@ body.touch-ui {
     bottom: calc(var(--safe-b) + var(--t-pad) + var(--t-joy) + 18px);
   }
 }
+
+/* In a vehicle (vehicles.js adds body.driving): the shooter's buttons give way to BRAKE. */
+.touch-btn.brake {
+  display: none;
+  position: absolute;
+  flex-direction: column;
+  gap: 2px;
+  width: var(--t-fire);
+  height: var(--t-fire);
+  right: calc(env(safe-area-inset-right, 0px) + var(--t-pad));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--t-pad));
+  background: rgba(30, 34, 46, 0.55);
+  border-color: rgba(255, 210, 120, 0.8);
+  font-size: clamp(11px, 2.4vmin, 15px);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.touch-btn.brake svg {
+  width: 44%;
+  height: 44%;
+}
+.touch-btn.brake.on {
+  background: rgba(255, 170, 40, 0.85);
+}
+body.driving .touch-btn.brake {
+  display: flex;
+}
+body.driving .touch-cluster,
+body.driving .touch-btn.fire.left {
+  display: none;
+}

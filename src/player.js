@@ -1,6 +1,6 @@
 import { inputState } from './input.js'
 import { getYaw, syncYawToPlayer } from './camera.js'
-import { RAPIER, alpha, onTick, world } from './physics.js'
+import { RAPIER, alpha, onAfterTick, onTick, world } from './physics.js'
 import { PHYSICS, PLAYER_DIMS, SPAWN, SPAWN_FACING } from './config.js'
 
 // The local player singleton, mutated in place. A kinematic Rapier capsule
@@ -26,6 +26,7 @@ export const player = {
   onFellOut: null, // fn() when below PHYSICS.killY
   jumped: false, // edge, for sounds
   landed: false, // edge, for sounds
+  riding: false, // seated in a vehicle (setRide): the body follows the seat, its collider is off
 }
 
 const HALF = PLAYER_DIMS.height / 2
@@ -53,6 +54,38 @@ export function createPlayerBody() {
 
   resetPlayer()
   onTick(step)
+  onAfterTick(followSeat)
+}
+
+// Seated in a vehicle: `seat(out)` fills out = { x, y, z (feet), vx, vy, vz, yaw } from the vehicle's
+// pose right after each physics tick, so the player renders exactly with it (same interpolation).
+// The capsule's collider is switched off meanwhile. null gets out (then resetPlayer places the body).
+let seat = null
+const seatOut = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, yaw: 0 }
+export function setRide(fn) {
+  seat = fn
+  player.riding = !!fn
+  collider?.setEnabled(!fn)
+  jumpQueued = 0
+  if (fn) {
+    followSeat()
+    prev.x = player.renderPosition.x = player.position.x
+    prev.y = player.renderPosition.y = player.position.y
+    prev.z = player.renderPosition.z = player.position.z
+  }
+}
+function followSeat() {
+  if (!seat) return
+  seat(seatOut)
+  player.position.x = seatOut.x
+  player.position.y = seatOut.y
+  player.position.z = seatOut.z
+  player.velocity.x = seatOut.vx
+  player.velocity.y = seatOut.vy
+  player.velocity.z = seatOut.vz
+  player.facing = seatOut.yaw
+  player.grounded = true
+  body.setNextKinematicTranslation({ x: seatOut.x, y: seatOut.y + HALF, z: seatOut.z })
 }
 
 export function resetPlayer(spawn = SPAWN, facing = SPAWN_FACING) {
@@ -89,6 +122,10 @@ function step(dt) {
   prev.x = player.position.x
   prev.y = player.position.y
   prev.z = player.position.z
+  if (seat) {
+    inputState.jump = false
+    return // followSeat places the body after the tick
+  }
 
   const yaw = getYaw()
   const fwdX = -Math.sin(yaw)

@@ -245,6 +245,43 @@
   gap: 8px;
   width: clamp(220px, 40vmin, 430px);
 }
+/* TEST DRIVE (offline, main.js enterDrive): above the mode button. */
+.lb-drive {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 72%;
+  min-height: 44px;
+  padding: 4px 12px;
+  border-radius: 10px 24px 10px 10px;
+  border: 2px solid #11141b;
+  background: linear-gradient(90deg, #4a5a2c, #222a14);
+  text-align: left;
+}
+.lb-drive:hover {
+  filter: brightness(1.12);
+}
+.lb-drive .vi {
+  display: grid;
+  place-items: center;
+  width: clamp(38px, 7vmin, 56px);
+  flex: none;
+}
+.lb-drive .vi svg {
+  width: 100%;
+  height: auto;
+}
+.lb-drive .mt {
+  font-size: clamp(13px, 2.6vmin, 22px);
+  font-weight: 700;
+}
+.lb-drive .md {
+  font-size: clamp(10px, 1.6vmin, 13px);
+  opacity: 0.8;
+}
+.lobby:is(.queued, .member-wait) .lb-drive {
+  display: none;
+}
 .lb-mode {
   display: flex;
   align-items: center;

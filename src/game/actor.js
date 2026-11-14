@@ -150,6 +150,7 @@ export class Actor {
     this.nameTag = null
     this.tagState = ''
     this.hidden = false
+    this.seat = null // { v: vehicle, index, drive } while in a vehicle seat (vehicles.js)
     this.opacity = 1
     this.setAvatar(opts.avatar || buildCharacter(this.outfit, this.team))
     this.buildWeapons()
@@ -339,6 +340,12 @@ export class Actor {
     const g = this.group
     g.position.copy(this.pos)
     g.rotation.y = this.facing
+    // In a vehicle seat (vehicles.js sets `seat`): the body tilts with the vehicle (pos = its feet origin).
+    const seat = this.seat
+    if (seat) {
+      g.quaternion.copy(seat.v.model.quaternion)
+      speed = 0
+    }
     const reloadK = this.reloadT >= 0 && this.def.reload ? this.reloadT / this.def.reload : -1
     const swingDur = this.def.interval || 0.5
     this.animator?.update(dt, {
@@ -358,12 +365,15 @@ export class Actor {
       life: this.life,
       emote: this.emote,
       emoteTime: this.emoteT,
+      sit: !!seat,
+      drive: !!seat?.drive,
+      steer: seat?.drive ? seat.v.steerShown : 0,
     })
     this.kick = Math.max(0, this.kick - dt * 9)
 
     // Held weapon: grip in the right hand, pointing along the aim (raised) or the forearm (lowered).
     const held = this.heldModel
-    const showHeld = held && this.life === 'alive' && !this.emote && this.throwT < 0 && !this.hidden
+    const showHeld = held && this.life === 'alive' && !this.emote && this.throwT < 0 && !this.hidden && !seat?.drive
     if (held) held.visible = !!showHeld
     this.backModel.visible = this.life !== 'dead' && !this.hidden
     if (showHeld && this.hand) {

@@ -13,6 +13,7 @@ export const inputState = {
   aim: false, // held (mouse) or toggled (touch)
   wheel: 0, // weapon-switch notches since last read (+ = next)
   crouch: false, // toggled
+  brake: false, // held: the touch BRAKE button while driving (keyboard: Space, read with isHeld)
 }
 
 const BUTTON_BIT = [1, 4, 2, 8, 16] // PointerEvent.button -> its bit in PointerEvent.buttons

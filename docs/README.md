@@ -5,7 +5,7 @@ Start here. This folder documents the client (this repo); the server is document
 | Page | Covers |
 | --- | --- |
 | this page | Workspace layout, run / debug, architecture, boot order, frame loop, round phases, storage keys, where to change what |
-| [gameplay.md](gameplay.md) | `config.js` tables, shared state `G` and the event bus, `Actor`, combat, controller, items and abilities, loot, zone, match, effects, recipes for weapons / operatives / items / maps |
+| [gameplay.md](gameplay.md) | `config.js` tables, shared state `G` and the event bus, `Actor`, combat, controller, items and abilities, loot, zone, match, effects, recipes for weapons / operatives / items / maps, vehicles and the Test Drive (section 19) |
 | [ui.md](ui.md) | HUD, lobby and shops, results, the profile mirror (`save.js`), lobby 3D scene, icons, weapon and character models |
 | [engine.md](engine.md) | Physics, player body, camera, input, touch, lighting, post-processing, Auto graphics, textures, sea and clouds |
 | [world.md](world.md) | The island: `buildIsland`, layout data, districts, the building kit, colliders, loot spots, spawn areas |
@@ -80,6 +80,7 @@ main.js                      boot, phase flow, frame loop, dev hooks
   game/lobby.js  party.js  lobbyScene.js  results.js  hud.js   UI (DOM) and the hangar scene
   game/match.js  controller.js  online.js                the round on this client
   game/testRange.js                                      the offline Weapon Test range (store's TEST)
+  game/driveTest.js  vehicles.js  vehicleModels.js       the offline Test Drive; vehicles (lobby's TEST DRIVE)
   game/combat.js items.js loot.js zone.js fx.js          gameplay systems
   game/projectiles.js areas.js                           flying rounds; fire / smoke / stun effects
   game/actor.js  characters.js weaponModels.js merge.js icons.js mapimage.js   models
@@ -203,6 +204,7 @@ Progress (coins, rank, items, loadout, stats) is not stored in the browser: the 
 | Add / balance a weapon, operative, item, map | [gameplay.md](gameplay.md) section 14 |
 | Add a shop item or price | `config.js` + backend `catalog.ts`; [ui.md](ui.md) for the card. Skins, operatives and the Store cost coins; the Weapons Store (weapons, grenades, the pass) costs the game's own Gems ([ui.md](ui.md) 3.10). Both are earned only |
 | Change the Weapon Test range (TEST button) | `src/game/testRange.js`; [gameplay.md](gameplay.md) section 17 |
+| Tune or add a vehicle, change the Test Drive | `VEHICLES` / `DRIVE` in `config.js`, `src/game/vehicles.js`, `vehicleModels.js`, `driveTest.js`; [gameplay.md](gameplay.md) section 19 |
 | Change the HUD or a menu | [ui.md](ui.md); respect reserved areas, touch and small screens |
 | Add a key or touch control | [engine.md](engine.md) (`input.js`, `touch.js`), `controller.js bindKeys`. Never bind P |
 | Change the island | [world.md](world.md); data in `src/world/layout.js` (Coral Key) or `src/world/ridge/layout.js` (Dustline Ridge) |

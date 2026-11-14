@@ -6,6 +6,7 @@ import { A, installAudio as installCore, onStart, setBreakMuted, setDucked, setM
 import * as sfx from './sfx.js'
 
 export { sfx, setVolume, setMuted, setBreakMuted, isMuted, setDucked }
+export { setEngine } from './engine.js'
 
 function onPress(e) {
   if (e.button > 0) return

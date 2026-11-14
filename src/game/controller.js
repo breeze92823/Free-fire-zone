@@ -13,6 +13,7 @@ import { G, on } from './state.js'
 import { castWorld, currentSpread, fire, resolveMelee, selectSlot, startReload } from './combat.js'
 import { dash, deployWall, startHeal, startThrow, useUltimate } from './items.js'
 import { crateNear, openCrate } from './loot.js'
+import { driveInput, enterVehicle, exitVehicle, vehicleNear } from './vehicles.js'
 import * as fx from './fx.js'
 import { profile } from './save.js'
 import { send } from '../net.js'
@@ -28,7 +29,7 @@ export const view = { aimDir, aimPoint, scoped: false, spread: 0, onEnemy: false
 
 function canAct() {
   const p = G.player
-  return p && p.life === 'alive' && G.phase === 'playing'
+  return p && p.life === 'alive' && G.phase === 'playing' && !p.seat // seated in a vehicle: driving only
 }
 
 export function bindKeys(hud) {
@@ -108,10 +109,20 @@ export function useUlt() {
   if (!useUltimate(G.player)) sfx.deny()
 }
 
-// E, or a tap on the HUD's interact prompt: opens the supplies in reach.
+// E, or a tap on the HUD's interact prompt: gets out of a vehicle, into one in reach, or opens the
+// supplies in reach.
 export function interactPress() {
   const p = G.player
+  if (p?.seat && p.life === 'alive' && G.phase === 'playing') {
+    exitVehicle()
+    return
+  }
   if (!canAct()) return
+  const nv = vehicleNear(p)
+  if (nv) {
+    enterVehicle(nv.v, nv.seat)
+    return
+  }
   const c = crateNear(p)
   if (c) openCrate(p, c)
 }
@@ -125,6 +136,25 @@ export function updateController(dt, hud) {
   const def = p.def
   const isGun = !!def.mag
   view.prompt = null
+
+  // In a vehicle: the input drives it (vehicles.js); no weapons, items or other prompts.
+  if (p.seat) {
+    inputState.wheel = 0
+    p.aiming = false
+    p.crouch = false
+    view.scoped = false
+    view.onEnemy = false
+    view.spread = 0
+    aimDir.copy(aimRay.dir)
+    aimPoint.copy(aimRay.origin).addScaledVector(aimRay.dir, 60)
+    p.pitch = 0
+    if (playing && alive) {
+      driveInput()
+      view.prompt = { t1: p.seat.v.def.name, t2: 'Get out', progress: 0 }
+    }
+    lastFireHeld = false
+    return
+  }
 
   // Wheel switches weapons.
   if (inputState.wheel !== 0) {
@@ -239,8 +269,10 @@ export function updateController(dt, hud) {
       }
       view.prompt = { t1: holding ? 'Reviving…' : 'Hold', t2: `Revive ${best.name}`, progress: best.reviveProgress / HEALTH.reviveTime }
     } else {
-      const c = crateNear(p)
-      if (c) view.prompt = { t1: c.rich ? 'Supply Drop' : 'Supplies', t2: 'Open', progress: 0 }
+      const nv = vehicleNear(p)
+      const c = nv ? null : crateNear(p)
+      if (nv) view.prompt = { t1: nv.v.def.name, t2: nv.seat === 0 ? 'Drive' : 'Get in', progress: 0 }
+      else if (c) view.prompt = { t1: c.rich ? 'Supply Drop' : 'Supplies', t2: 'Open', progress: 0 }
     }
   }
 

@@ -48,6 +48,7 @@ Rapier world (`@dimforge/rapier3d-compat`) with a fixed-step accumulator and ren
 |---|---|---|
 | `RAPIER` | re-export | The Rapier namespace; import it from here. |
 | `world` | `let`, `null` until `initPhysics()` | Live binding. Game code uses it directly (`castRay`, `createCollider`, `removeCollider`). |
+| `onAfterTick(fn)` | `fn(dt)` | Runs right after every `world.step()` (after the bound meshes read their bodies): things that must follow a body's new pose in the same tick. `player.js` uses it for a seated player (`setRide`). |
 | `alpha` | `let` number 0..1 | Fraction between the last tick and the next; live binding read by `player.interpolate`. |
 | `initPhysics()` | `async () => World` | `RAPIER.init()`, gravity `(0, PHYSICS.gravity, 0)`, `world.timestep = PHYSICS.fixedStep`. |
 | `onTick(fn)` | `fn(dt)` | Runs before every `world.step()` with `dt = PHYSICS.fixedStep`. No removal. Only user: `player.js`. |
@@ -77,7 +78,8 @@ Config: `PHYSICS.gravity`, `fixedStep`, `maxSubSteps`.
 The local player's body: a kinematic position-based Rapier capsule moved by `KinematicCharacterController`. Gravity, jump, acceleration are computed here; collision resolution is Rapier's.
 
 Exports:
-- `player` (singleton object, mutated in place; `main.js` and `controller.js` import it as `body`).
+- `player` (singleton object, mutated in place; `main.js` and `controller.js` import it as `body`). `player.riding` is true while seated in a vehicle.
+- `setRide(fn | null)`: seated in a vehicle (`game/vehicles.js`). `fn(out)` fills `{ x, y, z (feet), vx, vy, vz, yaw }` from the vehicle; after every physics tick (`onAfterTick`) the body takes that pose (position, velocity, facing, grounded), so it renders interpolated exactly like the vehicle. Meanwhile the capsule's collider is disabled and `step()` returns early (no movement, no jump). `null` turns the collider back on; the caller then places the body with `resetPlayer`.
 - `createPlayerBody()`: creates body + capsule (`capsule(height/2 - radius, radius)`, friction 0) at `SPAWN`, the controller (offset 0.02, up +Y, autostep `PHYSICS.stepHeight` with min width 0.15 and not onto dynamic bodies, snap-to-ground `PHYSICS.snapToGround`, max climb `PHYSICS.maxSlope` degrees, slide from `maxSlope + 5`, impulses to dynamic bodies on, mass `PHYSICS.pushMass`), calls `resetPlayer()` and registers `step` with `onTick`. Requires `initPhysics()` first. Called once.
 - `resetPlayer(spawn = SPAWN, facing = SPAWN_FACING)`: teleports feet to `spawn` (position, previous position and `renderPosition`), zeroes velocity, `grounded = true`, sets `facing`, clears `push`, moves the body. Does not touch `frozen`, `moveSpeed`, `impulse`, the jump timers or the camera. Callers: `main.js` (boot, `spawn` event, dev `teleport`), `game/results.js`.
 - `respawn()`: `resetPlayer()` + `syncYawToPlayer()`. Only used as the fallback when `onFellOut` is null.
@@ -115,6 +117,8 @@ Config: `PHYSICS` (`walkSpeed`, `accel`, `airAccel`, `decel`, `jumpSpeed`, `coyo
 ### camera.js
 
 Over-the-shoulder camera that owns yaw and pitch (the body faces where it looks). State: `state.yaw`, `state.pitch` (radians, pitch + = down), `sensitivity`, eased `aimK` (0..1) and `fovNow`, `clearance` (0..1 boom fraction), `recoilPending`, `recoilRecover`, `shakeAmt`, `followed` (smoothed target) and `initialised`. Scratch vectors are module-level.
+
+In a vehicle `main.js` passes `opts.drive = { distance, height, heading, speed }` with `target` = the vehicle (`vehicles.js driveCamera` / `vehicleFocus`): the boom uses that distance and height with no shoulder offset, and once there has been no look input for `DRIVE.camFollowDelay` (and the vehicle moves faster than 1.5 m/s) the yaw swings back behind the vehicle and the pitch toward `DRIVE.camPitch` at `DRIVE.camFollowRate` (scaled by speed up to 8 m/s). Look input still turns it freely.
 
 | Export | Signature | Notes |
 |---|---|---|
@@ -213,6 +217,8 @@ Key bindings (built in here, or registered by `controller.bindKeys`):
 `KeyP` is unbound and must stay unbound. `KeyN` toggles day/night only in the dev harness (`world/devview.js`).
 
 ### touch.js / touch.css
+
+Driving (`body.driving`, set by `vehicles.js`): the FIRE cluster and the left FIRE are hidden and a held **BRAKE** button (`.touch-btn.brake`, where the main FIRE sits) sets `inputState.brake` (the handbrake; keyboard: Space, read with `isHeld`). The joystick drives (forward / back) and steers (sideways); the HUD's interact button gets in and out.
 
 Touch layer built in JS and appended to `<body>`. Shown when `body.touch-ui` is set: initially `COARSE_POINTER`; any finger/pen `pointerdown` turns it on, any mouse `pointerdown` turns it off (window capture listener).
 

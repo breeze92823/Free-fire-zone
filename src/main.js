@@ -32,6 +32,8 @@ import { buildLoot, useLoot } from './game/loot.js'
 import { buildNav, buildNavAsync } from './game/navgrid.js'
 import { createMatch, initMatchSystems, spawnActor, teardownMatch, updateMatch } from './game/match.js'
 import { endTest, startTest, testStartPose, updateTest } from './game/testRange.js'
+import { endDrive, startDrive, startPose as driveStartPose, updateDriveTest } from './game/driveTest.js'
+import { driveCamera, updateVehicles, vehicleFocus, vehicles } from './game/vehicles.js'
 import { bindKeys, interactPress, playEmote, updateController, useItem, useUlt, view } from './game/controller.js'
 import * as combat from './game/combat.js'
 import { selectSlot, startReload } from './game/combat.js'
@@ -437,6 +439,7 @@ initLobby({
   onLoadout: () => lobbyScene.setPlayerAvatar(avatar, loadoutForActor()),
   // The Weapons Store's TEST button: the offline test range.
   onTestWeapon: (weaponId, grenadeId) => enterTest(weaponId, grenadeId),
+  onTestDrive: () => enterDrive(),
   getQuality: () => qualityChoice(),
   // What Auto is running right now (for the lobby's label).
   getAutoTier: () => governor.rung.tier,
@@ -941,11 +944,54 @@ function enterTest(weaponId, grenadeId) {
 }
 function exitTest(toStore) {
   if (!G.test) return
+  if (G.drive) return exitDrive()
   endTest()
   G.test = false
   hud.setTest(false)
   backToLobby()
   if (toStore) lobby.openStore()
+}
+
+// --- Test Drive (offline): the lobby's TEST DRIVE button, on Dustline Ridge (game/driveTest.js) -------
+// G.test is set as for the Weapon Test (no server, local clock, round systems paused) plus G.drive.
+let driveStarting = false
+async function enterDrive() {
+  if (G.phase !== 'lobby' || G.match || driveStarting) return
+  driveStarting = true
+  try {
+    if (!worlds.ridge?.ready) {
+      lobby.status('Preparing Dustline Ridge…')
+      await loadWorld('ridge')
+      lobby.status('')
+      if (G.phase !== 'lobby' || G.match || !worlds.ridge?.ready) return
+    }
+  } finally {
+    driveStarting = false
+  }
+  lobby.show(false)
+  lobbyScene.releasePlayer()
+  setMood(MAPS.find((m) => m.world === 'ridge') ?? MAPS[0])
+  activateWorld('ridge')
+  G.test = true
+  G.drive = true
+  const name = bloxity.displayName() === 'Offline' ? 'You' : bloxity.displayName()
+  const start = startDrive({ playerName: name, playerAvatar: avatar, playerPortrait: bloxity.getPfp() || portrait(playerOutfit), onExit: () => exitDrive() })
+  hud.begin('Test Drive')
+  hud.setTest(true, 'drive')
+  hud.show(true)
+  setGameInput(true)
+  setTouchActive(true)
+  G.slowmo = 1
+  G.phase = 'playing'
+  emit('spawn', { actor: start.player, first: true, pos: start.pos, facing: start.facing })
+}
+function exitDrive() {
+  if (!G.drive) return
+  endDrive()
+  G.test = false
+  G.drive = false
+  hud.setTest(false)
+  backToLobby()
 }
 
 let leftLobbyAt = -1e9 // when this client last went back to the menus (the server's inMatch lags a moment)
@@ -1105,7 +1151,7 @@ on('matchEnd', ({ winner, forfeit, noContest }) => {
 let fellAt = 0
 body.onFellOut = () => {
   if (G.test) {
-    const s = testStartPose()
+    const s = G.drive ? driveStartPose() : testStartPose()
     resetPlayer({ x: s.pos.x, y: s.pos.y, z: s.pos.z }, s.facing)
     return
   }
@@ -1193,6 +1239,8 @@ function gameFrame(dt) {
   }
   if (p && G.phase !== 'results' && !G.test) sendPose(dt)
   if (G.test) updateTest(gdt, camera)
+  if (vehicles.length) updateVehicles(gdt)
+  if (G.drive) updateDriveTest(gdt, camera)
   t = span()
   if (G.phase === 'playing' || G.phase === 'ending') updateMatch(gdt)
   spanEnd('match', t)
@@ -1244,6 +1292,9 @@ function gameFrame(dt) {
   } else if (G.phase === 'results') {
     const pose = updateResults(dt, camera)
     updateCamera(camera, dt, { mode: 'look', from: pose.from, lookAt: pose.lookAt })
+  } else if (p?.seat && p.life !== 'dead') {
+    // In a vehicle: the chase camera on the vehicle (camera.js opts.drive).
+    updateCamera(camera, dt, { mode: 'play', target: vehicleFocus(), drive: driveCamera() })
   } else if (p) {
     const scoped = view.scoped && G.phase === 'playing'
     updateCamera(camera, dt, {
@@ -1404,6 +1455,9 @@ if (import.meta.env.DEV || location.search.includes('debug')) {
     play: () => startMatchFlow(),
     // The store's TEST button: the offline Weapon Test range with a weapon (or a grenade id).
     test: (weaponId, grenadeId = null) => enterTest(weaponId, grenadeId),
+    drive: () => enterDrive(),
+    exitDrive: () => exitDrive(),
+    vehicles,
     exitTest: () => exitTest(false),
     net,
     teleport: (x, z, facing = 0) => {

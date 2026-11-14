@@ -7,6 +7,8 @@
 //                 dragging a held FIRE button also turns the view
 //   AIM, JUMP, CROUCH, RELOAD on rings round the right FIRE (touch.css); the HUD puts its
 //   item buttons on the same outer ring and its weapon bar above the health bar.
+//   In a vehicle (body.driving): the stick drives and steers, the FIRE cluster gives way to a held
+//   BRAKE (handbrake) button, and the HUD's interact button gets out.
 import './touch.css'
 import { COARSE_POINTER, TOUCH } from './config.js'
 import { inputState, setTouchMove, setTouchSprint } from './input.js'
@@ -17,6 +19,7 @@ const ICONS = {
   jump: '<svg viewBox="0 0 24 24"><path d="M12 19V6M6 11l6-6 6 6"/></svg>',
   crouch: '<svg viewBox="0 0 24 24"><path d="M12 5v13M6 13l6 6 6-6"/></svg>',
   reload: '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v5h5"/></svg>',
+  brake: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><path d="M3 12h2.5M18.5 12H21"/></svg>',
 }
 
 function el(tag, className, html = '') {
@@ -197,7 +200,23 @@ export function installTouch(actions) {
     }),
     button('reload t-ring', ICONS.reload, () => actions.reload?.()),
   )
-  root.append(stick, fireBtn('left'), cluster)
+  // Handbrake while driving (touch.css shows it only under body.driving).
+  const brake = el('div', 'touch-btn brake', `${ICONS.brake}<span>BRAKE</span>`)
+  const brakeUp = () => {
+    inputState.brake = false
+    brake.classList.remove('on')
+  }
+  brake.addEventListener('pointerdown', (e) => {
+    if (!isFinger(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    capture(brake, e.pointerId)
+    inputState.brake = true
+    brake.classList.add('on')
+  })
+  brake.addEventListener('pointerup', brakeUp)
+  brake.addEventListener('pointercancel', brakeUp)
+  root.append(stick, fireBtn('left'), cluster, brake)
   document.body.append(pads, root)
 
   setVisible(COARSE_POINTER)

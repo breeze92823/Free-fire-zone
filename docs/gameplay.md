@@ -50,6 +50,7 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 | `MATCH_MODES`, `MATCH` (only `introFlyover` and `spawnSafeDistance` are read) | `match.js`, `main.js`, lobby | `rules.ts` `MODES`, `PHASES`, `STREAK_WINDOW` |
 | `MAPS` (`id`, `world`, `name`, `tag`, `mood`, `tint`, `focus`, `shot`) | `main.js`, `mapimage.js`, lobby vote, `zone.js` | `rules.ts` `MAPS` (`world`, `focus`; same order) |
 | `ZONE` | `zone.js`, HUD (Coral Key's plan; `wallHeight`, `color` shared) | `rules.ts` `ZONE`, `ISLAND_RADIUS` |
+| `VEHICLES`, `DRIVE` | `vehicles.js`, `vehicleModels.js`, `driveTest.js`, `camera.js` (section 19) | none yet (offline only) |
 | `WORLDS` (`name`, `radius`, `zone`) | `zone.js` (the round's plan and land radius), `main.js` worlds | `rules.ts` `WORLDS` |
 | `LOOT` | `loot.js` | `rules.ts` `LOOT` |
 | `NAV` (`cell` 1.25 m) | `navgrid.js` | no |
@@ -392,3 +393,54 @@ Long-term goals. The server owns all of it (backend `src/progress.ts`, `docs/ser
 - **First-round tips** (`tutorial.js` / `tutorial.css`): while `profile.tutorial` is false, `main.js enterRound` calls `startTutorial()`. A card under the score bar shows 7 tips (move, fire, aim, crates, utility, ability, zone and revive); each waits for its action (`done(state)`) or moves on after `max` s (20 by default). Desktop and touch have their own text (`body.touch-ui`). The last tip or "Skip tips" calls `finishTutorial()` (`tutorialDone` to the server). Tips not finished come back next round; `closeMatch` hides them. The server marks players who finished rounds before the tips existed as done.
 
 Recipe, add a mission: append `{ id, stat, goal, coins, gems }` to the list in both `config.js MISSIONS` and `progress.ts MISSIONS` (same id). A new `stat` also needs a `MISSIONS.text` line, a key in `progress.ts MissionStat`, its number in `MatchRoom.grant`'s `countRound` call and an icon in `lobby.js MISSION_ICON`.
+
+## 19. Vehicles and the Test Drive (`vehicles.js`, `vehicleModels.js`, `driveTest.js`)
+
+Milestone 2 of the vehicle plan: driving works offline in the **Test Drive** (the lobby's TEST DRIVE button). Nothing about vehicles is sent to the server yet (online seats are the next milestone).
+
+### Tuning: `config.js` `VEHICLES` and `DRIVE`
+
+`VEHICLES.jeep` (4 seats, four-wheel drive, 1250 kg, 86 km/h) and `VEHICLES.buggy` (2 seats, rear-wheel drive, 680 kg, 104 km/h). Local axes: +z forward, +x the vehicle's left side, +y up; origin = the chassis collider's centre.
+
+| Field | Meaning |
+| --- | --- |
+| `seats[i]` `{ x, y, z, drive }` | Hip point of each seat; `seats[0]` is the driver |
+| `exits` `[[x, z], ...]` | Where getting out puts the player, tried in order (first clear spot) |
+| `half`, `mass`, `com`, `gravity` | Chassis box half extents, mass (kg), centre of mass offset (low = hard to roll), gravity scale (0.65: the game's 22 m/s^2 is heavy for cars; with it they climb about 30 deg and jump further) |
+| `wheels` `{ x, front, back, y, radius, width, rest, travel }` | Wheel connection points (y = where the suspension ray starts), tyre size, suspension rest length and travel |
+| `suspension` `{ stiffness, compression, relaxation, maxForce }` | Rapier scales stiffness and damping by the chassis mass; with the 0.65 gravity scale the jeep sits ~0.12 m into its 0.42 m rest length |
+| `grip`, `sideGrip` | Wheel friction slip, side friction stiffness (the handbrake drops the back to 45 %) |
+| `engine`, `driven`, `topSpeed`, `reverseSpeed` | Force per driven wheel (N), `'all'` or `'rear'`; the force tapers to 0 at `topSpeed` (m/s) |
+| `brake`, `handbrake`, `roll` | Brake impulses per wheel: braking (throttle against the motion), handbrake (rear, also when parked), coasting drag |
+| `steer`, `steerAtTop`, `steerRate` | Wheel lock at a standstill and at top speed (rad), how fast the wheels turn (rad/s) |
+| `camera` `{ distance, height }` | The chase camera's boom |
+
+`DRIVE`: `enterRange` (3.2 m from the chassis box), `flipAfter` (2.5 s upside down or on its side and slow, then it is put back on its wheels), `camFollowDelay` / `camFollowRate` / `camPitch` (the chase camera swings back behind the vehicle 0.9 s after the last look input), `hipHeight` (feet origin to hips of a seated character), `test` (Test Drive spawn and the two parked vehicles at West Camp's bay).
+
+### `vehicles.js`
+
+| Export | Does |
+| --- | --- |
+| `spawnVehicle(type, x, z, yaw)` | A dynamic Rapier chassis (cuboid with `setMassProperties`, gravity scale, damping), a `DynamicRayCastVehicleController` (`indexUpAxis` 1, forward axis 2, four wheels: front left, front right, back left, back right), the model bound with `physics.js bindMesh` (interpolated). Placed with its wheels on `G.island.groundHeight` |
+| `removeVehicle(v)`, `clearVehicles()` | Gets the player out first if seated, unbinds and frees everything |
+| `vehicleNear(actor)` | The nearest vehicle with a free seat within `DRIVE.enterRange` of its chassis box (so the long sides count): `{ v, seat }` (the driver's seat when free) |
+| `enterVehicle(v, seat)` | Seats `G.player`: `actor.seat = { v, index, drive }`, `player.js setRide(seatPose)` (the capsule's collider goes off and the body follows the seat right after every physics tick), `body.driving` class, a sound |
+| `exitVehicle(force)` | Finds a clear spot (`exits`: a down ray for the floor, a capsule overlap test), `setRide(null)`, `resetPlayer` there with half the vehicle's speed; refuses (deny sound) when nowhere is clear unless `force` |
+| `driveInput()` | Per frame from `controller.js`: throttle = `move.z`, steering = `-move.x`, handbrake = Space held or `inputState.brake` (touch BRAKE) |
+| `driveCamera()`, `vehicleFocus()` | The chase camera's options and target for `main.js` |
+| `updateVehicles(dt)` | Per frame (`main.js`, only while any exist): wheel groups follow the suspension length, steering and spin; flip / fall recovery; a thump and dust on a hard knock; the engine voice (`audio/engine.js setEngine`); the speed readout (`.veh-hud`) |
+| `myVehicle()`, `driving()`, `vehicles` | State |
+
+Physics tick (`onTick`, before `world.step`): per vehicle, the forces from its controls: throttle forward = engine (tapered by speed) or brakes when moving backwards; throttle back = brakes when moving forwards, else reverse (65 % force, up to `reverseSpeed`); no input = `roll` drag; no driver = parked on the handbrake. Steering lock shrinks with speed and eases at `steerRate`. Then `ctrl.updateVehicle(dt, flags, groups, predicate)` (its own chassis and kinematic bodies such as the player's capsule are excluded from the suspension rays).
+
+Seated player: `controller.js updateController` skips weapons, items, crates and revives (`canAct()` is false in a seat), shows the prompt "<vehicle> · Get out" and calls `driveInput()`; E or the prompt button (`interactPress`) gets in and out. `actor.js updateModel` copies the vehicle's quaternion onto the character and passes `sit`, `drive`, `steer` to the animator (the 'sit' layer, avatar.md). The held gun is hidden while driving. `main.js` uses the chase camera (`camera.js opts.drive`).
+
+### `vehicleModels.js`
+
+`buildVehicleModel(type)` returns `{ root, body, wheels }`: the body is one merged vertex-coloured mesh (`merge.js mergeChildren`) plus glass, head lamps and tail lamps with their own materials; each wheel is a group (tyre with tread blocks, rim, hub; axis along local x, rotation order `YXZ`: y = steering, x = spin). Jeep: olive open-top tub, hood and grille, fenders, folded windshield with glass, roll bar, four seats, steering wheel, spare tyre and jerry cans. Buggy: orange nose and side pods on a floor pan, a tubular roll cage, rear engine with exhausts, two bucket seats, a light bar.
+
+### `driveTest.js` (Test Drive)
+
+`main.js enterDrive()` (the lobby's TEST DRIVE, `__game.drive()`): waits for Dustline Ridge (`loadWorld`, the lobby line reads "Preparing Dustline Ridge…"), activates it with the desert mood, sets `G.test` and `G.drive`, `startDrive` (player actor, a `G.match` stub, the two vehicles from `DRIVE.test`, the step card), `hud.setTest(true, 'drive')` (round parts hidden but the minimap kept), phase `playing`. Every frame `updateDriveTest`. EXIT (or `__game.exitDrive()`) -> `exitDrive()`: `endDrive` (vehicles cleared, card removed), back to the lobby. Falling out resets to the Test Drive start (`body.onFellOut`).
+
+The card (the Weapon Test's look, `testRange.css`): 1 Get in (either vehicle), 2 Drive 300 m, 3 Reach 70 km/h, 4 Try the other one (named for the vehicle not tried yet, which is labelled), then "Free drive". Labels show over parked vehicles within 120 m. The card moves below the platform toolbar and, on narrow screens, below the minimap (checked every 0.5 s).

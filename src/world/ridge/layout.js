@@ -131,13 +131,14 @@ export function flatMask(x, z) {
 
 // --- Height --------------------------------------------------------------------------------------
 // Long rock ridges: [ax, az, bx, bz, height, sigma]. Roads cut passes through them (flatMask).
+// Sigmas keep the steepest flank near 20-23 deg, which the vehicles climb (config.js VEHICLES).
 const RIDGES = [
-  [62, -64, 128, -112, 11, 13],
-  [-74, 70, -134, 104, 10, 12],
-  [-62, -178, -4, -206, 8, 11],
-  [118, 34, 176, 58, 6, 10],
-  [-212, 70, -196, 128, 7, 11],
-  [210, -96, 160, -150, 8, 12],
+  [62, -64, 128, -112, 11, 17],
+  [-74, 70, -134, 104, 10, 16],
+  [-62, -178, -4, -206, 8, 14],
+  [118, 34, 176, 58, 6, 12],
+  [-212, 70, -196, 128, 7, 14],
+  [210, -96, 160, -150, 8, 15],
 ]
 // Radio Mesa: a table MESA.h above the plateau; steep sides except a long slope toward `rampA`.
 export const MESA = { x: -46, z: 158, r: 30, h: 11, steep: 6, gentle: 46, rampA: Math.atan2(-0.35, 1) } // ramp faces east-north-east

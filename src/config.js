@@ -205,6 +205,84 @@ export const TOUCH = {
   sprintPush: 0.92, // joystick pushed past this fraction of its radius sprints
 }
 
+// --- Vehicles (game/vehicles.js, game/vehicleModels.js) ----------------------------
+// Rapier's raycast vehicle: a dynamic chassis box, four suspension rays. Local axes: +z forward,
+// +x the left side, +y up. Units: m, kg, N (engine force per driven wheel), brake = impulse per
+// wheel per tick. Suspension stiffness / damping are per kg of chassis (Rapier scales them by its mass).
+// `seats[0]` is the driver; a seat is the hip point. `exits` are tried in order when getting out.
+export const VEHICLES = {
+  jeep: {
+    name: 'Jeep',
+    seats: [
+      { x: 0.46, y: 0.92, z: 0.05, drive: true },
+      { x: -0.46, y: 0.92, z: 0.05 },
+      { x: 0.46, y: 0.98, z: -1.05 },
+      { x: -0.46, y: 0.98, z: -1.05 },
+    ],
+    exits: [[1.9, 0.2], [-1.9, 0.2], [0, -3.4], [0, 3.6]],
+    half: [0.98, 0.42, 2.15], // chassis collider half extents
+    bodyY: 0.55, // chassis box centre above the wheel axle line
+    mass: 1250,
+    gravity: 0.65, // gravity scale on the chassis (PHYSICS.gravity is a heavy 22 m/s^2): climbs ~30 deg slopes, longer jumps
+    com: [0, -0.32, 0.05], // centre of mass offset (low: hard to roll)
+    wheels: { x: 0.92, front: 1.42, back: -1.38, y: -0.05, radius: 0.46, width: 0.34, rest: 0.42, travel: 0.32 },
+    suspension: { stiffness: 30, compression: 3.4, relaxation: 4.6, maxForce: 60000 },
+    grip: 2.6, // wheel friction slip
+    sideGrip: 1.0, // side friction stiffness
+    engine: 2500, // N per wheel (all four driven)
+    driven: 'all', // 'all' | 'rear'
+    topSpeed: 24, // m/s (86 km/h)
+    reverseSpeed: 7,
+    brake: 46,
+    handbrake: 70, // rear wheels
+    roll: 5, // coasting drag (brake impulse)
+    steer: 0.56, // rad at a standstill
+    steerAtTop: 0.2, // rad at top speed
+    steerRate: 2.6, // rad/s the wheels turn
+    color: 0x5f6b3a,
+    camera: { distance: 7.6, height: 2.4 },
+  },
+  buggy: {
+    name: 'Dune Buggy',
+    seats: [
+      { x: 0.36, y: 0.78, z: -0.15, drive: true },
+      { x: -0.36, y: 0.78, z: -0.15 },
+    ],
+    exits: [[1.6, -0.1], [-1.6, -0.1], [0, -2.9], [0, 3.0]],
+    half: [0.82, 0.32, 1.65],
+    bodyY: 0.42,
+    mass: 680,
+    gravity: 0.65,
+    com: [0, -0.28, -0.1],
+    wheels: { x: 0.9, front: 1.16, back: -1.12, y: -0.02, radius: 0.43, width: 0.36, rest: 0.46, travel: 0.38 },
+    suspension: { stiffness: 26, compression: 2.8, relaxation: 3.8, maxForce: 40000 },
+    grip: 2.6,
+    sideGrip: 0.85,
+    engine: 3300, // rear wheels only
+    driven: 'rear',
+    topSpeed: 29, // m/s (104 km/h)
+    reverseSpeed: 8,
+    brake: 30,
+    handbrake: 48,
+    roll: 3,
+    steer: 0.6,
+    steerAtTop: 0.22,
+    steerRate: 3.2,
+    color: 0xe0762a,
+    camera: { distance: 6.6, height: 2.1 },
+  },
+}
+export const DRIVE = {
+  enterRange: 3.2, // m from a door (or the vehicle's side) to get in with E
+  flipAfter: 2.5, // s upside down / on its side (and slow) before it is put back on its wheels
+  camFollowDelay: 0.9, // s after the last look input before the camera swings back behind the vehicle
+  camFollowRate: 2.6, // 1/s that swing
+  camPitch: 0.2, // radians the chase camera settles to
+  hipHeight: 0.98, // m from a seated character's feet origin up to its hips (animator 'sit' pose)
+  // The offline Test Drive (game/driveTest.js) on Dustline Ridge, at West Camp's vehicle bay.
+  test: { spawn: [-150, 22], facing: -Math.PI / 2, vehicles: [{ type: 'jeep', x: -177, z: 9.9, yaw: Math.PI / 2 }, { type: 'buggy', x: -177, z: 20.1, yaw: Math.PI / 2 }] },
+}
+
 // --- Camera (camera.js): over-the-shoulder shooter cam ---------------------------
 export const CAMERA = {
   fov: 72,
@@ -374,6 +452,12 @@ export const ANIM = {
   crouch: {
     pose: { LegL1: { x: deg(-62) }, LegR1: { x: deg(-30) }, LegL2: { x: deg(96) }, LegR2: { x: deg(70) }, Spine1: { x: deg(12) } },
     drop: 0.25,
+  },
+  // Seated in a vehicle (animator 'sit' layer): legs folded at the hips and knees; the driver's arms
+  // reach for the wheel (steering rolls them a little).
+  sit: {
+    pose: { LegL1: { x: deg(-84) }, LegR1: { x: deg(-84) }, LegL2: { x: deg(78) }, LegR2: { x: deg(78) }, Spine1: { x: deg(-4) } },
+    drive: { ArmR1: { x: deg(-52), z: deg(-8) }, ArmR2: { x: deg(-40) }, ArmL1: { x: deg(-52), z: deg(8) }, ArmL2: { x: deg(-40) } },
   },
   // Upper body while holding a weapon (overrides the arm swing).
   aim: {

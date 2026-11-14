@@ -14,6 +14,8 @@ import { portrait, randomOutfit } from './characters.js'
 import party, { initParty } from './party.js'
 import { account, buyGrenade, buyOperative, buyPass, buySkin, buyStoreItem, buyWeapon, claimable, claimMission, equipEmote, equipGrenade, equipOperative, equipSkin, equipWeapon, markNewsSeen, missionList, missionResets, missionText, newsSeen, onClaimed, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
 
+// The TEST DRIVE button's picture: a little olive jeep.
+const DRIVE_SVG = '<svg viewBox="0 0 48 32" aria-hidden="true"><path d="M5 18h38v6H5z" fill="#5f6b3a" stroke="#11141b" stroke-width="2" stroke-linejoin="round"/><path d="M10 18l4-8h13l2 8" fill="none" stroke="#11141b" stroke-width="2.4" stroke-linejoin="round"/><path d="M29 18V12h8l4 6" fill="#7d8a50" stroke="#11141b" stroke-width="2" stroke-linejoin="round"/><circle cx="13" cy="25" r="5" fill="#1c1d20" stroke="#ffd54a" stroke-width="2"/><circle cx="36" cy="25" r="5" fill="#1c1d20" stroke="#ffd54a" stroke-width="2"/><rect x="41" y="19" width="4" height="3" fill="#fff6d8"/></svg>'
 const h = (tag, cls = '', html = '') => {
   const e = document.createElement(tag)
   if (cls) e.className = cls
@@ -54,6 +56,7 @@ export function initLobby(callbacks) {
       <button class="menubtn" data-open="inventory"><span class="ic"><img alt="" src="${svgData(SVG.vest)}"></span><span class="tx o">Inventory</span></button>
     </div>
     <div class="lb-play">
+      <button class="lb-drive" title="Test Drive: try the Jeep and the Dune Buggy on Dustline Ridge (offline)"><span class="vi">${DRIVE_SVG}</span><span><div class="mt o">TEST DRIVE</div><div class="md">Jeep · Dune Buggy</div></span></button>
       <button class="lb-mode"><span class="mi">6v6</span><span><div class="mt o"></div><div class="md"></div></span></button>
       <button class="playbtn o">PLAY</button>
     </div>
@@ -67,6 +70,7 @@ export function initLobby(callbacks) {
   root.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => open(b.dataset.open)))
   root.querySelector('.settings').addEventListener('click', () => open('settings'))
   root.querySelector('.lb-mode').addEventListener('click', () => open('mode'))
+  root.querySelector('.lb-drive').addEventListener('click', () => cb.onTestDrive?.())
   initParty(root)
   root.querySelector('.playbtn').addEventListener('click', () => {
     if (root.classList.contains('queued')) return reopenQueue()

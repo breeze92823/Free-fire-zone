@@ -70,6 +70,7 @@ class PlayerAnimator {
     this.airTime = 0
     this.bank = 0
     this.crouch = 0
+    this.sit = 0 // eased: seated in a vehicle
     this.lie = 0 // eased: + face down (knocked), - face up (dead)
     this.ready = 0 // eased weapon-raise weight
     this.time = 0
@@ -85,7 +86,8 @@ class PlayerAnimator {
   // input: { grounded, speed, verticalVelocity, turn (-1..1),
   //   hold: 'rifle'|'pistol'|'melee'|'fist'|null, pitch (rad, + = down), ready (0..1),
   //   kick (0..1 recoil), reload (0..1 or -1), swing (0..1 or -1), throwing (0..1 or -1),
-  //   crouch (bool), life: 'alive'|'knocked'|'dead', emote: name|null, emoteTime (s) }
+  //   crouch (bool), life: 'alive'|'knocked'|'dead', emote: name|null, emoteTime (s),
+//   sit (bool: in a vehicle seat), drive (bool: hands on the wheel), steer (-1..1) }
   update(dt, input = NO_INPUT) {
     if (!(dt > 0)) return
     this.time += dt
@@ -239,6 +241,28 @@ class PlayerAnimator {
         const r = this.output.rotations
         // Moving crouched keeps a little of the stride on top of the bent legs.
         r[at] = lerp(r[at], (p.x ?? 0) + r[at] * 0.5 * moving, this.crouch)
+      }
+    }
+
+    // Seated (a vehicle): thighs forward, knees bent; the driver's hands go to the wheel.
+    const wantSit = life === 'alive' && input.sit ? 1 : 0
+    this.sit += (wantSit - this.sit) * k(14)
+    if (this.sit > 0.01) {
+      const P = ANIM.sit.pose
+      const r = this.output.rotations
+      for (const bone in P) {
+        const at = boneIndex(bone)
+        r[at] = lerp(r[at], P[bone].x ?? 0, this.sit)
+      }
+      if (input.drive && life === 'alive') {
+        const D = ANIM.sit.drive
+        const st = (input.steer || 0) * deg(14)
+        this.mix('ArmR1', D.ArmR1.x - st, D.ArmR1.y ?? 0, D.ArmR1.z ?? 0, this.sit)
+        this.mix('ArmR2', D.ArmR2.x, 0, 0, this.sit)
+        this.mix('ArmL1', D.ArmL1.x + st, D.ArmL1.y ?? 0, D.ArmL1.z ?? 0, this.sit)
+        this.mix('ArmL2', D.ArmL2.x, 0, 0, this.sit)
+        this.addTo('Spine1', 0, st * 0.5)
+        return
       }
     }
 

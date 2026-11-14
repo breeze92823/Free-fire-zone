@@ -284,6 +284,7 @@ The platform shows only the team's members (`main.js showMates`): players join i
 | `getQuality()`, `setQuality(q)`, `getAutoTier()` | Settings graphics row | `qualityChoice()`; stores `ffz.quality`, toggles the governor, `applyGraphics`; `governor.rung.tier` |
 | `getSensitivity()`, `setSensitivity(v)` | Settings slider | `camera.js` getters / setters |
 | `mapShots()`, `mapThumb()` | vote cards | arrays / data URL rendered at boot with `renderMapShot` / from `mapImg.clean` |
+| `onTestDrive()` | `.lb-drive` (TEST DRIVE) | `enterDrive()` (the offline Test Drive, gameplay.md section 19) |
 
 ### 3.3 Static layout (children of `div.lobby`)
 
@@ -292,7 +293,7 @@ The platform shows only the team's members (`main.js showMates`): players join i
 | `.lb-top` | `.chip.profile` (picture + name from `bloxity.getPfp()` / `displayName()`, fallback `portrait(...)`), `.chip.coins`, `.chip.gems` (the Gems balance, `SVG.gem`), `.chip.rank` (shield SVG tinted with the rank colour, name, progress bar; tooltip with RP to the next rank), spacer, `.iconbtn.settings` | profile chip opens Inventory; gear opens Settings; `.compact` hides the profile chip and the rank text (the badge `.rs` keeps its own height and aspect ratio, so it never collapses to an empty chip) |
 | `.lb-menu` | five `.menubtn[data-open]`: `weapons` (gold), `missions` (with a red `.badge`: finished missions waiting for Claim, `save.js claimable()`; hidden at 0), `store`, `characters`, `inventory` | `open(kind)` |
 | `.pt-under` / `.pt-over` | built by `party.js` (section 3.9) | the Players online dock, team banner, name plates; invite cards and toasts |
-| `.lb-play` | `.lb-mode` (team-size badge, name, description from `MATCH_MODES[profile.mode]`), `.playbtn` | mode chip opens the mode window; PLAY see 3.6 |
+| `.lb-play` | `.lb-drive` (TEST DRIVE: a jeep picture, "Jeep · Dune Buggy"; hidden while queued), `.lb-mode` (team-size badge, name, description from `MATCH_MODES[profile.mode]`), `.playbtn` | TEST DRIVE starts the Test Drive; mode chip opens the mode window; PLAY see 3.6 |
 | `.lb-stats` | "Matches / Wins / Eliminations / Best" from `profile.stats` | hidden in portrait, short landscape and while queued |
 | `.lb-leave` | "Leave the team" | only visible under `.lobby.queued` |
 | `.lb-net` | connection line | text from `paintNet()`: explicit `status(text)`, else by `net.status` (`online`: "Online - N players in this server", `connecting`, `offline`); `.warn` unless online |
@@ -722,3 +723,7 @@ Statements the code contradicts
 - `main.js` comment on the FPS readout says "bottom-right corner"; its style places it bottom-left.
 - `state.js` lists the phases as `boot | lobby | vote | intro | ...`; the client phase is `queue` (`vote` is a server phase).
 - `config.js` comment on `MATCH_MODES` says the round's mode is voted by the players; the lobby has no mode vote, only the mode window (`setMode`) and `play { mode }`.
+
+## Driving HUD (`game/vehicles.css`, `vehicles.js paintHud`)
+
+While seated in a vehicle `body.driving` is set: the weapon panel, the items, the ability diamond and the crosshair are hidden (`visibility: hidden !important`, descendants too, since some HUD children set their own visibility), the touch FIRE buttons give way to BRAKE (engine.md, touch.js), and the interact prompt (now "<vehicle> · Get out", the touch exit button) moves to the bottom-right, above the speed on desktop and above BRAKE on touch. `.veh-hud` shows the speed in km/h (tabular figures), the vehicle's name (plus "· R" while reversing) and, without touch, a key row (W S drive, A D steer, Space handbrake, E get out); bottom-right on desktop, left of BRAKE on touch. Checked at 1280x720, 740x360 (touch) and 375x812 (touch).

@@ -176,6 +176,7 @@ Defaults (`NO_INPUT`) are grounded, idle. `actor.js updateModel` is the only cal
 | Layer | Trigger | What it writes |
 | --- | --- | --- |
 | Crouch | `life === 'alive' && crouch && grounded`; weight `this.crouch` eased at rate 12 | Blends the X rotation of each bone in `ANIM.crouch.pose` toward the crouched value, keeping half of the stride while moving. `applyVisual` lowers the root by `crouch * ANIM.crouch.drop`. |
+| Sit | `life === 'alive' && sit` (seated in a vehicle); weight `this.sit` eased at rate 14 | Blends `ANIM.sit.pose` (thighs forward ~84 deg, knees ~78 deg, spine back 4 deg). With `drive`, the arms go to the wheel (`ANIM.sit.drive`, rolled by `steer` up to 14 deg, `Spine1` follows half of it) and the layer **returns** (no weapon hold). The character's group is placed and tilted by `actor.js` from the vehicle (feet origin = seat hip point minus `DRIVE.hipHeight`). |
 | Down (`writeDown`) | `life !== 'alive'`; **returns after it** | Resets `output`. `knocked`: face-down crawl, arms and legs driven by `this.crawl` (advances with speed). `dead`: static sprawl. |
 | Emote (`writeEmote`) | `input.emote` truthy; **returns after it** | `wave`, `salute`: mixed over the base pose. `dance`, `flex`, `cheer`: set specific bones (others keep the base pose), `dance` / `cheer` add `bobY`. Any other name: portal clip lookup. |
 | Weapon hold | `hold` truthy (a falsy `hold` returns here, before the throw layer) | See below. |

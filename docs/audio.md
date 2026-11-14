@@ -24,6 +24,7 @@ Tunables live in `config.js` `AUDIO`: `volume` 0.8, `storageKey` `'free-fire-zon
 | `setMuted(on)`, `isMuted()` | `core.js` | Player mute, persisted. | `lobby.js` Settings window |
 | `setBreakMuted(on)` | `core.js` | Silence during a portal ad break. | `main.js` via `bloxity.onAdBreak` |
 | `setDucked(on)` | `core.js` | Lower the world bus while a menu window is open. | `main.js` (`onWindow`, `enterRound`) |
+| `setEngine(state)` | `engine.js` | The engine voice of the vehicle the player sits in: `{ rpm 0..1, load 0..1 (throttle), kind: 'jeep' \| 'buggy' }`, or `null` to fade it out. Built on first use on the `engine` bus (two detuned sawtooths an octave apart through a resonant low-pass, a square LFO at half the pitch for the firing pulses, a low-passed brown-noise rumble); pitch follows `rpm`, brightness and level follow `load`. The jeep is a low thrum, the buggy raspier. | `game/vehicles.js` (`updateVehicles`, `exitVehicle`, `clearVehicles`) |
 
 `core.js` also exports `A`, `onStart`, `ready`, `now`, `voice` for the other audio files.
 

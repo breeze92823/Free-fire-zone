@@ -12,6 +12,7 @@ export let world = null
 
 const synced = [] // { body, mesh, prev: {p, q}, curr: {p, q} }
 const tickListeners = []
+const afterTickListeners = []
 let accumulator = 0
 export let alpha = 0 // 0..1 of the way from the last tick to the next one
 
@@ -26,6 +27,10 @@ export async function initPhysics() {
 export function onTick(fn) {
   tickListeners.push(fn)
 }
+// fn(dt) runs right after every physics tick (things that follow a body's new pose: a seated player).
+export function onAfterTick(fn) {
+  afterTickListeners.push(fn)
+}
 
 // Advances the simulation by real frame time; returns the number of ticks run.
 export function stepPhysics(frameDt) {
@@ -39,6 +44,7 @@ export function stepPhysics(frameDt) {
     for (const fn of tickListeners) fn(PHYSICS.fixedStep)
     world.step()
     for (const s of synced) readBody(s.body, s.curr)
+    for (const fn of afterTickListeners) fn(PHYSICS.fixedStep)
     accumulator -= PHYSICS.fixedStep
     ticks++
   }

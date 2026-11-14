@@ -2179,6 +2179,10 @@
 .hud.test .hud-minimap-wrap {
   display: none;
 }
+/* Test Drive: the big island needs its map. */
+.hud.test.drive-test .hud-minimap-wrap {
+  display: block;
+}
 
 /* --- Touch layout (body.touch-ui) -----------------------------------------------------------
    The standard mobile-shooter arrangement, sized from touch.css's --t-* variables:

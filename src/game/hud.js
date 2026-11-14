@@ -973,8 +973,10 @@ const hud = {
     }
   },
   // The offline Weapon Test range: no score, zone or minimap (testRange.js draws its own card).
-  setTest(on) {
+  // Offline practice: the round's HUD parts hide. kind 'drive' (Test Drive) keeps the minimap.
+  setTest(on, kind = '') {
     root?.classList.toggle('test', !!on)
+    root?.classList.toggle('drive-test', !!on && kind === 'drive')
   },
   show(on) {
     root.classList.toggle('on', on)
