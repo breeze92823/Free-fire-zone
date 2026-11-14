@@ -11,13 +11,14 @@ import { createZone } from './zone.js'
 import { clearItems, updateActorItems, updateItems } from './items.js'
 import { activeDrops, resetLoot, updateLoot } from './loot.js'
 import { randomWalkable } from './navgrid.js'
-import { upgradeLevel } from './save.js'
+import { profile, upgradeLevel } from './save.js'
 import * as fx from './fx.js'
 
 const rnd = (a, b) => a + Math.random() * (b - a)
 const tmp = new Vector3()
 
 let zone = null
+export const getZone = () => zone
 export function initMatchSystems(scene) {
   zone = createZone(scene)
   zone.setVisible(false)
@@ -32,7 +33,7 @@ export function createMatch({ st, me, map, playerAvatar, playerName, playerPortr
     isPlayer: true,
     outfit: randomOutfit(),
     operative: me.operative,
-    loadout: { primary: me.primary, secondary: me.secondary, skins: { [me.primary]: me.skinPrimary || 'standard', [me.secondary]: me.skinSecondary || 'standard' } },
+    loadout: { primary: me.primary, secondary: me.secondary, grenade: profile.loadout?.grenade || 'frag', skins: { [me.primary]: me.skinPrimary || 'standard', [me.secondary]: me.skinSecondary || 'standard' } },
     avatar: playerAvatar,
   })
   player.portrait = playerPortrait
@@ -66,7 +67,7 @@ export function createMatch({ st, me, map, playerAvatar, playerName, playerPortr
 }
 
 // Starting utility: the defaults plus the player's bought upgrades. Armour comes from the server.
-function kit(a, first) {
+export function kit(a, first) {
   a.items.frostWall = ITEMS.frostWall.start + upgradeLevel('walls') * 2
   a.items.frag = ITEMS.frag.start + upgradeLevel('frags')
   a.items.medkit = ITEMS.medkit.start + upgradeLevel('medkits')

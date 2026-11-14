@@ -243,8 +243,8 @@ export const LEADERBOARDS = [
 // Keep roomSize / teamMax / minPlayers / respawn in step with its src/constants.ts.
 export const NET = {
   room: 'match',
-  roomSize: 18, // players per room (two teams of teamMax)
-  teamMax: 9,
+  roomSize: 18, // connections per room (the lobby); a round seats 2 x teamMax, the rest queue
+  teamMax: 3, // players per side in a round (a round has 6)
   minPlayers: 2, // a round starts once this many have pressed Play
   // Local development without the Bloxity SDK: the backend's `npm start`.
   devServer: import.meta.env.VITE_SERVER_URL || '',
@@ -253,6 +253,7 @@ export const NET = {
   interpDelay: 0.1, // s other players are drawn behind their newest pose
   connectTimeout: 60, // s of retrying before giving up (cold start can take ~45 s)
   respawnFallback: 5, // s before respawning when there is no portal death screen
+  missedSpawnGrace: 0.7, // s the server may show us alive before a lost 'spawn' message is assumed and we respawn locally
 }
 
 // Ad screens declared once after init (bloxity.js). All in-game banners stay off (they covered the
@@ -369,16 +370,49 @@ export const FONT_FAMILY = 'Fredoka'
 // zoom = aimed FOV (scoped weapons draw the scope overlay when zoom <= scopeFov);
 // price in COINS (earned by playing). Nothing is ever sold for premium currency.
 export const WEAPONS = {
-  striker: { name: 'Striker AR', slot: 'primary', kind: 'rifle', hold: 'rifle', damage: 34, interval: 0.1, mag: 30, reserve: 150, reload: 2.1, spread: [2.4, 0.55], recoil: 0.7, range: 140, headMul: 2, auto: true, zoom: 52, price: 0, model: 'ar', icon: 'AR' },
-  viper: { name: 'Viper SMG', slot: 'secondary', kind: 'smg', hold: 'rifle', damage: 23, interval: 0.072, mag: 35, reserve: 175, reload: 1.7, spread: [2.8, 1.2], recoil: 0.45, range: 70, headMul: 1.8, auto: true, zoom: 58, price: 0, model: 'smg', icon: 'SMG' },
-  hornet: { name: 'Hornet P9', slot: 'secondary', kind: 'pistol', hold: 'pistol', damage: 42, interval: 0.2, mag: 12, reserve: 96, reload: 1.3, spread: [2, 0.6], recoil: 1.2, range: 80, headMul: 2, auto: false, zoom: 58, price: 400, model: 'pistol', icon: 'P9' },
-  thunder: { name: 'Thunder 12', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 19, pellets: 8, interval: 0.8, mag: 6, reserve: 36, reload: 2.6, spread: [6.5, 4.5], recoil: 4, range: 28, headMul: 1.5, auto: false, zoom: 60, price: 1500, model: 'shotgun', icon: 'SG' },
-  tempest: { name: 'Tempest LMG', slot: 'primary', kind: 'lmg', hold: 'rifle', damage: 31, interval: 0.085, mag: 60, reserve: 180, reload: 3.4, spread: [3.2, 1.3], recoil: 0.6, range: 130, headMul: 1.8, auto: true, zoom: 52, price: 2500, model: 'lmg', icon: 'LMG' },
-  marksman: { name: 'Marksman DMR', slot: 'primary', kind: 'dmr', hold: 'rifle', damage: 72, interval: 0.32, mag: 10, reserve: 60, reload: 2.4, spread: [3.5, 0.15], recoil: 2.4, range: 260, headMul: 2.2, auto: false, zoom: 30, scope: true, price: 2200, model: 'dmr', icon: 'DMR' },
-  hawk: { name: 'Hawk-50 Sniper', slot: 'primary', kind: 'sniper', hold: 'rifle', damage: 165, interval: 1.25, mag: 5, reserve: 30, reload: 3, spread: [6, 0], recoil: 5, range: 400, headMul: 2.5, auto: false, zoom: 20, scope: true, price: 3200, model: 'sniper', icon: 'SNP' },
-  knife: { name: 'Combat Knife', slot: 'melee', kind: 'knife', hold: 'melee', damage: 60, interval: 0.55, range: 2.7, price: 0, model: 'knife', icon: 'KNF' },
-  fists: { name: 'Fists', slot: 'fists', kind: 'fists', hold: 'fist', damage: 22, interval: 0.42, range: 2.1, price: 0, model: 'fists', icon: 'FST' },
+  striker: { name: 'Striker AR', cat: 'rifle', slot: 'primary', kind: 'rifle', hold: 'rifle', damage: 34, interval: 0.1, mag: 30, reserve: 150, reload: 2.1, spread: [2.4, 0.55], recoil: 0.7, range: 140, headMul: 2, auto: true, zoom: 52, price: 0, model: 'ar', icon: 'AR', desc: 'The all-round starter rifle: steady full-auto fire that works at most ranges.' },
+  ridgeback: { name: 'Ridgeback', cat: 'rifle', tier: 'basic', slot: 'primary', kind: 'rifle', hold: 'rifle', damage: 41, interval: 0.125, mag: 30, reserve: 150, reload: 2.4, spread: [2.8, 0.7], recoil: 1, range: 150, headMul: 2, auto: true, zoom: 50, price: 1500, model: 'ridge', icon: 'RB', desc: 'Hard-hitting battle rifle: fewer shots to drop a target, but it kicks. Tap-fire it at range.' },
+  kestrel: { name: 'Kestrel BP', cat: 'rifle', slot: 'primary', kind: 'rifle', hold: 'rifle', damage: 33, interval: 0.095, mag: 30, reserve: 150, reload: 2.2, spread: [2, 0.45], recoil: 0.6, range: 160, headMul: 2, auto: true, zoom: 46, pierce: 0.5, price: 1800, model: 'bullpup', icon: 'KBP', desc: 'Fast, stable bullpup with armour-piercing rounds: vests and helmets stop half as much of its damage.' },
+  tempest: { name: 'Tempest LMG', cat: 'rifle', slot: 'primary', kind: 'lmg', hold: 'rifle', damage: 31, interval: 0.085, mag: 60, reserve: 180, reload: 3.4, spread: [3.2, 1.3], recoil: 0.6, range: 130, headMul: 1.8, auto: true, zoom: 52, price: 2400, model: 'lmg', icon: 'LMG', desc: 'A 60-round belt for holding a lane. Long reload: pick your moment.' },
+  marksman: { name: 'Marksman DMR', cat: 'rifle', slot: 'primary', kind: 'dmr', hold: 'rifle', damage: 72, interval: 0.32, mag: 10, reserve: 60, reload: 2.4, spread: [3.5, 0.15], recoil: 2.4, range: 260, headMul: 2.2, auto: false, zoom: 30, scope: true, price: 2200, model: 'dmr', icon: 'DMR', desc: 'Scoped semi-auto rifle: quick follow-up shots at long range.' },
+  hawk: { name: 'Hawk-50 Sniper', cat: 'rifle', slot: 'primary', kind: 'sniper', hold: 'rifle', damage: 165, interval: 1.25, mag: 5, reserve: 30, reload: 3, spread: [6, 0], recoil: 5, range: 400, headMul: 2.5, auto: false, zoom: 20, scope: true, price: 3500, model: 'sniper', icon: 'SNP', desc: 'The longest reach and the biggest hit: a headshot drops anyone, helmet or not. Aim (right click) to scope in.' },
+  viper: { name: 'Viper SMG', cat: 'smg', slot: 'secondary', kind: 'smg', hold: 'rifle', damage: 23, interval: 0.072, mag: 35, reserve: 175, reload: 1.7, spread: [2.8, 1.2], recoil: 0.45, range: 70, headMul: 1.8, auto: true, zoom: 58, price: 0, model: 'smg', icon: 'SMG', desc: 'The starter SMG: a fast-firing backup for close fights.' },
+  wasp: { name: 'Wasp', cat: 'smg', tier: 'basic', slot: 'secondary', kind: 'smg', hold: 'rifle', damage: 19, interval: 0.058, mag: 32, reserve: 160, reload: 1.6, spread: [3, 1.4], recoil: 0.35, range: 60, headMul: 1.7, auto: true, zoom: 58, price: 900, model: 'wasp', icon: 'WSP', desc: 'A compact bullet hose: the highest fire rate in the arsenal, best up close.' },
+  hornet: { name: 'Hornet P9', cat: 'pistol', tier: 'basic', slot: 'secondary', kind: 'pistol', hold: 'pistol', damage: 42, interval: 0.2, mag: 12, reserve: 96, reload: 1.3, spread: [2, 0.6], recoil: 1.2, range: 80, headMul: 2, auto: false, zoom: 58, price: 600, model: 'pistol', icon: 'P9', desc: 'Light, accurate sidearm with a quick reload.' },
+  talon: { name: 'Talon .50', cat: 'pistol', tier: 'basic', slot: 'secondary', kind: 'pistol', hold: 'pistol', damage: 68, interval: 0.42, mag: 7, reserve: 49, reload: 1.6, spread: [2.4, 0.4], recoil: 2.6, range: 90, headMul: 2.2, auto: false, zoom: 54, price: 1200, model: 'heavy', icon: 'T50', desc: 'A hand cannon: seven heavy rounds that hit like a rifle. Make each one count.' },
+  thunder: { name: 'Thunder 12', cat: 'shotgun', tier: 'basic', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 19, pellets: 8, interval: 0.8, mag: 6, reserve: 36, reload: 2.6, spread: [6.5, 4.5], recoil: 4, range: 28, headMul: 1.5, auto: false, zoom: 60, price: 1200, model: 'shotgun', icon: 'SG', desc: 'Pump shotgun: six shells of close-range stopping power.' },
+  breaker: { name: 'Breaker-2', cat: 'shotgun', tier: 'basic', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 24, pellets: 9, interval: 0.3, mag: 2, reserve: 30, reload: 2.2, spread: [7, 5.5], recoil: 5, range: 22, headMul: 1.5, auto: false, zoom: 60, price: 1500, model: 'double', icon: 'B2', desc: 'Two barrels, two shots: the deadliest blast up close. Past 10 m it falls off fast.' },
+  cyclone: { name: 'Cyclone Auto', cat: 'shotgun', slot: 'primary', kind: 'shotgun', hold: 'rifle', damage: 14, pellets: 7, interval: 0.28, mag: 10, reserve: 40, reload: 2.8, spread: [6, 4.2], recoil: 2.6, range: 24, headMul: 1.4, auto: true, zoom: 60, price: 2600, model: 'autoshot', icon: 'CYC', desc: 'Full-auto shotgun with a 10-shell box: hold the trigger and sweep a room.' },
+  ronin: { name: 'Ronin Blade', cat: 'special', slot: 'secondary', kind: 'sword', hold: 'melee', melee: true, damage: 70, interval: 0.6, range: 3.2, speedMul: 1.15, price: 2500, model: 'blade', icon: 'RON', desc: 'A long blade for your secondary slot: wider reach than the knife, and you run 15% faster while you hold it.' },
+  mender: { name: 'Mender HP-2', cat: 'special', slot: 'secondary', kind: 'medic', hold: 'pistol', damage: 12, heal: 10, interval: 0.25, mag: 10, reserve: 60, reload: 2.4, spread: [1.6, 0.4], recoil: 0.4, range: 35, headMul: 1.5, auto: true, zoom: 56, price: 3000, model: 'mender', icon: 'MND', sound: 'pistol', desc: 'Every shot HEALS a teammate 10 HP up to 35 m, even a knocked one (it keeps them alive longer but does not revive). Enemies take a light sting.' },
+  knife: { name: 'Combat Knife', slot: 'melee', kind: 'knife', hold: 'melee', melee: true, damage: 60, interval: 0.55, range: 2.7, price: 0, model: 'knife', icon: 'KNF' },
+  fists: { name: 'Fists', slot: 'fists', kind: 'fists', hold: 'fist', melee: true, damage: 22, interval: 0.42, range: 2.1, price: 0, model: 'fists', icon: 'FST' },
 }
+// Weapons Store categories (WEAPONS[id].cat; `grenade` lists GRENADES). Weapons, grenades and
+// passes are priced in the game's own Gems (earned by playing, never sold); the backend's
+// catalog.ts holds the same prices and decides every purchase.
+export const WEAPON_CATS = [
+  { id: 'all', name: 'All' },
+  { id: 'pistol', name: 'Pistols' },
+  { id: 'rifle', name: 'Rifles' },
+  { id: 'shotgun', name: 'Shotguns' },
+  { id: 'smg', name: 'SMGs' },
+  { id: 'grenade', name: 'Grenades' },
+  { id: 'special', name: 'Specials' },
+]
+// Throwables (T): the loadout picks one; frag is the starter. price in Gems. Mirrored by the
+// backend's rules.ts GRENADES (damage, radius, fuse) and catalog.ts GRENADE_PRICES.
+export const GRENADES = {
+  frag: { name: 'Frag Grenade', damage: 170, radius: 6.5, fuse: 1.9, price: 0, model: 'frag', desc: 'The classic: bounces, then goes off after 1.9 s. Big damage in a 6.5 m radius.' },
+  pulse: { name: 'Pulse Grenade', damage: 120, radius: 8.5, fuse: 1.2, price: 800, model: 'pulse', desc: 'A short fuse and the widest blast (8.5 m): less damage, but hard to run from.' },
+  breach: { name: 'Breacher Charge', damage: 230, radius: 5, fuse: 2.4, price: 1200, model: 'breach', desc: 'Slow 2.4 s fuse, tight 5 m blast, and the heaviest damage of any throwable.' },
+}
+// Weapon passes: unlock a set of weapons for good (and any added to the set later), in Gems.
+// The set is every weapon whose `tier` is the pass id (backend catalog.ts PASSES lists the same).
+export const PASSES = {
+  basic: { name: 'Field Arsenal Pass', desc: 'All basic weapons, forever', price: 3500 },
+}
+export const passWeapons = (id) => Object.keys(WEAPONS).filter((w) => WEAPONS[w].tier === id)
 export const SCOPE_FOV = 34 // aimed FOV at or below this draws the scope overlay
 export const WEAPON_SCALE = 1.3 // held/back weapon models vs their real-world size
 export const BULLET = { tracerSpeed: 420, tracerLength: 3.2, falloffStart: 0.6 } // falloff from this share of range down to 60% damage at full range
@@ -430,8 +464,8 @@ export const HEALTH = {
 // --- Match modes ---------------------------------------------------------------------
 export const MATCH_MODES = {
   // Online: up to NET.teamMax per side, real players only. The round's mode is voted by the players.
-  clash: { name: 'Team Clash', desc: 'Up to 9 v 9 · respawns · most eliminations wins', teamSize: 9, duration: 240, scoreToWin: 45, respawn: true },
-  squad: { name: 'Squad Showdown', desc: 'Up to 9 v 9 · respawns · first to 25', teamSize: 9, duration: 180, scoreToWin: 25, respawn: true },
+  clash: { name: 'Team Clash', desc: 'Up to 3 v 3 · respawns · most eliminations wins', teamSize: 3, duration: 240, scoreToWin: 45, respawn: true },
+  squad: { name: 'Squad Showdown', desc: 'Up to 3 v 3 · respawns · first to 25', teamSize: 3, duration: 180, scoreToWin: 25, respawn: true },
 }
 export const MATCH = {
   countdown: 4, // s frozen at the start (3, 2, 1, FIGHT)
@@ -508,7 +542,7 @@ export const TEAMS = {
   orange: { name: 'Orange', color: '#ff8a1f', dark: '#b84a00', tag: '#ffd29f' },
 }
 
-// --- Progression, rewards and shops (coins only) ------------------------------------
+// --- Progression, rewards and shops (coins; Gems are earned only) ---------------------
 export const REWARDS = {
   perElimination: 12,
   perKnock: 3,
@@ -519,6 +553,19 @@ export const REWARDS = {
   rpWin: 40,
   rpLoss: -12,
   rpPerElim: 3,
+}
+// Gems: the game's own currency, NOT Bloxity Gems and not premium currency. Earned only by playing
+// (eliminations and knocks, granted by the server at once: backend rules.ts GEMS, the `reward`
+// message), never sold for real money or Bloxity Gems. Shown by the HUD's kill popup and the lobby.
+export const GEMS = {
+  perElimination: 12,
+  perKnock: 3,
+  headshot: 3, // extra on a headshot elimination
+  streak: 4, // extra per elimination beyond the first in a streak (Double +4, Triple +8, ...)
+  streakCap: 5,
+  win: 40, // at the results (none for leaving a running round)
+  loss: 15,
+  mvp: 25,
 }
 export const RANKS = [
   { name: 'Bronze', rp: 0, color: '#cd7f32' },
@@ -531,9 +578,10 @@ export const RANKS = [
 ]
 export const START_PROFILE = {
   coins: 600,
+  gems: 0, // earned by eliminations; never bought
   rp: 0,
-  owned: { weapons: ['striker', 'viper', 'knife', 'fists'], skins: ['standard'], operatives: ['rook'], emotes: ['wave'] },
-  loadout: { primary: 'striker', secondary: 'viper', operative: 'rook', emote: 'wave', skin: { striker: 'standard', viper: 'standard' } },
+  owned: { weapons: ['striker', 'viper', 'knife', 'fists'], skins: ['standard'], operatives: ['rook'], emotes: ['wave'], grenades: ['frag'], passes: [] },
+  loadout: { primary: 'striker', secondary: 'viper', operative: 'rook', emote: 'wave', grenade: 'frag', skin: { striker: 'standard', viper: 'standard' } },
   upgrades: {}, // id -> level
   stats: { matches: 0, wins: 0, eliminations: 0, deaths: 0, damage: 0, best: 0 },
   mode: 'clash',

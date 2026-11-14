@@ -39,9 +39,68 @@ const loadoutOf = (p) => ({ primary: p.primary, secondary: p.secondary, skins: {
 // The blocky look a player wears without a Bloxity avatar: the same on every client.
 export const outfitForId = (sid) => randomOutfit(mulberry32(hash(sid)))
 
+// --- Stand-ins built ahead ----------------------------------------------------------------------
+// Building a player's blocky stand-in (buildCharacter: merged meshes, painted face and shirt) took
+// ~60 ms per player on a slow laptop, all in the round's first frame. The players queued for the next
+// round are known in the queue, so prebuildRemotes() (main.js, every roster tick in `queue`) builds
+// theirs there, one per idle slice, for both teams (the armband colour is baked into the merged mesh);
+// makeRemote takes the matching one. Players who left are freed.
+const prebuilt = new Map() // `${sid}|${team}` -> character root
+const buildQueue = []
+let building = false
+const idle = (fn) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(fn, { timeout: 500 }) : setTimeout(fn, 30))
+
+function freeCharacter(root) {
+  root.traverse((n) => {
+    if (n.isMesh) n.geometry.dispose()
+  })
+  for (const m of root.userData.mats || []) {
+    m.map?.dispose()
+    m.dispose()
+  }
+}
+
+export function prebuildRemotes() {
+  const st = net.state
+  if (!st?.players) return
+  const want = new Set()
+  st.players.forEach((p, sid) => {
+    if (sid === net.sessionId || !p.inMatch) return
+    for (const team of ['blue', 'orange']) {
+      const key = `${sid}|${team}`
+      want.add(key)
+      if (!prebuilt.has(key) && !buildQueue.includes(key)) buildQueue.push(key)
+    }
+  })
+  for (const [key, root] of prebuilt) {
+    if (want.has(key)) continue
+    prebuilt.delete(key)
+    freeCharacter(root)
+  }
+  if (building || !buildQueue.length) return
+  building = true
+  const step = () => {
+    const key = buildQueue.shift()
+    if (key && !prebuilt.has(key)) {
+      const [sid, team] = key.split('|')
+      prebuilt.set(key, buildCharacter(outfitForId(sid), team))
+    }
+    if (buildQueue.length) idle(step)
+    else building = false
+  }
+  idle(step)
+}
+
+function takePrebuilt(sid, team) {
+  const key = `${sid}|${team}`
+  const root = prebuilt.get(key)
+  prebuilt.delete(key) // the actor owns it now (and frees it with itself)
+  return root
+}
+
 function makeRemote(sid, p) {
   const outfit = outfitForId(sid)
-  const a = new Actor({ name: p.name || 'Player', team: p.team, outfit, operative: p.operative, loadout: loadoutOf(p) })
+  const a = new Actor({ name: p.name || 'Player', team: p.team, outfit, operative: p.operative, loadout: loadoutOf(p), avatar: takePrebuilt(sid, p.team) })
   a.netId = sid
   a.remote = true
   a.snaps = []
@@ -193,6 +252,8 @@ function copyStats(a, p) {
 
 let mvpT = 0
 // Mirrors the server onto the actors; skipped during the results lineup (staged locally).
+let missedSpawnT = 0 // s the server has had us alive while we still show dead
+
 export function applyState(dt) {
   const st = net.state
   const m = G.match
@@ -207,7 +268,24 @@ export function applyState(dt) {
       const pl = G.player
       if (!pl) return
       // Knocks, revives and eliminations follow the server; a respawn arrives with 'spawn' (it moves the player).
-      if (pl.life !== p.life && !(pl.life === 'dead' && p.life === 'alive')) pl.life = p.life
+      if (pl.life === 'dead' && p.life === 'alive') {
+        // The 'spawn' message normally lands before the state patch that says alive. If we are still
+        // dead well after the server respawned us, the message was lost (a connection blip): respawn
+        // locally, otherwise the player is stuck on "Respawning…" and the server ignores `respawn`.
+        missedSpawnT += dt
+        if (missedSpawnT > NET.missedSpawnGrace) {
+          missedSpawnT = 0
+          pl.life = 'alive'
+          spawnActor(pl, false)
+        }
+      } else {
+        missedSpawnT = 0
+        if (pl.life !== p.life) {
+          pl.life = p.life
+          // A lost 'elim' message: still give the dead player a respawn timer.
+          if (p.life === 'dead') pl.respawnAt = G.time + NET.respawnFallback
+        }
+      }
       pl.hp = p.hp
       pl.downHp = p.downHp
       pl.vest = p.vest
@@ -322,6 +400,12 @@ export function initOnline() {
     fx.poof(target.pos, fx.FX_COLORS.white, 20)
     emit('elimination', { target, killer, weapon: w || null, head: !!h, streak: s || 0 })
   })
+  // What the server granted this player for a knock / elimination (Gems now, coins + rank points
+  // counted into the round's rewards): the HUD's popup and multi-kill banner.
+  onNet('reward', ({ k, t, gems, coins, rp, h, s, b }) => {
+    if (!G.match) return
+    emit('reward', { kind: k === 'knock' ? 'knock' : 'elim', target: byNet(t), gems: gems | 0, coins: coins | 0, rp: rp | 0, head: !!h, streak: s | 0, bonus: b | 0 })
+  })
   onNet('revive', ({ t, b }) => {
     const target = byNet(t) || (t === net.sessionId ? G.player : null)
     if (!target || !G.match) return
@@ -372,8 +456,8 @@ export function initOnline() {
     ends.forEach((pt, i) => {
       if (i < 3 || Math.random() < 0.4) fx.tracer(muzzle, tmp2.set(pt[0], pt[1], pt[2]), def.kind === 'sniper' ? fx.FX_COLORS.white : null)
     })
-    if (!(G.time < a.cloakUntil)) sfx.shot(def.kind === 'lmg' ? 'lmg' : def.kind, { ...spatial(muzzle.x, muzzle.y, muzzle.z), own: false })
-    if (def.kind === 'knife' || def.kind === 'fists') a.swingT = 0
+    if (def.melee) a.swingT = 0
+    else if (!(G.time < a.cloakUntil)) sfx.shot(def.sound || def.kind, { ...spatial(muzzle.x, muzzle.y, muzzle.z), own: false })
     emit('shot', { actor: a, pos: muzzle, recoil: def.recoil })
     // A near miss whizzes past the player's head.
     const pl = G.player
@@ -396,9 +480,16 @@ export function initOnline() {
       }
     }
   })
-  onNet('throw', ({ id, p, v }) => {
+  onNet('throw', ({ id, p, v, k }) => {
     const a = byNet(id)
-    if (a && G.match) remoteThrow(a, p, v)
+    if (a && G.match) remoteThrow(a, p, v, k)
+  })
+  // A medic weapon healed someone: { t: target, a: healer, n: HP }.
+  onNet('healed', ({ t, a, n }) => {
+    if (!G.match) return
+    const target = byNet(t) || (t === net.sessionId ? G.player : null)
+    const by = byNet(a) || (a === net.sessionId ? G.player : null)
+    if (target) emit('heal', { target, by, amount: n })
   })
   onNet('boom', ({ x, y, z }) => {
     if (G.match) explodeVisual(new Vector3(x, y, z))
@@ -457,13 +548,13 @@ export function trackRoster() {
   known = now
 }
 
-// Everyone in the room right now (lobby squad list): [{ id, name, pfp, inMatch, team }].
+// Everyone in the room right now (lobby "Players online" + team): [{ id, name, pfp, inMatch, team, squad, squadLead, ... }].
 export function roster() {
   const st = net.state
   if (!st?.players) return []
   const out = []
   st.players.forEach((p, sid) =>
-    out.push({ id: sid, name: p.name, pfp: p.pfp, inMatch: p.inMatch, team: p.team, primary: p.primary, secondary: p.secondary, avatar: p.avatar, outfitKey: p.outfitKey, me: sid === net.sessionId }),
+    out.push({ id: sid, name: p.name, pfp: p.pfp, inMatch: p.inMatch, team: p.team, primary: p.primary, secondary: p.secondary, avatar: p.avatar, outfitKey: p.outfitKey, squad: p.squad, squadLead: p.squadLead, me: sid === net.sessionId }),
   )
   return out
 }

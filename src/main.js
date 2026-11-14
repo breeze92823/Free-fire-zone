@@ -12,6 +12,10 @@ import { initPhysics, stepPhysics } from './physics.js'
 import { createLighting } from './lighting.js'
 import { createWorld } from './world.js'
 import { createPostFx } from './postfx.js'
+import { addWarmTarget, compileNow, drawWarm, initWarmup, keepAlive, warmObject, warmScene, warmTargets } from './warmup.js'
+import { buildWarmKit } from './game/warmkit.js'
+import { frameEnd, frameStart, heap, hitches, span, spanEnd } from './prof.js'
+import { prewarmIcons } from './game/icons.js'
 import { setNeonBloom } from './propkit.js'
 import { loadBaseCharacter } from './avatar/character.js'
 import { applyProportions } from './avatar/loader.js'
@@ -20,11 +24,12 @@ import { disposeLook, isBloxityRig, lookFromJson, lookToJson, prewarmLook, strea
 import { buildIsland } from './world/index.js'
 import { installAudio, setBreakMuted, setListener, setVolume, setDucked, sfx, spatial, updateAmbience } from './audio/index.js'
 import { hasEmoteClip, registerEmoteClip } from './avatar/animator.js'
-import { G, on } from './game/state.js'
+import { G, emit, on } from './game/state.js'
 import { initFx, setFxScale, updateFx } from './game/fx.js'
 import { buildLoot } from './game/loot.js'
 import { buildNav } from './game/navgrid.js'
 import { createMatch, initMatchSystems, spawnActor, teardownMatch, updateMatch } from './game/match.js'
+import { endTest, startTest, testStartPose, updateTest } from './game/testRange.js'
 import { bindKeys, interactPress, playEmote, updateController, useItem, useUlt, view } from './game/controller.js'
 import * as combat from './game/combat.js'
 import { selectSlot, startReload } from './game/combat.js'
@@ -35,7 +40,7 @@ import lobby, { initLobby, showLoading } from './game/lobby.js'
 import { hideResults, showResults, updateResults } from './game/results.js'
 import { profile } from './game/save.js'
 import { connect, disconnect, me, net, onNet, online, reportRoom, send, setJoinOptions } from './net.js'
-import { applyState, initOnline, outfitForId, reconcile, remoteAimDir, roster, sendPose, setThree, syncClock, syncLoot, trackRoster } from './game/online.js'
+import { applyState, initOnline, outfitForId, prebuildRemotes, reconcile, remoteAimDir, roster, sendPose, setThree, syncClock, syncLoot, trackRoster } from './game/online.js'
 import { buildCharacter, portrait, randomOutfit } from './game/characters.js'
 
 // Boot: Bloxity SDK -> renderer -> Rapier -> lighting, sea, island, loot, nav
@@ -91,17 +96,82 @@ function applySetting(key, value) {
 
 // Everything a preset can change while the game runs (texture resolution, model detail,
 // particle pools and antialias stay as the island was built).
+// Shadows on/off and bloom on/off change the shader of every material (bloom: the scene is drawn into
+// an HDR target instead of the screen), and a new anisotropy re-uploads every texture. Done mid-round
+// that froze the game for seconds (measured 8-10 s on an Intel iGPU), so during a round those parts only
+// fade (shadow pass and bloom pass skipped, no shader change) and the real switch waits for the round to
+// end (closeMatch), followed by a background warm-up in the lobby. Pixel ratio, view distance and the
+// shadow map's size and range apply at once.
+let appliedGraphics = null // the preset whose shader-affecting parts are live
+let pendingGraphics = null // a preset waiting for the round to end
+const shaderChange = (a, b) => !!a && (a.shadows !== b.shadows || a.bloom !== b.bloom || a.anisotropy !== b.anisotropy)
 function applyGraphics(next) {
   G.preset = next
+  const change = shaderChange(appliedGraphics, next)
+  if (G.match && change) {
+    const was = appliedGraphics
+    pendingGraphics = next
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, next.dpr))
+    lighting?.setShadows({ ...next, shadows: was.shadows })
+    lighting?.setShadowsActive(was.shadows && next.shadows)
+    postfx?.setBloomActive(was.bloom && next.bloom)
+    setNeonBloom(was.bloom && next.bloom)
+    viewFar = -1
+    resize()
+    return
+  }
+  pendingGraphics = null
+  appliedGraphics = next
   renderer.shadowMap.enabled = next.shadows
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, next.dpr))
   lighting?.setShadows(next)
+  lighting?.setShadowsActive(true)
   postfx?.configure(next)
   lobbyFx?.configure(next)
   setNeonBloom(next.bloom)
   setAnisotropy(Math.min(next.anisotropy, renderer.capabilities.getMaxAnisotropy()))
   viewFar = -1 // updateView() re-applies the view distance next frame
   resize()
+  if (change) {
+    scheduleWarmup()
+    // The lobby scene needs the new shaders at once: compile them in parallel and skip its redraw until
+    // they are ready (the menus keep working; a synchronous recompile froze it for ~2 s).
+    const lobbyTarget = warmTargets()[1]
+    if (lobbyTarget) {
+      const hold = warmScene(lobbyTarget, { draw: false }).finally(() => {
+        if (lobbyHold === hold) lobbyHold = null
+      })
+      lobbyHold = hold
+    }
+  }
+}
+let lobbyHold = null // a lobby redraw waits for its shaders after a graphics switch
+
+// Shader / texture warm-up (warmup.js) of the game scene and the lobby, run from the lobby: in the
+// background (parallel compile, textures on a time budget), then one forced draw of the game scene
+// inside a lobby frame (frame() calls it right before the lobby's own render, so nothing shows).
+let warmState = '' // '' | 'compile' (wanted) | 'busy' | 'draw' (compiled, the draw is next)
+let warmKit = null // sample characters / guns / walls / drops (game/warmkit.js), kept for good
+function scheduleWarmup() {
+  warmState = 'compile'
+}
+function pumpWarmup() {
+  if (warmState === 'compile') {
+    warmState = 'busy'
+    const [game, ...rest] = warmTargets()
+    Promise.all([warmScene(game, { draw: false, extra: warmKit ? [warmKit] : [] }), ...rest.map((t) => warmScene(t, { draw: false }))])
+      .catch((err) => console.warn('[warmup]', err))
+      .then(() => {
+        if (warmState === 'busy') warmState = 'draw'
+      })
+  } else if (warmState === 'draw' && !lobbyHold) {
+    // (not while the lobby's redraw is held: nothing would cover the draw's cleared screen)
+    warmState = ''
+    // The local avatar (on the lobby platform) is borrowed for this one draw, then put back.
+    const home = avatar?.parent
+    drawWarm(warmTargets()[0], [warmKit, home ? avatar : null].filter(Boolean))
+    if (home) home.add(avatar)
+  }
 }
 
 // View distance: fog + camera far plane from the preset; the intro flyover always sees the island.
@@ -153,6 +223,9 @@ G.camera = camera
 G.renderer = renderer
 postfx = createPostFx(renderer, scene, camera)
 postfx.configure(preset)
+appliedGraphics = preset
+initWarmup(renderer)
+addWarmTarget(scene, camera, postfx) // the first target is the game scene
 let lobbyScene = null
 
 function resize() {
@@ -236,7 +309,6 @@ hud.init({
   onMapOpen: (open) => {
     if (open) document.exitPointerLock?.()
   },
-  coinsPerElim: 12,
 })
 hud.setMapImage(mapImg)
 hud.touch = installTouch({
@@ -249,10 +321,16 @@ lobbyScene = createLobbyScene()
 lobbyScene.rebuildSquad(null, [])
 lobbyFx = createPostFx(renderer, lobbyScene.scene, lobbyScene.camera)
 lobbyFx.configure(G.preset)
+addWarmTarget(lobbyScene.scene, lobbyScene.camera, lobbyFx)
 resize()
 initLobby({
   onPlay: () => startMatchFlow(),
   onLeaveQueue: () => leaveMatch(),
+  // "Leave the team": out of the lobby team (the server also takes this player out of its queue).
+  onLeaveTeam: () => {
+    send('leaveSquad')
+    if (G.phase === 'queue') backToLobby()
+  },
   onVote: (map) => send('vote', { map }),
   onRank: (i) => lobbyScene.setRank(i),
   onWindow: (open) => {
@@ -260,6 +338,8 @@ initLobby({
     if (G.phase === 'lobby') bloxity.showAdScreen(open ? 'panel' : 'lobby')
   },
   onLoadout: () => lobbyScene.setPlayerAvatar(avatar, loadoutForActor()),
+  // The Weapons Store's TEST button: the offline test range.
+  onTestWeapon: (weaponId, grenadeId) => enterTest(weaponId, grenadeId),
   getQuality: () => qualityChoice(),
   // What Auto is running right now (for the lobby's label).
   getAutoTier: () => governor.rung.tier,
@@ -323,7 +403,9 @@ async function loadAvatar() {
   sendAvatar()
   try {
     if (!bloxity.hasSdk()) {
-      wearAvatar(await loadBaseCharacter())
+      const root = await loadBaseCharacter()
+      await warmObject(root) // streamLook does this for the Bloxity looks
+      wearAvatar(root)
       return
     }
     // The first usable build is shown at once; streamLook keeps retrying a look with a missing
@@ -420,8 +502,22 @@ function setMood(map) {
 }
 
 // PLAY: join the room's next round (or the running one). The server waits for NET.minPlayers.
+// The icons a round's HUD and kill feed draw (icons.js prewarmIcons): every gun as the feed shows it,
+// and the loadout with its skins as the weapon slots and the weapon card show it.
+function prewarmHudIcons() {
+  const list = Object.keys(WEAPONS).map((id) => [id, 'standard', 160, 70])
+  const lo = profile.loadout
+  for (const id of [lo.primary, lo.secondary, 'knife']) {
+    if (!WEAPONS[id]) continue
+    const skin = lo.skin?.[id] || 'standard'
+    list.push([id, skin, 160, 70], [id, skin, 256, 110])
+  }
+  prewarmIcons(list)
+}
+
 async function startMatchFlow() {
   if (G.phase !== 'lobby') return
+  prewarmHudIcons() // the loadout may have changed in the shops
   if (!online()) {
     lobby.status('Connecting to the game server…')
     if (!(await connect())) {
@@ -462,11 +558,21 @@ function enterRound() {
   lobby.show(false)
   setMood(currentMap)
   lobbyScene.releasePlayer()
+  let t = span()
   createMatch({ st, me: mine, map: currentMap, playerAvatar: avatar, playerName: mine.name || 'You', playerPortrait: bloxity.getPfp() || portrait(playerOutfit), netId: net.sessionId })
+  spanEnd('enter:createMatch', t)
+  t = span()
   reconcile()
+  spanEnd('enter:reconcile', t)
+  t = span()
   syncLoot()
-  renderer.compile(scene, camera)
+  spanEnd('enter:loot', t)
+  t = span()
+  compileNow(warmTargets()[0]) // normally nothing left: the lobby's warm-up did it (warmup.js)
+  spanEnd('enter:compile', t)
+  t = span()
   hud.begin(currentMap.name)
+  spanEnd('enter:hud', t)
   hud.show(true)
   bloxity.showAdScreen('gameplay') // gameplay banners are declared off; this just reports the screen
   setGameInput(true)
@@ -496,6 +602,10 @@ function syncFlow() {
   trackRoster()
   const st = net.state
   const mine = me()
+  if (G.test) {
+    if (mine?.inMatch) exitTest(false) // the team leader pressed PLAY: off to the queue
+    else return
+  }
   if (!st || !mine) {
     if (G.phase === 'queue') backToLobby()
     return
@@ -506,6 +616,13 @@ function syncFlow() {
       return
     }
     if (RUNNING.has(st.phase) && mine.team) return enterRound()
+    lobby.showQueue(queueInfo())
+    return
+  }
+  // The team leader pressed PLAY: the server queued this player too.
+  if (G.phase === 'lobby' && mine.inMatch && performance.now() - leftLobbyAt > 2500) {
+    G.phase = 'queue'
+    queuedAt = performance.now()
     lobby.showQueue(queueInfo())
     return
   }
@@ -602,6 +719,7 @@ function closeMatch() {
   hideResults()
   hud.show(false)
   if (G.match) teardownMatch()
+  if (pendingGraphics) applyGraphics(pendingGraphics) // held back during the round (see applyGraphics)
   setGameInput(false)
   setTouchActive(false)
   setMood(MAPS[0])
@@ -612,10 +730,39 @@ function closeMatch() {
   reportRoom()
 }
 
+// --- Weapon Test (offline): from the lobby's Weapons Store, back to it -----------------------------
+function enterTest(weaponId, grenadeId) {
+  if (G.phase !== 'lobby' || G.match) return
+  lobby.show(false)
+  lobbyScene.releasePlayer()
+  setMood(MAPS[0])
+  G.test = true
+  const name = bloxity.displayName() === 'Offline' ? 'You' : bloxity.displayName()
+  const start = startTest({ weaponId, grenadeId, playerName: name, playerAvatar: avatar, playerPortrait: bloxity.getPfp() || portrait(playerOutfit), onExit: () => exitTest(true) })
+  hud.begin('Test Range')
+  hud.setTest(true)
+  hud.show(true)
+  setGameInput(true)
+  setTouchActive(true)
+  G.slowmo = 1
+  G.phase = 'playing'
+  emit('spawn', { actor: start.player, first: true, pos: start.pos, facing: start.facing })
+}
+function exitTest(toStore) {
+  if (!G.test) return
+  endTest()
+  G.test = false
+  hud.setTest(false)
+  backToLobby()
+  if (toStore) lobby.openStore()
+}
+
+let leftLobbyAt = -1e9 // when this client last went back to the menus (the server's inMatch lags a moment)
 function backToLobby() {
   closeMatch()
   bloxity.showAdScreen('lobby')
   G.phase = 'lobby'
+  leftLobbyAt = performance.now()
   lobby.hideQueue()
   lobbyScene.rebuildSquad(loadoutForActor())
   resetMates()
@@ -637,8 +784,11 @@ function resetMates() {
 }
 function showMates(list) {
   if (G.phase !== 'lobby' && G.phase !== 'queue') return
-  const others = list.filter((m) => !m.me)
-  const shown = others.slice(0, 3)
+  // Only the lobby team stands on the platform (players join it with an invite); the rest of the room
+  // is just prewarmed.
+  const mySquad = list.find((m) => m.me)?.squad || ''
+  const others = list.filter((m) => !m.me && !(mySquad && m.squad === mySquad))
+  const shown = mySquad ? list.filter((m) => !m.me && m.squad === mySquad).slice(0, 2) : []
   const struct = shown.map((m) => `${m.id}:${m.primary}:${m.secondary}`).join(',')
   if (struct !== matesStruct) {
     matesStruct = struct
@@ -658,7 +808,7 @@ function showMates(list) {
       onBuilt: (built) => lobbyScene.setMateAvatar(i, built.root),
     })
   })
-  for (const m of others.slice(3)) prewarmLook(lookFromJson(m.avatar, m.outfitKey))
+  for (const m of others) prewarmLook(lookFromJson(m.avatar, m.outfitKey))
 }
 
 function cycleSpectate(dir) {
@@ -713,6 +863,11 @@ on('matchEnd', ({ winner }) => {
 on('announce', ({ big, small }) => hud.announce(big, small))
 let fellAt = 0
 body.onFellOut = () => {
+  if (G.test) {
+    const s = testStartPose()
+    resetPlayer({ x: s.pos.x, y: s.pos.y, z: s.pos.z }, s.facing)
+    return
+  }
   if (!G.player || G.player.life === 'dead' || G.phase !== 'playing' || performance.now() - fellAt < 1000) return
   fellAt = performance.now()
   send('fell')
@@ -730,6 +885,14 @@ const introLook = new Vector3()
 let ambLevel = 0
 let skipRender = false // dev stepping without drawing
 
+// The lobby's shaders compile (in parallel) behind the loading screen, so its first frame does not stall;
+// the round's shaders and textures are then prepared in the background while the lobby is up.
+showLoading(true, 'Preparing graphics', 0.95)
+await warmScene(warmTargets()[1], { draw: false })
+warmKit = buildWarmKit()
+keepAlive(warmKit)
+scheduleWarmup()
+prewarmHudIcons()
 showLoading(false)
 G.phase = 'lobby'
 lobby.show(true)
@@ -759,14 +922,23 @@ function gameFrame(dt) {
   }
 
   // The server's view of everyone (other players, health, score, clock) first.
-  reconcile()
-  applyState(dt)
-  syncClock(dt)
+  let t = span()
+  if (G.test) G.time += dt
+  else {
+    reconcile()
+    applyState(dt)
+    syncClock(dt)
+  }
+  spanEnd('net', t)
 
   // Player input -> physics -> our pose to the server -> local timers
+  t = span()
   if (p && G.phase !== 'results') updateController(gdt, hud)
+  spanEnd('controller', t)
   if (G.phase === 'intro' || G.phase === 'countdown' || G.phase === 'results') body.frozen = true
+  t = span()
   stepPhysics(gdt)
+  spanEnd('physics', t)
   interpolatePlayer()
   if (p) {
     const r = body.renderPosition
@@ -775,8 +947,11 @@ function gameFrame(dt) {
     p.grounded = body.grounded
     if (p.life !== 'dead' && G.phase !== 'results') p.facing = body.facing
   }
-  if (p && G.phase !== 'results') sendPose(dt)
+  if (p && G.phase !== 'results' && !G.test) sendPose(dt)
+  if (G.test) updateTest(gdt, camera)
+  t = span()
   if (G.phase === 'playing' || G.phase === 'ending') updateMatch(gdt)
+  spanEnd('match', t)
 
   // Zone phase announcements
   const zs = G.match?.zone.state
@@ -791,6 +966,7 @@ function gameFrame(dt) {
   }
 
   // Models
+  t = span()
   for (const a of G.actors) {
     let dir
     if (a.isPlayer) {
@@ -808,7 +984,10 @@ function gameFrame(dt) {
       } else stepAcc.set(a.id, acc)
     }
   }
+  spanEnd('models', t)
+  t = span()
   updateFx(gdt)
+  spanEnd('fx', t)
 
   // Camera
   const watching = p && p.life === 'dead' && G.spectating ? G.spectating : p
@@ -849,12 +1028,15 @@ function gameFrame(dt) {
   if (p && (G.phase === 'playing' || G.phase === 'countdown' || G.phase === 'ending')) {
     // Without the portal's death screen a short timer respawns the player; with it, only its button does.
     if (p.life === 'dead' && G.phase === 'playing' && !portalDeath && G.time >= p.respawnAt) requestRespawn()
+    t = span()
     hud.update(dt, camera, { scoped: view.scoped && G.phase === 'playing', spread: view.spread, onEnemy: view.onEnemy, prompt: view.prompt, yaw: getYaw(), hearts: 0, touch: touchShown() })
+    spanEnd('hud', t)
   }
   lockHint.style.display = G.phase === 'playing' && !isLocked() && !touchShown() && p?.life !== 'dead' && !mapOpen() ? 'block' : 'none'
 
   focus.copy(watching ? watching.pos : camera.position)
   if (G.phase === 'intro') focus.set(0, 0, 0)
+  t = span()
   updateView()
   world.update(dt, clock.elapsedTime, camera.position)
   island.update?.(dt, clock.elapsedTime)
@@ -862,7 +1044,10 @@ function gameFrame(dt) {
   const shore = Math.max(0, Math.min(1, (Math.hypot(focus.x, focus.z) - (island.radius - 35)) / 30))
   ambLevel += (1 - ambLevel) * Math.min(1, dt)
   updateAmbience(dt, ambLevel, shore)
+  spanEnd('world', t)
+  t = span()
   if (!skipRender) postfx.render()
+  spanEnd('render', t)
 }
 
 let governedPhase = ''
@@ -888,20 +1073,35 @@ function frame(dt) {
     if (!skipRender) (G.phase === 'lobby' || G.phase === 'queue' ? lobbyFx : postfx).render()
     return
   }
+  frameStart(G.phase)
+  let t = span()
   syncFlow()
+  spanEnd('syncFlow', t)
   rosterT -= dt
   if (rosterT <= 0) {
-    rosterT = 1
+    rosterT = G.phase === 'lobby' || G.phase === 'queue' ? 0.25 : 1 // the lobby's team + invites feel live
+    t = span()
     const list = roster()
     lobby.setRoster(list, net.status)
     showMates(list)
+    if (G.phase === 'queue') prebuildRemotes() // the next round's other players, built in idle time
+    spanEnd('roster', t)
   }
   if (G.phase === 'lobby' || G.phase === 'queue') {
+    t = span()
     lobbyScene.update(dt)
-    lobbyFx.render()
+    spanEnd('lobbyScene', t)
+    t = span()
+    pumpWarmup()
+    spanEnd('warmup', t)
+    t = span()
+    if (!lobbyHold) lobbyFx.render()
+    spanEnd('render', t)
+    lobby.placePlates(lobbyScene.anchors())
     ambLevel = 0
     updateAmbience(dt, 0, 0)
   } else gameFrame(dt)
+  frameEnd()
 
   if (shownLoading) {
     readySince += dt
@@ -923,6 +1123,8 @@ window.addEventListener('beforeunload', () => {
 if (import.meta.env.DEV || location.search.includes('debug')) {
   window.__game = {
     G, scene, renderer, camera, body, governor, applyGraphics, currentPreset, island, lobbyScene, WEAPONS, profile, sfx, inputState, setView, useItem, hud, combat,
+    hitches, // frames over 50 ms with their slowest parts (prof.js); heap: allocation per frame + GC count
+    heap,
     get avatar() {
       return avatar
     },

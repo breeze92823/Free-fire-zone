@@ -67,6 +67,7 @@ On the dev server, or any build opened with `?debug` in the URL, `window.__game`
 | `teleport(x, z, facing)` | move the player |
 | `shot(name, width, cam)` | render a frame and save `.shots/<name>.jpg` through the dev server's `/__shot` endpoint. `cam = { from: [x, y, z], at: [x, y, z], rel }` overrides the camera |
 | `scene`, `renderer`, `camera`, `body`, `island`, `lobbyScene`, `hud`, `combat`, `profile`, `sfx`, `inputState`, `WEAPONS`, `governor`, `applyGraphics`, `currentPreset`, `setView`, `useItem`, `avatar`, `avatarReady` | direct access for inspection |
+| `hitches`, `heap` | the hitch profiler (`src/prof.js`): every frame over 50 ms with its slowest parts (`net`, `controller`, `physics`, `match`, `models`, `fx`, `hud`, `world`, `render`, `syncFlow`, `roster`, `lobbyScene`, `warmup`, `enter:*` for round entry), also logged as `[hitch]` console warnings; `heap` = smoothed JS heap growth per frame and the number of collections seen. Add `span()` / `spanEnd(name, t)` around anything new you suspect |
 
 There are no automated tests in the client. Verification is: run it, drive it with `__game`, look at `.shots`. UI changes must be checked at 375x812, a landscape phone (about 740x360 with touch) and desktop.
 
@@ -76,14 +77,15 @@ Dependencies point downward. `main.js` is the only module that knows everything.
 
 ```
 main.js                      boot, phase flow, frame loop, dev hooks
-  game/lobby.js  lobbyScene.js  results.js  hud.js      UI (DOM) and the hangar scene
+  game/lobby.js  party.js  lobbyScene.js  results.js  hud.js   UI (DOM) and the hangar scene
   game/match.js  controller.js  online.js                the round on this client
+  game/testRange.js                                      the offline Weapon Test range (store's TEST)
   game/combat.js items.js loot.js zone.js fx.js          gameplay systems
   game/actor.js  characters.js weaponModels.js merge.js icons.js mapimage.js   models
   game/state.js (G + bus)   game/save.js (profile)   net.js (Colyseus)   bloxity.js (SDK)
   avatar/*   audio/*                                     character pipeline, sound
   player.js camera.js input.js touch.js physics.js       engine
-  lighting.js postfx.js perf.js textures.js propkit.js world.js
+  lighting.js postfx.js perf.js warmup.js prof.js textures.js propkit.js world.js
   world/*                                                the island
   config.js                                              every tunable
 ```
@@ -94,11 +96,11 @@ main.js                      boot, phase flow, frame loop, dev hooks
 | `src/main.js` | Boot sequence, settings, graphics application, the phase machine, `gameFrame`, lobby squad display, dev hooks |
 | `src/net.js` | Connection with backoff, join options, `send`, `onNet`, `me`, room reporting |
 | `src/bloxity.js` | The only place that touches `Legion.SDK`; every function is a no-op without it |
-| `src/game/` | Match logic, UI, models (24 files) |
+| `src/game/` | Match logic, UI, models, the Weapon Test range |
 | `src/avatar/` | Rig loading, looks, animator |
 | `src/audio/` | Web Audio engine and synthesized effects |
 | `src/world/` | Island builder and districts |
-| root engine files | `physics.js`, `player.js`, `camera.js`, `input.js`, `touch.js`, `lighting.js`, `postfx.js`, `perf.js`, `textures.js`, `propkit.js`, `world.js` (sea + clouds). `bake.js` and `modes.js` are imported by nothing (dead) |
+| root engine files | `physics.js`, `player.js`, `camera.js`, `input.js`, `touch.js`, `lighting.js`, `postfx.js`, `perf.js`, `warmup.js` (shader / texture warm-up), `textures.js`, `propkit.js`, `world.js` (sea + clouds). `bake.js` and `modes.js` are imported by nothing (dead) |
 
 ## 4. Boot sequence (`main.js`, top to bottom)
 
@@ -117,9 +119,10 @@ main.js                      boot, phase flow, frame loop, dev hooks
 13. `bloxity.subscribeAuth`: the first settled auth state calls `net.connect()`; later sign-in changes send `auth`.
 14. Portal hooks: avatar / proportion changes, respawn request, emotes, chat bubbles; `initOnline()`.
 15. Bus listeners (`spawn`, `elimination`, `matchEnd`, `announce`), `body.onFellOut`.
-16. `G.phase = 'lobby'`, `renderer.setAnimationLoop(frame)`.
+16. "Preparing graphics": the lobby scene's shaders compile in parallel behind the loading screen; the warm kit is built and the game scene's warm-up is scheduled for the lobby frames ([engine.md](engine.md), `warmup.js`).
+17. `G.phase = 'lobby'`, `renderer.setAnimationLoop(frame)`.
 
-Load-time vs live graphics: texture resolution (`texScale`), model `detail`, particle pool sizes and antialias are fixed by the preset active at boot. Shadows, pixel ratio, bloom, view distance and anisotropy change live (`applyGraphics`).
+Load-time vs live graphics: texture resolution (`texScale`), model `detail`, particle pool sizes and antialias are fixed by the preset active at boot. Pixel ratio, view distance and shadow map size change live; shadows on/off, bloom on/off and anisotropy recompile or re-upload everything, so during a round they only fade (no shader change) and the real switch waits for the round to end (`applyGraphics`, [engine.md](engine.md)).
 
 ## 5. Frame loop
 
@@ -128,8 +131,8 @@ Load-time vs live graphics: texture resolution (`texScale`), model `detail`, par
 1. FPS readout; the Auto governor samples frames only while `playing` / `countdown`.
 2. During a portal ad break: render the current scene and return. Nothing else advances.
 3. `syncFlow()`: follow the server's phase (section 6).
-4. Once a second: `roster()` -> `lobby.setRoster`, `showMates` (the hangar's squad).
-5. `lobby` / `queue`: `lobbyScene.update`, `lobbyFx.render()`. Otherwise `gameFrame(dt)`.
+4. Four times a second in the lobby / queue (once a second otherwise): `roster()` -> `lobby.setRoster` (which feeds `party.js`: the Players online dock, invites, the lobby team) and `showMates` (the hangar's team); every lobby frame `lobby.placePlates(lobbyScene.anchors())` puts the teammates' names over their heads.
+5. `lobby` / `queue`: `lobbyScene.update`, `pumpWarmup()` (background shader / texture warm-up of the game scene), `lobbyFx.render()`. Otherwise `gameFrame(dt)`.
 
 `gameFrame(dt)` order (it matters: later steps read what earlier ones wrote):
 
@@ -165,7 +168,7 @@ Load-time vs live graphics: texture resolution (`texScale`), model `detail`, par
 
 Transitions out: `results` -> `queue` when the server goes back to `vote` / `waiting` (`nextRound`, same room), or -> `lobby` via the Lobby button (`leaveMatch` sends `leave`). Losing the room (`left` event) or `me().inMatch` turning false returns to the lobby. In `queue`, 3 s without the server marking the player `inMatch` also returns to the lobby.
 
-`enterRound()` is the one place a round is built on the client: `createMatch`, `reconcile`, `syncLoot`, `renderer.compile`, HUD on, input on. `closeMatch()` is the one place it is torn down.
+`enterRound()` is the one place a round is built on the client: `createMatch`, `reconcile`, `syncLoot`, `compileNow` (a safety net: the lobby's warm-up normally compiled everything), HUD on, input on. `closeMatch()` is the one place it is torn down.
 
 ## 7. Persistent browser storage
 
@@ -185,7 +188,8 @@ Progress (coins, rank, items, loadout, stats) is not stored in the browser: the 
 | --- | --- |
 | Tune a number (speed, damage, prices, zone, camera) | `src/config.js`; if the table is mirrored, the backend too ([gameplay.md](gameplay.md) section 2) |
 | Add / balance a weapon, operative, item, map | [gameplay.md](gameplay.md) section 14 |
-| Add a shop item or price | `config.js` + backend `catalog.ts`; [ui.md](ui.md) for the card. Coins only |
+| Add a shop item or price | `config.js` + backend `catalog.ts`; [ui.md](ui.md) for the card. Skins, operatives and the Store cost coins; the Weapons Store (weapons, grenades, the pass) costs the game's own Gems ([ui.md](ui.md) 3.10). Both are earned only |
+| Change the Weapon Test range (TEST button) | `src/game/testRange.js`; [gameplay.md](gameplay.md) section 17 |
 | Change the HUD or a menu | [ui.md](ui.md); respect reserved areas, touch and small screens |
 | Add a key or touch control | [engine.md](engine.md) (`input.js`, `touch.js`), `controller.js bindKeys`. Never bind P |
 | Change the island | [world.md](world.md); data in `src/world/layout.js` |
@@ -222,7 +226,7 @@ Dead or stale code: `src/bake.js`, `src/modes.js`, `bloxity.js submitMatchScores
 
 ## 10. Rules that apply to every change
 
-- Coins only. Nothing is purchasable with premium currency, and prices are enforced by the server.
+- Coins only in the shops. Nothing is purchasable with premium currency (Bloxity Gems, real money), and prices are enforced by the server. The game's own Gems (`profile.gems`) are earned by knocks and eliminations only and must never be sold.
 - Mobile and small screens are required: every action has a touch path (Pointer Events, targets >= 44 px), layouts react to resize, and the Bloxity reserved areas stay clear.
 - Never bind P. Esc frees the mouse and opens the portal menu.
 - No per-frame allocation in hot paths; effects and lights are pooled.

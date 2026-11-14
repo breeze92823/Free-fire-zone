@@ -20,7 +20,7 @@ All of these modules are singletons with module-level state (one physics world, 
 
 ### Per frame (`frame(dt)` -> `gameFrame(dt)`)
 
-`frame(dt)`: FPS readout; `governor.hold()` when `G.phase` changed; `governor.update(dt, phase is 'playing' or 'countdown')`; during an ad break only a render; `syncFlow()`; in `lobby`/`queue` only `lobbyScene.update` + `lobbyFx.render()`; otherwise `gameFrame(dt)`:
+`frame(dt)`: FPS readout; `governor.hold()` when `G.phase` changed; `governor.update(dt, phase is 'playing' or 'countdown')`; during an ad break only a render; `syncFlow()`; in `lobby`/`queue` only `lobbyScene.update`, `pumpWarmup()` (the shader warm-up, see `warmup.js`) + `lobbyFx.render()` (skipped while `lobbyHold` waits for new lobby shaders); otherwise `gameFrame(dt)`:
 
 1. `gdt = dt * G.slowmo` (physics and gameplay use `gdt`; camera, lighting, sea use real `dt`).
 2. Server state (`reconcile`, `applyState`, `syncClock`).
@@ -182,9 +182,10 @@ Exports:
 Listeners (`install`):
 - `keydown` (window): ignored when the target is an `<input>`; `preventDefault` for Space, arrows and Tab; repeats ignored; `Escape` calls `showMenu()` and stops; otherwise the code is added to `held`, then if enabled Space sets `jump` and the `onKey` handler runs; if disabled only the `KeyM` and `Tab` handlers run.
 - `keyup`: removes the code. `blur`: `clearHeld()`.
-- `pointerdown` (mouse only, target must be the canvas, enabled, not released): left button fires when locked, otherwise requests the lock and starts drag-look (`orbiting`); right button sets `aim`.
-- `pointerup` (mouse): left clears `fire` and `orbiting`; right clears `aim`.
-- `pointermove` (mouse, enabled, not released): adds `movementX/Y` to `look` while locked or drag-looking.
+- Mouse buttons: Pointer Events send `pointerdown` only for the first button pressed and `pointerup` only for the last one released. A second button pressed or released while another is held arrives as a `pointermove` with `button >= 0` and a new `buttons` mask, so all three handlers go through `press(e)` / `releaseButtons(e)`. Without this, firing while holding RMB, or aiming while holding LMB, was lost.
+- Press (`pointerdown`, or a chorded `pointermove` whose button is now in `buttons`; mouse only, target must be the canvas, enabled, not released): left button fires when locked, otherwise requests the lock and starts drag-look (`orbiting`); right button sets `aim` and requests the lock.
+- Release (`pointerup`, or a chorded `pointermove` whose button left `buttons`): clears `fire` and `orbiting` when bit 1 is gone and `aim` when bit 2 is gone.
+- `pointermove` (mouse, enabled, not released): also adds `movementX/Y` to `look` while locked or drag-looking.
 - `wheel` on the canvas while enabled: `preventDefault`, `wheel += sign(deltaY)`.
 - `contextmenu`: always prevented. `pointerlockchange`: gaining the lock ends drag-look; losing it clears `fire` and `aim`.
 
@@ -267,7 +268,8 @@ Returned object:
 | `isNight()` | `target === 1`. |
 | `setMoods({ day, night })` | Swaps both slots, `apply()`, re-bakes the environment. No-op when both objects are identical (by reference) to the current ones. |
 | `toggleDayNight()` | Flips `target`; the blend then runs in `update`. Dev harness only. |
-| `setShadows(preset)` | Live: `castShadow`, shadow map size (disposes the old map), shadow box range. |
+| `setShadows(preset)` | `castShadow`, shadow map size (disposes the old map), shadow box range. Toggling `castShadow` changes every material's shader: `main.applyGraphics` only does that between rounds. |
+| `setShadowsActive(on)` | Shadows off/on without a shader change: `sun.shadow.intensity` 0/1 and `renderer.shadowMap.autoUpdate` (the shadow pass is skipped). Used when the graphics drop mid-round. |
 | `setView(near, far, skyMax = Infinity)` | Fog distances; sky and stars scaled by `min(1, skyMax / 500)` so they stay inside the far plane. |
 | `update(dt, focus)` | Every frame: advances the blend (re-bakes the environment when it moved more than 0.08 since the last bake or reached the target), centres sky and stars on `(focus.x, 0, focus.z)`, puts the sun 90 m from `focus` along the sun direction with its target on `focus`. |
 
@@ -275,7 +277,10 @@ Config: `TIME_OF_DAY` (moods + `transition`), `FOG`, `LIGHT`, preset fields `sha
 
 ### postfx.js
 
-`createPostFx(renderer, scene, camera)` -> `{ bloom, configure(preset), setSize(w, h), render() }`. Two instances exist: `postfx` (match scene) and `lobbyFx` (lobby scene).
+`createPostFx(renderer, scene, camera)` -> `{ bloom, configure(preset), setBloomActive(on), sceneTarget(), setSize(w, h), render() }`. Two instances exist: `postfx` (match scene) and `lobbyFx` (lobby scene).
+
+- `setBloomActive(on)`: enables / disables only the bloom pass (the scene still goes through the HDR target, so no shader changes). Used when the graphics drop mid-round.
+- `sceneTarget()`: the render target the scene itself is drawn into (the composer's read buffer), or null when it is drawn straight to the screen. Materials drawn into a render target get a different shader (no tone mapping, linear output) than the same materials drawn to the screen, so turning bloom on or off recompiles the whole scene; `warmup.js` compiles for this target.
 
 - `configure(preset)`: `preset.bloom` false -> composer disposed, `render()` falls back to `renderer.render(scene, camera)`. True -> the composer is rebuilt: a `HalfFloatType` render target with `samples = preset.antialias ? 4 : 0`, then `RenderPass` -> `UnrealBloomPass(BLOOM.strength, BLOOM.radius, BLOOM.threshold)` -> `OutputPass` (tone mapping + sRGB), pixel ratio and size taken from the renderer.
 - `setSize(w, h)`: re-reads the renderer's pixel ratio; called from `main.js resize()`.
@@ -305,11 +310,38 @@ Preset fields (`GRAPHICS_PRESETS`: Low, Medium, High, Ultra) and where they appl
 
 | Field | Applied by | Live |
 |---|---|---|
-| `shadows`, `shadowMap`, `shadowRange` | `renderer.shadowMap.enabled`, `lighting.setShadows` | yes |
+| `shadows` | `renderer.shadowMap.enabled`, `lighting.setShadows` | between rounds; mid-round only `lighting.setShadowsActive` (fade off, no shader change) |
+| `shadowMap`, `shadowRange` | `lighting.setShadows` | yes |
 | `dpr` | `renderer.setPixelRatio`, composers via `resize()` | yes |
-| `bloom` | `postfx.configure`, `lobbyFx.configure`, `setNeonBloom` | yes |
+| `bloom` | `postfx.configure`, `lobbyFx.configure`, `setNeonBloom` | between rounds; mid-round only `postfx.setBloomActive` (pass off, no shader change) |
 | `view { near, far }` | `main.updateView()` -> `lighting.setView`, `camera.far`, `world.setViewFit` | yes |
-| `anisotropy` | `setTextureQuality` at boot, `setAnisotropy` live | yes |
+| `anisotropy` | `setTextureQuality` at boot, `setAnisotropy` | between rounds (it re-uploads every texture) |
+
+Why "between rounds": shadows on/off and bloom on/off change the shader of every material in the scene, and on an Intel iGPU (ANGLE / D3D11) a full recompile measured 8-10 s of frozen game. `main.applyGraphics(next)` therefore splits a change: when a round is on (`G.match`) and `shadows`, `bloom` or `anisotropy` differ from the applied preset (`appliedGraphics`), it applies dpr, view distance and shadow map size / range at once, fades shadows and bloom off (or keeps them off) without a shader change, and keeps `next` in `pendingGraphics`. `closeMatch()` applies the pending preset; the lobby then compiles its new shaders in parallel and skips its own redraw until they are ready (`lobbyHold`), and the game scene is re-warmed in the background (see `warmup.js`).
+
+### warmup.js
+
+Shader and texture warm-up, so nothing compiles or uploads the first time it comes into view. three.js compiles a material's shader on its first draw and uploads a texture on its first use; a program is cached by its feature set (material type, maps, skinning, instancing, fog, lights, shadows, render target, ...), so warming one variant covers every later material with the same features.
+
+| Export | Notes |
+|---|---|
+| `initWarmup(renderer)`, `addWarmTarget(scene, camera, fx)` | `main.js` registers the game scene first (with `postfx`), then the lobby scene (with `lobbyFx`). `fx.sceneTarget()` decides which shader variant is compiled. |
+| `warmScene(target, { draw, extra })` | `compileAsync` of every material in the scene (parallel compile through `KHR_parallel_shader_compile`; the promise resolves when the driver reports every program ready, at most 8 s), every texture uploaded with `initTexture` (6 ms budget per slice), then optionally the forced draw. `extra`: objects added to the scene only for this call. |
+| `drawWarm(target, extra)` | The forced draw on its own: every object shown and not culled (lights keep their real visibility, since the light count is part of every shader), drawn once into a 1x1 scissor of the target the game uses, shadow pass included. Compiles the shadow-depth shaders and does the driver's first-draw work. Call it inside a frame, right before that frame's real render, so the scissored clear never reaches the screen. |
+| `warmObject(root)` | Compile (for every registered scene) + texture upload for a model built later. `avatar/look.js streamLook` awaits it before `onBuilt`, so a streamed look is swapped in only when it is ready (the old one stays on meanwhile); `main.js` does the same for the no-SDK base character. |
+| `compileNow(target)` | Synchronous compile for the right target; `enterRound()` keeps it as a safety net (about 12 ms when everything is already compiled). |
+| `keepAlive(object)` | three.js frees a program when the last material using it is disposed (a round's actors are freed at its end), so the warm kit is kept here for good. |
+
+Flow (`main.js`): at the end of boot the lobby scene is compiled behind the loading screen ("Preparing graphics"), then `scheduleWarmup()`. In `lobby` / `queue` frames `pumpWarmup()` runs before the lobby render: it starts `warmScene` for the game scene (plus the warm kit) and the lobby without the draw, and once that resolves does one `drawWarm` of the game scene with the warm kit and the local avatar (borrowed from the lobby platform for that one draw). A graphics change that changes shaders schedules the same again. The warm kit (`game/warmkit.js buildWarmKit`) holds what a round creates on the fly: stand-in characters with name tags (real `Actor`s), every gun, both grenades, the medkit, a frost-wall slab and crystal (`items.js warmSamples`), an airdrop (`loot.js warmSamples`).
+
+Measured on an Intel Iris Plus (ANGLE D3D11), Medium preset: round start 3.4 s -> 0.36 s (render part); first frag / frost wall / shot 0.15-0.53 s -> none over 90 ms; a mid-round tier change 8-10 s -> 10 ms; returning to the lobby after it 2.3 s -> 0.2-0.3 s frames. High preset: first lobby frame 5.5 s -> 0.74 s.
+
+Other work moved off the round's frames (found with the hitch profiler, `src/prof.js`, `__game.hitches`):
+
+- HUD icons (`game/icons.js prewarmIcons`): weapon icons are drawn on demand by a second WebGL context and PNG-encoded (30-170 ms each the first time). `main.js prewarmHudIcons()` queues every gun as the kill feed shows it (160x70, standard skin) and the loadout with its skins (160x70 slots, 256x110 weapon card), at boot and on PLAY; one is drawn per idle callback. Before: 120-270 ms in `hud.begin` at round start, 510 ms on the first `hud.update`, and a stall on each weapon's first elimination in the kill feed.
+- Other players' stand-ins (`game/online.js prebuildRemotes`): in `queue` the roster tick builds the blocky character of every other queued player, for both teams (the armband is baked into the merged mesh), one per idle callback; `makeRemote` takes the matching one, players who left are freed. Before: ~60 ms per player in the round's first frame (about 300 ms in a full 3 v 3).
+
+Round start after all of this: worst frame 91 ms (was 0.3-1 s of CPU plus 3.4 s of shader compiles). Checked and left alone: the network (456 messages in a round sample, 0.11 ms average, 5.6 ms max), garbage collection (no hitch in 1200 frames of moving and firing; about 2.5 ms of CPU per frame), and textures (95, about 31 MB, largest 1024x512, all canvas-drawn at load: compressed formats such as KTX2 do not apply).
 | `antialias` | `WebGLRenderer` constructor; MSAA samples of the bloom target | renderer: load time |
 | `texScale` | `setTextureQuality` before textures are made | load time |
 | `particles` | `game/fx.js initFx` | load time |
@@ -405,7 +437,7 @@ Viewport meta with `user-scalable=no` and `viewport-fit=cover`, theme colour, in
 ### Add a graphics preset field and make it apply live
 1. Add the field to all four entries of `GRAPHICS_PRESETS`; if phones need a limit, extend `MOBILE_GRAPHICS_CAP` and `graphicsPreset()`.
 2. Apply it where the system is created (it receives `preset`).
-3. Add a setter on the module and call it from `main.js applyGraphics(next)`. Keep it cheap when the value did not change: `applyGraphics` runs on every governor move and every quality change.
+3. Add a setter on the module and call it from `main.js applyGraphics(next)`. Keep it cheap when the value did not change: `applyGraphics` runs on every governor move and every quality change. If the field changes shaders (a define, a material flag, a light, fog, a render target) or re-uploads textures, add it to `shaderChange()` so it waits for the round's end, and give it a no-recompile fallback for mid-round if lowering it should help at once.
 4. If it cannot be changed live, note it as load-time in the comment above `GRAPHICS_PRESETS`; with Auto it follows the remembered rung on the next load.
 5. Ladder rungs only carry `tier` and an optional `dpr`; a field the governor should vary on its own needs a new rung property handled in `currentPreset()` / `graphicsPreset()`.
 
@@ -444,7 +476,7 @@ Viewport meta with `user-scalable=no` and `viewport-fit=cover`, theme colour, in
 - `renderer.toneMappingExposure` is set by `lighting.apply()` from the mood and is shared by every scene drawn with the renderer.
 - `lighting.setMoods` re-bakes the PMREM environment: do not call it per frame. It compares mood objects by reference, so editing a mood object in place is not picked up.
 - Lamps cannot be removed (`island.dispose()` leaves them).
-- `applyGraphics` rebuilds both bloom composers each time it runs with bloom on, and ends with `resize()` so their pixel ratio follows `dpr`. `viewFar = -1` forces `updateView()` to re-apply fog and far plane on the next match frame.
+- `applyGraphics` rebuilds both bloom composers each time it fully applies with bloom on, and ends with `resize()` so their pixel ratio follows `dpr`. Never set `renderer.shadowMap.enabled`, `castShadow`, fog type, the light count or the composer on/off during a round: each one recompiles every material (see "Why between rounds" above). `viewFar = -1` forces `updateView()` to re-apply fog and far plane on the next match frame.
 - `antialias` is fixed when the renderer is created; `texScale`, `particles` and `detail` when the island and effects are built.
 - On coarse-pointer devices `graphicsPreset()` always turns bloom off, so the composer path is never taken there.
 - Per-frame allocation: `camera.js`, `lighting.js` and `main.js gameFrame` use module-level scratch vectors; keep new per-frame code allocation-free. Existing exceptions: `segmentClear` builds a `RAPIER.Ray` and two literals per call (twice per frame from the camera), and `player.step` builds two small literals per tick.

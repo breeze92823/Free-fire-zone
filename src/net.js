@@ -59,7 +59,7 @@ export const online = () => net.status === 'online' && !!net.room
 export const me = () => (net.state?.players && net.sessionId ? net.state.players.get(net.sessionId) ?? null : null)
 
 // Every server message the client handles (server MatchRoom): forwarded to onNet listeners.
-const MESSAGES = ['profile', 'shop', 'rewards', 'serverError', 'round', 'spawn', 'dmg', 'knock', 'elim', 'revive', 'shot', 'throw', 'boom', 'wall', 'ult', 'opened', 'openFail', 'matchEnd']
+const MESSAGES = ['profile', 'shop', 'rewards', 'reward', 'healed', 'serverError', 'round', 'spawn', 'dmg', 'knock', 'elim', 'revive', 'shot', 'throw', 'boom', 'wall', 'ult', 'opened', 'openFail', 'matchEnd', 'invite', 'inviteEnd', 'squadNote']
 
 function setStatus(status, error = '') {
   net.status = status

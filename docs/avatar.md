@@ -112,7 +112,7 @@ It always overwrites `root.scale`, then `keepItemSizes` counter-scales every ite
 - `disposeLook(root)`: calls `root.userData.lookHandle.dispose()` (the kit outfit) and clears the field. It does not dispose geometry, materials or textures.
 - `isBloxityRig(root)`: `root.nodes.default_torso` or `root.userData.customCharacter`.
 
-Callers: `main.js loadAvatar` (local player, `PRIO.local`, stale by generation counter, `wearAvatar` disposes the old root), `main.js showMates` (lobby platform, first three mates via `streamLook`, the rest via `prewarmLook`), `online.js loadRemoteAvatar` (remote actors; `a.setAvatar`, `a.refreshHeld`, `disposeLook(old)`), `actor.js dispose` and `lobbyScene.js setMateAvatar` (`disposeLook`). With `VITE_DEV_MODE=true`, `main.js` wears `loadBaseCharacter()` directly and remote players keep their blocky outfit.
+Callers: `main.js loadAvatar` (local player, `PRIO.local`, stale by generation counter, `wearAvatar` disposes the old root), `main.js showMates` (lobby platform: the lobby team's mates, up to two, via `streamLook`; everyone else in the room via `prewarmLook`), `online.js loadRemoteAvatar` (remote actors; `a.setAvatar`, `a.refreshHeld`, `disposeLook(old)`), `actor.js dispose` and `lobbyScene.js setMateAvatar` (`disposeLook`). With `VITE_DEV_MODE=true`, `main.js` wears `loadBaseCharacter()` directly and remote players keep their blocky outfit.
 
 ## 3. Asset gate (`assets.js`, `cdn.js`)
 

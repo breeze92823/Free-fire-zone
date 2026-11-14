@@ -145,6 +145,7 @@ export function updateController(dt, hud) {
   else if (p.crouch || p.healT >= 0) speed = PHYSICS.crouchSpeed
   else if (sprint) speed = PHYSICS.sprintSpeed
   if (G.time < p.ultActiveUntil && p.operative === 'nova') speed *= 1.3
+  if (alive && p.def.speedMul) speed *= p.def.speedMul // the blade: lighter on your feet
   body.moveSpeed = speed
   body.frozen = !playing && G.phase !== 'ending' ? true : p.life === 'dead' || !!p.emote
   body.canJump = alive && !p.crouch
@@ -165,7 +166,9 @@ export function updateController(dt, hud) {
       break
     }
   }
-  view.scoped = p.aiming && def.scope && alive && def.zoom <= SCOPE_FOV + 6
+  // Boolean: guns without a scope have def.scope undefined, and an undefined here made the
+  // HUD's classList.toggle flip the scope overlay on every other frame while aiming.
+  view.scoped = !!(p.aiming && def.scope && alive && def.zoom <= SCOPE_FOV + 6)
   const hspeed = Math.hypot(body.velocity.x, body.velocity.z)
   view.spread = isGun ? currentSpread(p, hspeed) : 0
 

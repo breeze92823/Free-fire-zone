@@ -45,6 +45,7 @@ export function showResults(winner, reward, done) {
       <div>Eliminations: ${reward.eliminations}</div>
       <div>Damage inflicted: ${Math.round(reward.damage)}</div>
       <div>Coins earned: <span class="plus">+${reward.coins}</span> <img alt="" src="${svgData(SVG.coin)}" style="height:0.9em;vertical-align:-0.1em"></div>
+      ${reward.gems > 0 ? `<div>Gems earned: <span class="plus gem">+${reward.gems}</span> <img alt="" src="${svgData(SVG.gem)}" style="height:0.9em;vertical-align:-0.1em"></div>` : ''}
       <div>Rank points: <span class="plus">${reward.rp >= 0 ? '+' : ''}${reward.rp}</span> <span class="small">(${rankOf().name})</span></div>
       <div class="small">Knocks ${reward.knocks} · Assists ${reward.assists} · Headshots ${reward.headshots} · Times eliminated ${reward.deaths}</div>
       <div class="small">Final score: Blue ${reward.score.blue} — Orange ${reward.score.orange}${reward.mvp ? ' · <b style="color:#ffd34d">MATCH MVP</b>' : ''}</div>

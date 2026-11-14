@@ -11,7 +11,7 @@ import {
   MeshStandardMaterial,
   Vector3,
 } from 'three'
-import { ITEMS, OPERATIVES, ULT_CHARGE } from '../config.js'
+import { GRENADES, ITEMS, OPERATIVES, ULT_CHARGE } from '../config.js'
 import { RAPIER, world } from '../physics.js'
 import { sfx, spatial } from '../audio/index.js'
 import { G, emit } from './state.js'
@@ -30,6 +30,13 @@ const iceCore = new MeshStandardMaterial({ color: '#e9fbff', emissive: '#8fe8ff'
 const crystalGeo = new IcosahedronGeometry(1, 0)
 const spikeGeo = new ConeGeometry(0.35, 1.6, 5)
 const slabGeo = new BoxGeometry(1, 1, 1)
+
+// Shader warm-up (warmup.js): walls are only built when thrown, so boot warms one piece of each material.
+export function warmSamples() {
+  const slab = new Mesh(slabGeo, iceMat)
+  slab.castShadow = true
+  return [slab, new Mesh(crystalGeo, iceCore)]
+}
 
 const walls = []
 class FrostWall {
@@ -160,12 +167,13 @@ export function remoteWall(pos, yaw, owner) {
 // --- Frag grenades ----------------------------------------------------------------------------
 const grenades = []
 class Grenade {
-  constructor(pos, vel, owner) {
+  constructor(pos, vel, owner, kind = 'frag') {
     this.pos = pos.clone()
     this.vel = vel.clone()
     this.owner = owner
-    this.fuse = ITEMS.frag.fuse
-    this.mesh = buildGrenade('frag')
+    this.def = GRENADES[kind] ?? GRENADES.frag
+    this.fuse = this.def.fuse
+    this.mesh = buildGrenade(this.def.model)
     this.mesh.position.copy(pos)
     this.spin = new Vector3(Math.random() * 10, Math.random() * 10, Math.random() * 10)
     G.scene.add(this.mesh)
@@ -179,7 +187,7 @@ class Grenade {
       this.mesh.removeFromParent()
       // Another player's grenade only vanishes: their client reports the blast (`boom`) and every
       // client draws it where it really went off.
-      if (!this.owner?.remote) explode(this.pos, this.owner)
+      if (!this.owner?.remote) explode(this.pos, this.owner, this.def.damage, this.def.radius)
       return
     }
     this.vel.y -= 22 * dt
@@ -229,15 +237,15 @@ function release(actor, dir) {
     v.y += 4
     v.x += actor.vel.x * 0.5
     v.z += actor.vel.z * 0.5
-    grenades.push(new Grenade(p, v, actor))
-    if (actor.isPlayer) send('throw', { p: [r2(p.x), r2(p.y), r2(p.z)], v: [r2(v.x), r2(v.y), r2(v.z)] })
+    grenades.push(new Grenade(p, v, actor, actor.grenade))
+    if (actor.isPlayer && !actor.offline) send('throw', { p: [r2(p.x), r2(p.y), r2(p.z)], v: [r2(v.x), r2(v.y), r2(v.z)] })
   }
 }
 
 // Another player's frag in flight (drawn only; see Grenade.update).
-export function remoteThrow(owner, p, v) {
+export function remoteThrow(owner, p, v, kind = 'frag') {
   if (!Array.isArray(p) || !Array.isArray(v)) return
-  grenades.push(new Grenade(new Vector3(p[0], p[1], p[2]), new Vector3(v[0], v[1], v[2]), owner))
+  grenades.push(new Grenade(new Vector3(p[0], p[1], p[2]), new Vector3(v[0], v[1], v[2]), owner, kind))
 }
 
 // --- Medkit / dash / ability ------------------------------------------------------------------

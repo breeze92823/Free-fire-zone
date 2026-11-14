@@ -57,7 +57,7 @@ Columns: wrapped SDK call, result without the SDK, callers (found by Grep in `sr
 4. `avatar.onAvatarChanged` and `avatar.onProportionsChanged` when they exist.
 5. `player.onEvent((event, data) => ...)`: `respawn_request` -> respawn listeners; `play_emote` with a string -> emote listeners with the id; `stop_emote` -> emote listeners with `null`.
 6. `initAds(SDK)`, `initLeaderboards(SDK)`.
-7. `party.enable({ maxPartySize: NET.teamMax })` (9).
+7. `party.enable({ maxPartySize: NET.teamMax })` (3).
 8. `game.registerFeature('emotes')`.
 9. `game.loadingStep('Building the island')`.
 
@@ -193,7 +193,7 @@ How `net.js` strings these together (`joinOnce`): `partyLaunch()` -> join option
 4. One-shot registrations (`registerFeature`, `declareScreens`, `define`) go in `init()` in their own `try` so one failure does not skip the rest; latched calls keep a module flag (`inGameplay`, `featureDone`).
 5. Anything that needs data from `config.js` (ids, limits) gets a constant there, imported at the top.
 6. Add the row to `BLOXITY_CODE_METADATA.md` and to the list in `CLAUDE.md` ("Bloxity integrations").
-7. Project rule: nothing may be sold or granted for premium currency (Gems / Robux) or for watching ads; do not wrap purchase or rewarded-ad calls.
+7. Project rule: nothing may be sold or granted for premium currency (Bloxity Gems / Robux) or for watching ads; do not wrap purchase or rewarded-ad calls. The game's own Gems (`profile.gems`, earned by eliminations) are a separate in-game currency and must never be sold through the SDK either.
 
 ### Add a new portal setting
 

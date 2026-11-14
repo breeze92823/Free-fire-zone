@@ -39,7 +39,10 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 | `NET` (`room`, `roomSize` (unread), `teamMax`, `minPlayers`, `devServer`, `devPort`, `poseHz`, `interpDelay`, `connectTimeout`, `respawnFallback`) | `net.js`, `online.js`, `main.js` | `constants.ts` (`ROOM_MAX_CLIENTS`, `TEAM_MAX`, `MIN_PLAYERS`) |
 | `AD_SCREENS`, `NO_AD_SCREENS` | `bloxity.js` | no |
 | `RIG_HEIGHT`, `RIG`, `PROPORTIONS`, `ANIM`, `CHARACTER_COLORS`, `MATERIAL_PBR` | `avatar/` | no |
-| `WEAPONS`, `SCOPE_FOV`, `WEAPON_SCALE`, `BULLET` | combat, actor, HUD, lobby, models | `rules.ts` `WEAPONS`, `FALLOFF_START`; prices in `catalog.ts` `WEAPON_PRICES` |
+| `WEAPONS`, `SCOPE_FOV`, `WEAPON_SCALE`, `BULLET` | combat, actor, HUD, lobby, models, test range | `rules.ts` `WEAPONS`, `FALLOFF_START`; Gem prices in `catalog.ts` `WEAPON_PRICES` |
+| `WEAPON_CATS` | the Weapons Store's category column | no |
+| `GRENADES` (`frag`, `pulse`, `breach`: `damage`, `radius`, `fuse`, Gem `price`, `model`, `desc`) | `items.js` (the throwable the loadout picks), lobby, test range | `rules.ts` `GRENADES`, `catalog.ts` `GRENADE_PRICES` |
+| `PASSES` (`basic`: name, desc, Gem `price`), `passWeapons(id)` (the weapons whose `tier` is the pass id) | lobby, `save.js buyPass` | `catalog.ts` `PASSES` (its own weapon list: keep it equal to the `tier: 'basic'` weapons) |
 | `SKINS` | `weaponModels.js`, lobby | `catalog.ts` `SKIN_PRICES` |
 | `OPERATIVES`, `ULT_CHARGE` | `items.js`, `actor.js`, lobby, HUD | `rules.ts` `OPERATIVES`, `ROOK_DAMAGE_TAKEN`, `JIN_HEAL`, `ULT_MIN_GAP_S`; prices in `catalog.ts` |
 | `ITEMS` (`frostWall`, `frag`, `medkit`, `dash`) | `items.js`, `loot.js`, `match.js`, HUD | `rules.ts` `ITEMS` (frag damage / radius / fuse, medkit heal / time) |
@@ -51,14 +54,17 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 | `BOTS` | only `BOTS.navCell` (1.25 m) is read, by `navgrid.js`; the rest is unused since bots were removed | no |
 | `OUTFITS`, `TEAMS` | `characters.js`, HUD, actor name tags | no |
 | `RANKS`, `START_PROFILE`, `STORE` | `save.js`, lobby, `lobbyScene.js` | `catalog.ts` `START_PROFILE`, `STORE` (ranks exist only on the client; the server stores `rp`) |
-| `REWARDS` | not read by any client code (`main.js` passes a literal `coinsPerElim: 12` to the HUD); kept as a copy of the server's table | `rules.ts` `REWARDS` |
+| `REWARDS` | not read by any client code; kept as a copy of the server's table (the HUD's kill popup shows the amounts the server sends in `reward`) | `rules.ts` `REWARDS` |
+| `GEMS` | not read by any client code; a copy of the server's Gems table (`perElimination` 12, `perKnock` 3, `headshot` +3, `streak` +4 per elimination past the first, counted up to `streakCap` 5; at the results `win` 40, `loss` 15, `mvp` 25). Gems are the game's own currency, earned only by playing, never sold; they buy weapons, grenades and the pass | `rules.ts` `GEMS` |
 | `clamp` | everywhere | no |
 
 ### Weapon definition fields (`WEAPONS[id]`)
 
-`name`, `slot` (`primary` / `secondary` / `melee` / `fists`), `kind` (`rifle`, `smg`, `pistol`, `shotgun`, `lmg`, `dmr`, `sniper`, `knife`, `fists`: selects the shot sound and some effects), `hold` (`rifle` / `pistol` / `melee` / `fist`: the animator's arm pose in `ANIM.aim`), `damage` (per bullet or pellet, against 200 HP), `pellets` (shotguns), `interval` (s between shots), `mag`, `reserve`, `reload` (s), `spread` `[hip, aimed]` in degrees, `recoil` (degrees per shot), `range` (m), `headMul`, `auto`, `zoom` (aimed FOV), `scope` (draws the scope overlay when `zoom <= SCOPE_FOV + 6`), `price` (coins), `model` (key for `weaponModels.js buildWeapon`), `icon` (short label).
+`name`, `cat` (Weapons Store category: `pistol`, `rifle`, `shotgun`, `smg`, `special`; knife and fists have none and are not sold), `tier` (`basic` = in the Field Arsenal Pass), `slot` (`primary` / `secondary` / `melee` / `fists`), `kind` (`rifle`, `smg`, `pistol`, `shotgun`, `lmg`, `dmr`, `sniper`, `sword`, `medic`, `knife`, `fists`: selects the shot sound and some effects), `sound` (overrides `kind` for `sfx.shot`), `hold` (`rifle` / `pistol` / `melee` / `fist`: the animator's arm pose in `ANIM.aim`), `melee` (a blow, not a shot: knife, fists, the Ronin Blade), `damage` (per bullet or pellet, against 200 HP), `pellets` (shotguns), `interval` (s between shots), `mag`, `reserve`, `reload` (s), `spread` `[hip, aimed]` in degrees, `recoil` (degrees per shot), `range` (m), `headMul`, `auto`, `zoom` (aimed FOV), `scope` (draws the scope overlay when `zoom <= SCOPE_FOV + 6`), `pierce` (share of the armour cut ignored, server-side: Kestrel 0.5), `heal` (HP a hit gives a teammate: the Mender's shots also land on allies), `speedMul` (move speed while held: the Ronin Blade 1.15, `controller.js`), `price` (Gems), `model` (key for `weaponModels.js buildWeapon`), `icon` (short label), `desc` (the store's description).
 
-A gun is "anything with `mag`": `controller.js` uses `!!def.mag` to allow aiming and auto-reload; `combat.fire` sends knife / fists to `melee`.
+The arsenal (store category: ids): Pistols `hornet`, `talon` (heavy .50); Rifles `striker` (starter), `ridgeback` (battle rifle), `kestrel` (armour-piercing bullpup), `tempest` (LMG), `marksman` (DMR), `hawk` (sniper); Shotguns `thunder` (pump), `breaker` (2-shot double barrel), `cyclone` (full auto); SMGs `viper` (starter), `wasp`; Specials `ronin` (blade, secondary slot), `mender` (medic pistol, secondary slot).
+
+A gun is "anything with `mag`": `controller.js` uses `!!def.mag` to allow aiming and auto-reload; `combat.fire` sends any `melee` weapon to `melee`.
 
 ## 3. Shared state and the event bus (`state.js`)
 
@@ -72,7 +78,8 @@ A gun is "anything with `mag`": `controller.js` uses `!!def.mag` to allow aiming
 | `preset` | current graphics preset object | `main.js applyGraphics` |
 | `actors` | every `Actor` in the round, local player first | `match.js`, `online.js` |
 | `player` | the local player's `Actor` (null outside a round) | `match.js` |
-| `match` | `{ mode, modeId, map, duration, score: { blue, orange }, zone, mvp, drops, winner, round }` (null outside a round) | `match.js createMatch` |
+| `match` | `{ mode, modeId, map, duration, score: { blue, orange }, zone, mvp, drops, winner, round }` (null outside a round; the test range makes one with `test: true`) | `match.js createMatch`, `testRange.js startTest` |
+| `test` | true while the offline Weapon Test range runs (`phase` is then `playing`; no server) | `main.js enterTest` / `exitTest` |
 | `time` | round clock in seconds, follows the server | `online.js syncClock` |
 | `slowmo` | time scale (0.3 while `ending`) | `main.js` |
 | `phase` | `boot`, `lobby`, `queue`, `intro`, `countdown`, `playing`, `ending`, `results` (the comment in `state.js` still lists `vote`; the real value while voting is `queue`) | `main.js` |
@@ -86,6 +93,7 @@ A gun is "anything with `mag`": `controller.js` uses `!!def.mag` to allow aiming
 | `damage` | `{ target, attacker, amount, head, point, dir, zone, explosive }` | `online.js` (`dmg`) | `hud.js`, `controller.js` (hurt sound, shake) |
 | `knock` | `{ target, attacker, weapon, head }` | `online.js` (`knock`) | `hud.js` |
 | `elimination` | `{ target, killer, weapon, head, streak }` | `online.js` (`elim`) | `hud.js`, `main.js` (spectate, death screen) |
+| `reward` | `{ kind: 'elim' \| 'knock', target, gems, coins, rp, head, streak, bonus }`: what the server granted the local player for a knock / elimination (`bonus` = the streak's extra Gems) | `online.js` (`reward`) | `hud.js` (kill popup, multi-kill banner) |
 | `revive` | `{ target, by }` | `online.js` (`revive`) | none |
 | `spawn` | `{ actor, first, pos, facing }` | `match.js spawnActor` | `main.js` (moves the body and camera, clears the death screen) |
 | `matchEnd` | `{ winner }` | `online.js` (`matchEnd`) | `main.js` (slow motion, banner) |
@@ -245,7 +253,7 @@ The circles are deterministic: `reset(seed, focus)` seeds `mulberry32` with the 
 Full message tables are in the backend's `docs/protocol.md`. In short:
 
 - `reconcile()` (every frame): makes `G.actors` match the room's players that are `inMatch` with a team; creates remote actors (`makeRemote`: blocky outfit seeded by session id until `streamLook` delivers the Bloxity look) and removes leavers.
-- `applyState(dt)` (every frame, skipped in `results`): copies score and duration to `G.match`; for the local player copies `life` (except dead -> alive, which waits for `spawn`), `hp`, `downHp`, `vest`, `helmet`, `protectedUntil`, team and stats; for remote actors `applyRemote` interpolates pose snapshots `NET.interpDelay` behind, decodes `flags`, rebuilds weapons when the loadout changed, and copies everything else. Also `updateMvp` every 0.5 s and `syncDrops`.
+- `applyState(dt)` (every frame, skipped in `results`): copies score and duration to `G.match`; for the local player copies `life` (except dead -> alive, which waits for `spawn`; if the state has said alive for `NET.missedSpawnGrace` s and `spawn` never came, the message was lost, so it respawns the player locally with `spawnActor`; a `dead` that arrives without an `elim` sets `respawnAt`), `hp`, `downHp`, `vest`, `helmet`, `protectedUntil`, team and stats; for remote actors `applyRemote` interpolates pose snapshots `NET.interpDelay` behind, decodes `flags`, rebuilds weapons when the loadout changed, and copies everything else. Also `updateMvp` every 0.5 s and `syncDrops`.
 - `syncClock(dt)`: `G.time` follows `st.clock` (hard snap beyond 0.4 s of error, otherwise eased).
 - `sendPose(dt)`: `pose { x, y, z, yaw, pitch, speed, flags, slot }` at `NET.poseHz`. `FLAG` = crouch 1, aim 2, grounded 4, reload 8, heal 16, throw 32, swing 64, sprint 128 (the sprint bit is defined but never set).
 - `initOnline()`: wires the server events (`dmg`, `knock`, `elim`, `revive`, `spawn`, `shot`, `throw`, `boom`, `wall`, `ult`, `opened`, `matchEnd`) to the bus and effects, and chat bubbles for other players.
@@ -280,12 +288,12 @@ Everything is pooled at `initFx(scene, preset)`; nothing allocates per shot and 
 
 ### Add a weapon
 
-1. `src/config.js` `WEAPONS`: new entry with every field from section 2. `slot` must be `primary` or `secondary` to be equippable.
-2. Backend `src/rules.ts` `WEAPONS` (slot, damage, interval, range, headMul, pellets) and `src/catalog.ts` `WEAPON_PRICES` (slot, price). Without the first the server ignores its hits; without the second it cannot be bought or equipped.
+1. `src/config.js` `WEAPONS`: new entry with every field from section 2. `slot` must be `primary` or `secondary` to be equippable; `cat` puts it in a store category; `tier: 'basic'` adds it to the Field Arsenal Pass (then also add it to `PASSES.basic.weapons` in the backend `catalog.ts`).
+2. Backend `src/rules.ts` `WEAPONS` (slot, damage, interval, range, headMul, pellets, melee, pierce, heal) and `src/catalog.ts` `WEAPON_PRICES` (slot, Gem price). Without the first the server ignores its hits; without the second it cannot be bought or equipped.
 3. Model: a new `model` key needs a builder in `src/game/weaponModels.js` exposing `userData.muzzle`, `userData.ejector`, `userData.length` (see [ui.md](ui.md)); reuse an existing key to skip this.
 4. Sound: `sfx.shot(kind)` is keyed by `kind`; a new kind needs a branch in `src/audio/sfx.js` (see [audio.md](audio.md)).
 5. A new `hold` value needs an arm pose in `ANIM.aim` and animator support ([avatar.md](avatar.md)).
-6. Check the lobby store card, the HUD weapon panel and the icon ([ui.md](ui.md)).
+6. Check the Weapons Store (tile, big picture, stat bars), the HUD weapon panel and the icon ([ui.md](ui.md)), and try it with the store's TEST button: the test range picks its three steps from `heal` / `melee` / everything else (section 17).
 
 ### Change weapon balance
 
@@ -309,7 +317,7 @@ Edit the number in `config.js` `WEAPONS` and the same number in backend `rules.t
 
 ### Change round length, score target, team size
 
-Mode `duration` / `scoreToWin`: backend `rules.ts` `MODES` is what counts (the client reads `st.duration` / `st.scoreToWin`); keep `config.js` `MATCH_MODES` in step for the lobby text. Team or room size: `NET.roomSize` / `teamMax` here, `ROOM_MAX_CLIENTS` / `TEAM_MAX` in backend `constants.ts` (the backend deploy sends `roomSize` from it).
+Mode `duration` / `scoreToWin`: backend `rules.ts` `MODES` is what counts (the client reads `st.duration` / `st.scoreToWin`); keep `config.js` `MATCH_MODES` in step for the lobby text. Team or room size (`teamMax` = players per side in a round, round = 2 x teamMax = 6; `roomSize` = lobby connections, 18, the surplus queues): `NET.roomSize` / `teamMax` here, `ROOM_MAX_CLIENTS` / `TEAM_MAX` in backend `constants.ts` (the backend deploy sends `roomSize` from it).
 
 ### React to a game event
 
@@ -337,3 +345,13 @@ Send a message, relay it on the server, and handle it in `online.js initOnline`.
 ## 16. Leftovers from the single-player / bot version
 
 Safe to remove, kept for now: `BOTS` except `navCell`; `Actor.bot`, `streak`, `lastElimAt`, `damagers`; `navgrid.js` pathfinding; `combat.finishReload`, `combat.operativeOf`; `state.js enemiesOf` / `alliesOf`; `online.js mapOf`; `loot.js allCrates`; comments that mention bots (`actor.js` header, `combat.js` "noise for the bots", `main.js` ad-break comment); the `vote` phase name in the `state.js` comment; `FLAG.sprint`; `GROUND_Y`; `MATCH.endSlowmo`, `MATCH.streakWindow`, `MATCH.countdown` and `MATCH.voteTime` (nothing reads them: the server's `PHASES` / `STREAK_WINDOW` rule, and only `MATCH.introFlyover` and `MATCH.spawnSafeDistance` are used).
+
+## 17. The Weapon Test range (`testRange.js`)
+
+The Weapons Store's TEST button (any weapon or grenade, owned or not) opens an offline practice field: `main.js enterTest(weaponId, grenadeId)` hides the lobby, sets `G.test = true` and `G.phase = 'playing'`, calls `startTest`, starts the HUD in test mode (`hud.setTest(true)`: no score, zone timer, zone tint or minimap) and emits `spawn` to place the body and camera. `exitTest(toStore)` (EXIT, or walking into the portal once the steps are done) calls `endTest`, then `backToLobby()` and reopens the store (`lobby.openStore()`). If the team leader presses PLAY meanwhile, `syncFlow` ends the test and follows the queue.
+
+- **The field**: a grass disc (radius 38 m) out at sea at `ARENA` (0, 420), with a cliff skirt, bushes, an invisible fence of fixed colliders round the rim and a portal (`PORTAL`) back to the lobby. Built once, hidden between tests; its colliders are added and removed per test. Falling out (`body.onFellOut`) puts the player back at the start.
+- **People**: the player (blue; the tested weapon in its slot and held, the loadout's other gun, the tested or equipped grenade), an Instructor (blue, `untargetable`, holds the same weapon, demonstrates each step with visual-only shots or swings, then says "Now it's your turn!"), orange target dummies and, for the Mender, two blue allies. Dummies are `Actor`s with no `netId`; parked ones are `hidden` and `untargetable` until a step places them.
+- **No server**: `gameFrame` skips `reconcile`, `applyState`, `syncClock` and `sendPose` and advances `G.time` itself; `combat.setLocalHits(onLocalHit)` routes this client's hits on net-less actors (shots, melee blows, grenade blasts) to `testRange.js`, which applies the same damage maths as the server (falloff, head multiplier, melee damage, blast falloff; no armour), emits `damage`, `heal` and `elimination` for the HUD, and counts progress. `player.offline` stops `throw` from being sent. Nothing is rewarded.
+- **Steps** (`buildSteps`, by weapon type): guns: hit the target 5 times (scoped weapons stand 40 m off, shotguns 7 m), 2 headshots, then eliminate a strafing dummy at full health; the blade: 3 strikes, sprint to a ring (shows the speed bonus), eliminate the strafing dummy; the Mender: heal an ally from 30 to 100 HP, heal a knocked ally 3 times (its bleed-out pool), sting an enemy 5 times; grenades (6, refilled when empty): land a blast on the dummy, catch two dummies in one blast, eliminate the dummy. A step finishes with an "OK!" pop; after the third the card reads "Test complete!" and the portal is labelled "Back to the lobby".
+- **UI** (`testRange.css`): the step card at the top centre (step n/3, title, text, progress bar, EXIT; below the platform toolbar when they would overlap; on short landscape phones narrower, without the step line, text clamped to two lines), floating labels projected over actors (the instructor's line, HP / knocked counters, hit counters, the portal label).

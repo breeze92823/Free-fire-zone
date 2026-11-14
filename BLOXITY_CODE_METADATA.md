@@ -5,7 +5,7 @@ rewards: false
 distDir: dist
 buildCommand: npm run build
 notApplicable:
-  - gems: Nothing is sold for premium currency (project rule); every shop uses match-earned coins, bought on the server.
+  - gems: Nothing is sold for premium currency (project rule); every shop uses match-earned coins, bought on the server. The game's own in-game "Gems" (earned by eliminations, never sold) are unrelated to Bloxity Gems.
   - rewarded-ads: No rewards are granted for watching ads (rewards: false); ad breaks and screen ads are implemented.
   - music-volume: The game has no music track, only SFX and ambience (master_volume is supported).
 serverDir: ../Free-fire-zone-backend

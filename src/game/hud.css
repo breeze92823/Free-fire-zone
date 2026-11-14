@@ -143,10 +143,196 @@
   filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.5));
 }
 .hud-banner .txt {
-  margin-top: -10px;
+  margin-top: -6px;
   font-size: clamp(18px, 3.8vmin, 32px);
   font-weight: 700;
   letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+.hud-banner .sub {
+  font-size: clamp(11px, 2vmin, 16px);
+  font-weight: 600;
+  color: #5dffd6;
+  white-space: nowrap;
+}
+.hud-banner .sub img {
+  height: 1.1em;
+  vertical-align: -0.2em;
+  margin: 0 2px 0 5px;
+}
+
+/* --- Kill reward popup (beside the crosshair) ----------------------------------------------- */
+.hud-reward {
+  position: absolute;
+  left: calc(50% + clamp(26px, 4.5vmin, 46px));
+  top: calc(50% - clamp(70px, 11vmin, 110px));
+  height: clamp(60px, 10vmin, 100px);
+  max-width: calc(50vw - clamp(26px, 4.5vmin, 46px) - var(--safe-r) - min(290px, 24vw)); /* wraps before the weapon panel */
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: flex-start;
+  gap: 2px;
+}
+.hud-reward .rw {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: clamp(8px, 1.6vmin, 16px);
+  row-gap: 0;
+  transform-origin: left center;
+  animation: rewardPop 2.2s ease-out forwards;
+}
+.hud-reward .c {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.hud-reward img {
+  height: clamp(22px, 4.2vmin, 40px);
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.6));
+}
+.hud-reward .n {
+  font-size: clamp(20px, 4.2vmin, 40px);
+  font-weight: 700;
+  line-height: 1;
+}
+.hud-reward .l {
+  font-size: clamp(10px, 1.7vmin, 14px);
+  font-weight: 600;
+  opacity: 0.9;
+  align-self: flex-end;
+  margin-bottom: 0.2em;
+}
+.hud-reward .gem .n {
+  color: #5dffd6;
+}
+.hud-reward .coin .n {
+  color: #ffd34d;
+}
+.hud-reward .rp .n {
+  color: #ffe9a8;
+}
+.hud-reward .knock {
+  font-size: 0.8em;
+}
+.hud-reward .knock img {
+  height: clamp(18px, 3.4vmin, 32px);
+}
+.hud-reward .knock .n {
+  font-size: clamp(16px, 3.3vmin, 32px);
+}
+@keyframes rewardPop {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.5);
+  }
+  9% {
+    opacity: 1;
+    transform: translateY(0) scale(1.18);
+  }
+  16% {
+    transform: scale(1);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(-6px);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-26px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hud-reward .rw {
+    animation: rewardFade 2.2s linear forwards;
+  }
+  @keyframes rewardFade {
+    0%,
+    75% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+}
+/* The touch layout: hide the small labels, the numbers and icons say enough. */
+.touch-ui .hud-reward .l {
+  display: none;
+}
+/* Portrait: the right column (minimap + weapons) can sit level with the crosshair, so the popup
+   goes on the crosshair's left (clear of the item column), and the banner is a compact badge
+   under the score bar, narrow enough to stay left of the minimap. */
+@media (orientation: portrait) {
+  .hud-reward {
+    left: auto;
+    right: calc(50% + clamp(26px, 4.5vmin, 46px));
+    top: calc(50% - 50px);
+    height: 62px;
+    max-width: calc(50vw - clamp(26px, 4.5vmin, 46px) - var(--safe-l) - 56px);
+    align-items: flex-end;
+  }
+  .hud-reward .rw {
+    justify-content: flex-end;
+    transform-origin: right center;
+  }
+  .hud-banner {
+    top: calc(var(--safe-t) + var(--res-top) + clamp(48px, 7.6vmin, 68px) + 28px); /* under the zone timer */
+    width: min(120px, 32vw);
+  }
+  .hud-banner svg {
+    width: min(64px, 18vw);
+  }
+  .hud-banner .txt {
+    white-space: normal;
+    font-size: 16px;
+    line-height: 1.05;
+  }
+  .hud-banner .sub {
+    display: none;
+  }
+}
+/* Short landscape (phones): little room between the score bar and the crosshair. The banner is
+   one row (small badge + text) under the score bar; only the newest popup shows, wrapped before
+   the weapon panel. */
+@media (orientation: landscape) and (max-height: 500px) {
+  .hud-banner {
+    top: calc(var(--safe-t) + var(--res-top) + clamp(48px, 7.6vmin, 68px) + 28px); /* under the zone timer */
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .hud-banner svg {
+    width: 40px;
+  }
+  .hud-banner .txt {
+    margin-top: 0;
+    font-size: 15px;
+  }
+  .hud-banner .sub {
+    display: none;
+  }
+  .hud-reward {
+    top: calc(50% - 50px);
+    height: 62px;
+    max-width: calc(50vw - clamp(26px, 4.5vmin, 46px) - 178px); /* left of the weapon panel */
+  }
+  .hud-reward .rw {
+    column-gap: 8px;
+  }
+  .hud-reward img,
+  .hud-reward .knock img {
+    height: 18px;
+  }
+  .hud-reward .n,
+  .hud-reward .knock .n {
+    font-size: 18px;
+  }
+  .hud-reward .rw:not(:last-child) {
+    display: none;
+  }
 }
 .hud-announce {
   position: absolute;
@@ -774,6 +960,9 @@
 .dmgnum.head {
   color: #ff3b3b;
   font-size: clamp(20px, 3.8vmin, 32px);
+}
+.dmgnum.heal {
+  color: #5dffa0;
 }
 .dmgnum.armor {
   color: #9fd3ff;
@@ -1447,4 +1636,12 @@
     bottom: auto;
     transform: none;
   }
+}
+
+/* Weapon Test range (hud.setTest): no score bar, zone timer, zone tint or minimap. */
+.hud.test .hud-score,
+.hud.test .hud-zone,
+.hud.test .hud-zonetint,
+.hud.test .hud-minimap-wrap {
+  display: none;
 }

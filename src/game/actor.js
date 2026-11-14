@@ -92,6 +92,7 @@ export class Actor {
     // Weapons: 0 primary, 1 secondary, 2 knife, 3 fists
     const lo = opts.loadout || {}
     const skins = lo.skins || {}
+    this.grenade = lo.grenade || 'frag' // GRENADES kind thrown with T
     this.slots = [lo.primary || 'striker', lo.secondary || 'viper', 'knife', 'fists'].map((id) => {
       const def = WEAPONS[id]
       return { id, def, ammo: def.mag ?? 0, reserve: def.reserve ?? 0, skin: skins[id] || 'standard' }

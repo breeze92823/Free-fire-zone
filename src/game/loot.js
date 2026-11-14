@@ -261,6 +261,8 @@ function buildDropModel() {
   g.userData.chute = chute
   return g
 }
+// Shader warm-up (warmup.js): a drop is only built when one falls, so boot warms a sample.
+export const warmSamples = () => [buildDropModel()]
 
 // at: landing point; id: the server's drop id; age: s since it was dropped (late joiners).
 export function spawnDrop(at, id = 0, age = 0) {

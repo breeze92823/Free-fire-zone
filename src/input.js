@@ -15,6 +15,7 @@ export const inputState = {
   crouch: false, // toggled
 }
 
+const BUTTON_BIT = [1, 4, 2, 8, 16] // PointerEvent.button -> its bit in PointerEvent.buttons
 const held = new Set()
 const keyActions = new Map() // code -> fn, for one-shot keys
 let orbiting = false // drag-to-look fallback where pointer lock is refused
@@ -126,27 +127,48 @@ export function install(showMenu, canvasEl) {
     held.delete(e.code)
     recomputeMove()
   })
+  // Mouse buttons. Pointer Events only send pointerdown for the first button pressed and
+  // pointerup for the last one released: pressing or releasing another button while one is
+  // held arrives as a pointermove with `button` set (-1 on a plain move) and a new `buttons`
+  // mask. So both buttons are read from `buttons` on all three events, otherwise firing while
+  // holding RMB (or aiming while holding LMB) is lost and a released button can stick.
+  const press = (e) => {
+    if (!enabled || released || e.target !== canvas) return
+    if (e.button === 0 && !isLocked()) {
+      // The first click grabs the cursor (drag-to-look where the lock is refused).
+      requestLock()
+      orbiting = true
+      return
+    }
+    if (e.button === 0) inputState.fire = true
+    else if (e.button === 2) {
+      inputState.aim = true
+      requestLock()
+    }
+  }
+  const releaseButtons = (e) => {
+    if (!(e.buttons & 1)) {
+      inputState.fire = false
+      orbiting = false
+    }
+    if (!(e.buttons & 2)) inputState.aim = false
+  }
   window.addEventListener('pointerdown', (e) => {
     if (e.pointerType !== 'mouse') return
-    const onWorld = e.target === canvas
-    if (!enabled || !onWorld || released) return
-    if (e.button === 0) {
-      if (isLocked()) inputState.fire = true
-      else {
-        requestLock()
-        orbiting = true
-      }
-    } else if (e.button === 2) inputState.aim = true
+    press(e)
   })
   window.addEventListener('pointerup', (e) => {
     if (e.pointerType !== 'mouse') return
-    if (e.button === 0) {
-      inputState.fire = false
-      orbiting = false
-    } else if (e.button === 2) inputState.aim = false
+    releaseButtons(e)
   })
   window.addEventListener('pointermove', (e) => {
-    if (!enabled || released || e.pointerType !== 'mouse') return
+    if (e.pointerType !== 'mouse') return
+    if (e.button >= 0) {
+      // A chorded press / release (see above).
+      if (e.buttons & BUTTON_BIT[e.button]) press(e)
+      else releaseButtons(e)
+    }
+    if (!enabled || released) return
     if (!orbiting && !isLocked()) return
     inputState.look.dx += e.movementX || 0
     inputState.look.dy += e.movementY || 0

@@ -36,6 +36,8 @@ export function createPostFx(renderer, scene, camera) {
       return bloom // for tuning from the dev console
     },
     // preset: a graphicsPreset() result (bloom + antialias decide the setup).
+    // Switching the composer on or off changes where the scene is drawn (an HDR target vs the screen),
+    // and that is a different shader for every material: main.js only does it between rounds.
     configure(preset) {
       enabled = !!preset.bloom
       if (!enabled) {
@@ -45,6 +47,15 @@ export function createPostFx(renderer, scene, camera) {
         return
       }
       build(preset.antialias ? 4 : 0)
+    },
+    // Bloom on/off without touching the setup (no shader changes): the scene still goes through the
+    // HDR target, only the bloom pass is skipped. For lowering the graphics mid-round.
+    setBloomActive(on) {
+      if (bloom) bloom.enabled = on
+    },
+    // The render target the scene itself is drawn into (null = the screen): what warmup.js compiles for.
+    sceneTarget() {
+      return enabled && composer ? composer.readBuffer : null
     },
     setSize(w, h) {
       if (!composer) return

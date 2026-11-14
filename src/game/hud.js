@@ -2,7 +2,8 @@
 // squad list, kill feed, weapon panel (tap a slot to switch), health and
 // armour, item buttons with cooldowns, the operative ability diamond,
 // crosshair with spread + hit markers, floating damage numbers, damage
-// direction arcs, streak banners, pickup toasts, the interact prompt, the
+// direction arcs, kill reward popups (Gems / coins / rank points the server granted) and
+// multi-kill banners, pickup toasts, the interact prompt, the
 // knocked-down overlay, the spectate/revive panel, the scope overlay and the
 // scoreboard (Tab). Event-driven where it can be; per-frame writes are cached.
 import './hud.css'
@@ -22,17 +23,37 @@ const h = (tag, cls = '', html = '') => {
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
 
-// Wings + shield emblem for streak banners (original art).
-const EMBLEM = (color) => `<svg viewBox="0 0 200 120" xmlns="http://www.w3.org/2000/svg">
-  <defs><linearGradient id="eg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff6b0"/><stop offset="1" stop-color="${color}"/></linearGradient>
-  <linearGradient id="ew" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2a7fff"/><stop offset="1" stop-color="#9fdcff"/></linearGradient></defs>
-  <path d="M100 60 L20 18 L44 52 L8 46 L40 74 L14 80 L58 92 Z" fill="url(#ew)" stroke="#0b1f44" stroke-width="3"/>
-  <path d="M100 60 L180 18 L156 52 L192 46 L160 74 L186 80 L142 92 Z" fill="url(#ew)" stroke="#0b1f44" stroke-width="3"/>
-  <path d="M100 8 L132 22 L130 62 Q126 92 100 112 Q74 92 70 62 L68 22 Z" fill="url(#eg)" stroke="#3a2600" stroke-width="4"/>
-  <path d="M100 26 L118 34 L117 60 Q114 80 100 92 Q86 80 83 60 L82 34 Z" fill="#1a2238" stroke="#3a2600" stroke-width="2"/>
-  <path d="M100 40 l5 10 11 1 -8 7 3 11 -11 -6 -11 6 3 -11 -8 -7 11 -1z" fill="#ffd34d"/></svg>`
-
-const STREAK_TEXT = ['', '', 'Double Elimination', 'Triple Elimination', 'Rampage!', 'Unstoppable!', 'Godlike!']
+// Multi-kill badge (original art): a hexagonal medal with a reticle, blade fins and one pip per
+// elimination in the streak. The colour climbs with the streak.
+const STREAK_TIERS = [
+  null,
+  null,
+  { text: 'Double Elimination', c: '#4fe0d0', d: '#0b6f78' },
+  { text: 'Triple Elimination', c: '#ffc83d', d: '#9a5a00' },
+  { text: 'Quad Elimination', c: '#ff7a2a', d: '#8a2400' },
+  { text: 'Rampage!', c: '#ff4d9a', d: '#7a0a44' },
+  { text: 'Unstoppable!', c: '#b26bff', d: '#41108a' },
+]
+const BADGE = (n, c, d) => {
+  const pips = Math.min(n, 6)
+  let dots = ''
+  for (let i = 0; i < pips; i++) {
+    const x = 100 + (i - (pips - 1) / 2) * 16
+    dots += `<path d="M${x} 122 l6 6 -6 6 -6 -6z" fill="${c}" stroke="#0e1424" stroke-width="2"/>`
+  }
+  return `<svg viewBox="0 0 200 140" xmlns="http://www.w3.org/2000/svg">
+  <defs><linearGradient id="ffz-badge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="0.38" stop-color="${c}"/><stop offset="1" stop-color="${d}"/></linearGradient></defs>
+  <path d="M62 44 L6 30 L26 58 L4 70 L28 80 L14 102 L62 86 Z" fill="${d}" stroke="#0e1424" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M62 50 L22 40 L36 60 L20 70 L38 76 L28 92 L62 80 Z" fill="${c}" opacity="0.9"/>
+  <path d="M138 44 L194 30 L174 58 L196 70 L172 80 L186 102 L138 86 Z" fill="${d}" stroke="#0e1424" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M138 50 L178 40 L164 60 L180 70 L162 76 L172 92 L138 80 Z" fill="${c}" opacity="0.9"/>
+  <path d="M100 6 L148 32 V86 L100 112 L52 86 V32 Z" fill="url(#ffz-badge)" stroke="#0e1424" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M100 22 L134 41 V77 L100 96 L66 77 V41 Z" fill="#141c2e" stroke="#ffffff" stroke-opacity="0.45" stroke-width="2"/>
+  <circle cx="100" cy="59" r="17" fill="none" stroke="${c}" stroke-width="4"/>
+  <path d="M100 35v13M100 70v13M76 59h13M111 59h13" stroke="${c}" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="100" cy="59" r="4.5" fill="#ffffff"/>
+  ${dots}</svg>`
+}
 
 let root = null
 const el = {}
@@ -64,7 +85,8 @@ export function initHud(callbacks) {
       <div class="team orange"><div class="pts o">0</div><img class="mvp" alt=""></div>
     </div>
     <div class="hud-zone"></div>
-    <div class="hud-banner"><div class="emb"></div><div class="txt o"></div></div>
+    <div class="hud-banner"><div class="emb"></div><div class="txt o"></div><div class="sub o"></div></div>
+    <div class="hud-reward"></div>
     <div class="hud-announce"><div class="big o"></div><div class="small o"></div></div>
     <div class="hud-squad"></div>
     <div class="hud-right">
@@ -112,6 +134,7 @@ export function initHud(callbacks) {
     mapname: q('.mapname'),
     zone: q('.hud-zone'),
     banner: q('.hud-banner'),
+    reward: q('.hud-reward'),
     announce: q('.hud-announce'),
     squad: q('.hud-squad'),
     minimap: q('.hud-minimap-wrap canvas'),
@@ -332,6 +355,8 @@ function begin(mapName) {
   root.querySelector('.hud-bigmap .title').textContent = mapName
   el.feed.innerHTML = ''
   el.toasts.innerHTML = ''
+  el.reward.innerHTML = ''
+  el.banner.classList.remove('show')
   pings.length = 0
   waypoint = null
   buildWeapons()
@@ -366,14 +391,35 @@ function feed(killer, victim, kind, weapon, streak = 0) {
 }
 
 let bannerTimer = 0
-function streakBanner(n) {
-  const text = STREAK_TEXT[Math.min(n, STREAK_TEXT.length - 1)]
-  if (!text) return
-  el.banner.querySelector('.emb').innerHTML = EMBLEM(n >= 4 ? '#ff6a2a' : '#ffb21f')
-  el.banner.querySelector('.txt').textContent = text
+function streakBanner(n, bonusGems = 0) {
+  const tier = STREAK_TIERS[Math.min(n, STREAK_TIERS.length - 1)]
+  if (!tier) return
+  el.banner.querySelector('.emb').innerHTML = BADGE(n, tier.c, tier.d)
+  const txt = el.banner.querySelector('.txt')
+  txt.textContent = tier.text
+  txt.style.color = tier.c
+  el.banner.querySelector('.sub').innerHTML = bonusGems > 0 ? `Streak bonus <img alt="" src="${GEM_ICON}">+${bonusGems}` : ''
+  // Restart the pop when a streak climbs while the banner is still up.
+  el.banner.classList.remove('show')
+  void el.banner.offsetWidth
   el.banner.classList.add('show')
   clearTimeout(bannerTimer)
-  bannerTimer = setTimeout(() => el.banner.classList.remove('show'), 2200)
+  bannerTimer = setTimeout(() => el.banner.classList.remove('show'), 2400)
+}
+
+// Beside the crosshair: what the server granted for a knock / elimination. Newest at the bottom;
+// each one pops in, floats up and fades (CSS animation), at most three on screen.
+const GEM_ICON = svgData(SVG.gem)
+const COIN_ICON = svgData(SVG.coin)
+const RP_ICON = svgData(SVG.rp)
+function rewardPopup({ kind, gems, coins, rp }) {
+  const chip = (cls, icon, n, label) => (n > 0 ? `<div class="c ${cls}"><img alt="" src="${icon}"><span class="n o">+${n}</span><span class="l o">${label}</span></div>` : '')
+  const html = chip('gem', GEM_ICON, gems, 'Gems') + chip('coin', COIN_ICON, coins, 'Coins') + chip('rp', RP_ICON, rp, 'Rank')
+  if (!html) return
+  const r = h('div', `rw ${kind}`, html)
+  el.reward.appendChild(r)
+  while (el.reward.children.length > 3) el.reward.firstChild.remove()
+  setTimeout(() => r.remove(), 2300)
 }
 
 let announceTimer = 0
@@ -409,14 +455,14 @@ function hitmarker(kind) {
   hitTimer = setTimeout(() => (el.hit.className = 'hud-hit'), kind === 'kill' ? 380 : 140)
 }
 
-function damageNumber(pos, amount, head) {
+function damageNumber(pos, amount, head, heal = false) {
   const d = dmgNums.reduce((a, b) => (a.t < b.t ? a : b))
   d.t = 0.9
   d.pos.copy(pos)
   d.pos.y += 0.3
   d.vx = (Math.random() - 0.5) * 40
-  d.el.textContent = Math.max(1, Math.round(amount))
-  d.el.className = `dmgnum o${head ? ' head' : ''}`
+  d.el.textContent = `${heal ? '+' : ''}${Math.max(1, Math.round(amount))}`
+  d.el.className = `dmgnum o${head ? ' head' : ''}${heal ? ' heal' : ''}`
 }
 
 function hurtFrom(pos) {
@@ -442,9 +488,19 @@ function wireEvents() {
     feed(killer, target, weapon === 'zone' ? 'zone' : weapon === 'frag' ? 'frag' : head ? 'head' : 'elim', weapon, streak)
     if (killer === G.player) {
       hitmarker('kill')
-      notice(`Eliminated <em>${esc(target.name)}</em>`, `+${cb.coinsPerElim ?? 0} coins`)
-      if (streak >= 2) streakBanner(streak)
+      notice(`Eliminated <em>${esc(target.name)}</em>`, '')
     }
+  })
+  // The server's grant for this player's knock / elimination (online.js 'reward').
+  on('reward', (r) => {
+    if (!G.player) return
+    rewardPopup(r)
+    if (r.kind === 'elim' && r.streak >= 2) streakBanner(r.streak, r.bonus)
+  })
+  // A medic weapon healed someone: green numbers for the healer.
+  on('heal', ({ target, by, amount }) => {
+    if (!G.player || by !== G.player || target === G.player) return
+    damageNumber(target.chest(tmpV), amount, false, true)
   })
   on('loot', ({ actor, items }) => {
     if (actor !== G.player) return
@@ -675,6 +731,10 @@ const hud = {
       btn.disabled = false
     }
   },
+  // The offline Weapon Test range: no score, zone or minimap (testRange.js draws its own card).
+  setTest(on) {
+    root?.classList.toggle('test', !!on)
+  },
   show(on) {
     root.classList.toggle('on', on)
     if (!on) {
@@ -794,7 +854,7 @@ const hud = {
     }
 
     // Crosshair
-    const scoped = info.scoped
+    const scoped = !!info.scoped // toggle(name, undefined) would flip the class instead
     el.scope.classList.toggle('on', scoped)
     const showCross = p.life === 'alive' && !scoped && G.phase === 'playing' && !G.spectating
     el.cross.classList.toggle('hide', !showCross)

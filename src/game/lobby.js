@@ -1,16 +1,18 @@
-// The lobby UI over the 3D hangar: profile, coins and rank on top; Weapons
+// The lobby UI over the 3D hangar: profile, coins, Gems and rank on top; Weapons
 // Store, Store, Characters and Inventory on the left; the squad and the
-// mode + PLAY button on the right; and the windows behind them. Everything
-// is bought with coins earned in matches (never premium currency).
+// mode + PLAY button on the right; and the windows behind them. Skins, operatives
+// and the Store cost coins; the Weapons Store (weapons, grenades, the pass) costs the
+// game's own Gems. Both are earned in matches only (never premium currency).
 // Also the waiting / map-vote panel after PLAY (the room's server runs the
 // rounds: real players only) and the loading screen.
 import './lobby.css'
-import { MATCH_MODES, NET, OPERATIVES, SKINS, STORE, WEAPONS, GAME_TITLE, QUALITY_OPTIONS } from '../config.js'
+import { GRENADES, MATCH_MODES, NET, OPERATIVES, PASSES, SKINS, STORE, WEAPONS, WEAPON_CATS, GAME_TITLE, QUALITY_OPTIONS } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { sfx, setVolume, isMuted, setMuted } from '../audio/index.js'
-import { SVG, svgData, weaponIcon } from './icons.js'
+import { SVG, itemIcon, svgData, weaponIcon } from './icons.js'
 import { portrait, randomOutfit } from './characters.js'
-import { account, buyOperative, buySkin, buyStoreItem, buyWeapon, equipEmote, equipOperative, equipSkin, equipWeapon, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
+import party, { initParty } from './party.js'
+import { account, buyGrenade, buyOperative, buyPass, buySkin, buyStoreItem, buyWeapon, equipEmote, equipGrenade, equipOperative, equipSkin, equipWeapon, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
 
 const h = (tag, cls = '', html = '') => {
   const e = document.createElement(tag)
@@ -39,6 +41,7 @@ export function initLobby(callbacks) {
     <div class="lb-top">
       <div class="chip profile"><img class="pfp" alt=""><span class="nm o"></span></div>
       <div class="chip coins" title="Coins: earned by playing matches">${coinImg()}<span class="v o">0</span></div>
+      <div class="chip gems" title="Gems: earned by eliminating and knocking enemies (never sold)"><img alt="" src="${svgData(SVG.gem)}"><span class="v o">0</span></div>
       <div class="chip rank"><span class="rs"></span><div class="rk"><b class="o rn"></b><span class="rbar"><i></i></span></div></div>
       <div class="lb-spacer"></div>
       <button class="iconbtn settings" title="Settings">${SVG.gear}</button>
@@ -49,7 +52,6 @@ export function initLobby(callbacks) {
       <button class="menubtn" data-open="characters"><span class="ic"><img alt="" src="${svgData(SVG.emote)}"></span><span class="tx o">Characters</span></button>
       <button class="menubtn" data-open="inventory"><span class="ic"><img alt="" src="${svgData(SVG.vest)}"></span><span class="tx o">Inventory</span></button>
     </div>
-    <div class="lb-squad"></div>
     <div class="lb-play">
       <button class="lb-mode"><span class="mi">6v6</span><span><div class="mt o"></div><div class="md"></div></span></button>
       <button class="playbtn o">PLAY</button>
@@ -64,9 +66,16 @@ export function initLobby(callbacks) {
   root.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => open(b.dataset.open)))
   root.querySelector('.settings').addEventListener('click', () => open('settings'))
   root.querySelector('.lb-mode').addEventListener('click', () => open('mode'))
-  root.querySelector('.playbtn').addEventListener('click', () => (root.classList.contains('queued') ? reopenQueue() : cb.onPlay?.()))
+  initParty(root)
+  root.querySelector('.playbtn').addEventListener('click', () => {
+    if (root.classList.contains('queued')) return reopenQueue()
+    // In a team only its leader starts the match (the server enforces it too).
+    if (party.info().size > 0 && !party.info().lead) return party.toast('Only the team leader can start the match.')
+    cb.onPlay?.()
+  })
   root.querySelector('.chip.profile').addEventListener('click', () => open('inventory'))
-  root.querySelector('.lb-leave').addEventListener('click', () => cb.onLeaveQueue?.())
+  // "Leave the team": out of the team (and its queue); alone it just leaves the queue.
+  root.querySelector('.lb-leave').addEventListener('click', () => (party.info().size > 0 ? cb.onLeaveTeam?.() : cb.onLeaveQueue?.()))
   modal.addEventListener('pointerdown', (e) => {
     if (e.target === modal && !modal.dataset.locked) close()
   })
@@ -96,35 +105,35 @@ export function initLobby(callbacks) {
     }
     void toolbarBottom
     root.style.setProperty('--res-bottom', `${bottom}px`)
+    // The Weapons Store fills the screen: it starts under the toolbar when the toolbar spans the top.
+    root.style.setProperty('--res-tool', `${room < 230 ? toolbarBottom : 0}px`)
   })
   onProfile(refresh)
-  newSquad()
   refresh()
   return lobby
 }
 
-function newSquad() {
-  // The squad panel lists the real players in this room (setRoster).
-}
-
-// Everyone in the room (online.js roster()) and the connection state, about once a second.
+// Everyone in the room (online.js roster()) and the connection state, a few times a second. The
+// "Players online" dock and the team are drawn by party.js.
 function setRoster(list, status) {
   roomPlayers = list || []
   netStatus = status || netStatus
   if (!root) return
-  const others = roomPlayers.filter((m) => !m.me)
-  const sq = root.querySelector('.lb-squad')
-  const html = others.length
-    ? others
-        .slice(0, 5)
-        .map((m) => `<div class="mate"><img alt="" src="${m.pfp ? esc(m.pfp) : portrait(outfitFor(m.id))}"><div><b class="o">${esc(m.name || 'Player')}</b><small>${m.inMatch ? (m.team ? 'In a round' : 'Ready') : 'In the lobby'}</small></div></div>`)
-        .join('') + (others.length > 5 ? `<div class="mate more"><small class="o">+${others.length - 5} more</small></div>` : '')
-    : `<div class="mate"><div><b class="o">${netStatus === 'online' ? 'No one else here yet' : 'Connecting…'}</b><small>${netStatus === 'online' ? 'Invite friends from the menu' : 'Joining a server'}</small></div></div>`
-  if (sq.dataset.html !== html) {
-    sq.dataset.html = html
-    sq.innerHTML = html
-  }
+  party.setRoster(roomPlayers)
+  syncPlayButton()
   paintNet()
+}
+
+// A team member who is not the leader waits for them: PLAY reads "Waiting for leader...".
+const waitsForLeader = () => {
+  const i = party.info()
+  return i.size > 0 && !i.lead
+}
+function syncPlayButton() {
+  const queued = root.classList.contains('queued')
+  const wait = !queued && waitsForLeader()
+  root.classList.toggle('member-wait', wait)
+  if (!queued) setQueued(false)
 }
 
 const outfits = new Map()
@@ -151,6 +160,7 @@ function refresh() {
   if (!root) return
   const r = rankOf()
   root.querySelector('.chip.coins .v').textContent = fmtN(profile.coins)
+  root.querySelector('.chip.gems .v').textContent = fmtN(profile.gems || 0)
   root.querySelector('.chip.rank .rs').innerHTML = RANK_SVG(r.color)
   root.querySelector('.chip.rank .rn').textContent = r.name
   root.querySelector('.chip.rank .rbar i').style.width = `${r.progress * 100}%`
@@ -175,6 +185,7 @@ function randomOutfitFixed() {
 
 // --- Windows ------------------------------------------------------------------------------------
 function frame(title, bodyHtml, tabs = null, activeTab = null) {
+  modal.classList.remove('wsm')
   modal.innerHTML = `<div class="win"><div class="win-h"><div class="t o">${title}</div><div class="coins">${coinImg()}<span class="o">${fmtN(profile.coins)}</span></div><button class="win-x o">&times;</button></div>${
     tabs ? `<div class="tabs">${tabs.map(([id, name]) => `<button class="tab o${id === activeTab ? ' on' : ''}" data-tab="${id}">${name}</button>`).join('')}</div>` : ''
   }<div class="win-b">${bodyHtml}</div></div>`
@@ -188,7 +199,7 @@ export function close() {
   // "Map voting..." button).
   if (root?.classList.contains('queued')) queueHidden = true
   if (current?.kind === 'queue') queueState = ''
-  modal.classList.remove('on', 'q')
+  modal.classList.remove('on', 'q', 'wsm')
   modal.innerHTML = ''
   delete modal.dataset.locked
   cb.onWindow?.(false)
@@ -223,35 +234,146 @@ function statRow(label, v, max) {
   return `<div class="stat"><span>${label}</span><span class="sb"><i style="width:${Math.min(100, (v / max) * 100)}%"></i></span></div>`
 }
 
+// --- Weapons Store (Gems) -------------------------------------------------------------------------
+// Categories on the left, the category's items, then the selected item: name, description, a big
+// picture, stat bars, TEST (the offline test range) and BUY / EQUIP. Weapons, grenades and the pass
+// cost the game's own Gems (earned by playing, never sold). Skins (coins) are one button away.
+const gemImg = () => `<img alt="" src="${svgData(SVG.gem)}">`
+let wsCat = 'all'
+let wsSel = null // { type: 'weapon' | 'grenade', id }
+const shopGuns = () => Object.keys(WEAPONS).filter((id) => WEAPONS[id].cat)
+function wsItems(cat) {
+  const guns = shopGuns()
+    .filter((id) => cat === 'all' || WEAPONS[id].cat === cat)
+    .sort((a, b) => WEAPONS[a].price - WEAPONS[b].price)
+    .map((id) => ({ type: 'weapon', id }))
+  const nades = cat === 'all' || cat === 'grenade' ? Object.keys(GRENADES).map((id) => ({ type: 'grenade', id })) : []
+  return cat === 'grenade' ? nades : [...guns, ...nades]
+}
+const wsDef = (it) => (it.type === 'weapon' ? WEAPONS[it.id] : GRENADES[it.id])
+// Tile colour: starters / basic grey, the dearer guns purple, specials gold.
+function rarity(it) {
+  const d = wsDef(it)
+  if (it.type === 'weapon' && d.cat === 'special') return 'gold'
+  if (d.price >= 1800) return 'epic'
+  return 'std'
+}
+function wsOwned(it) {
+  return it.type === 'weapon' ? owns('weapons', it.id) : owns('grenades', it.id)
+}
+function wsEquipped(it) {
+  if (it.type === 'grenade') return (profile.loadout.grenade || 'frag') === it.id
+  return profile.loadout.primary === it.id || profile.loadout.secondary === it.id
+}
+function wsPic(it, w, h) {
+  return it.type === 'weapon' ? weaponIcon(it.id, skinFor(it.id), w, h) : itemIcon(it.id, h)
+}
+function bar(label, v, cls = '') {
+  return `<div class="wst${cls ? ` ${cls}` : ''}"><span class="o">${label}</span><i><b style="width:${Math.round(Math.max(0.04, Math.min(1, v)) * 100)}%"></b></i></div>`
+}
+function wsStats(it) {
+  const d = wsDef(it)
+  if (it.type === 'grenade') return bar('Damage', d.damage / 240) + bar('Blast radius', d.radius / 9) + bar('Fuse speed', 1 - d.fuse / 3)
+  if (d.melee) return bar('Damage', d.damage / 100) + bar('Reach', d.range / 4) + bar('Swing speed', 1 / d.interval / 2.6) + bar('Mobility', (d.speedMul || 1) / 1.2)
+  const dmg = d.damage * (d.pellets || 1)
+  let html = bar('Damage', dmg / 220) + bar('Fire rate', 1 / d.interval / 17) + bar('Range', d.range / 400)
+  if (d.heal) html += bar('Healing', d.heal / 15, 'heal')
+  html += bar('Reload speed', 1 - (d.reload - 1) / 3) + bar('Accuracy', 1 - Math.min(1, (d.spread?.[1] ?? 1) / 1.6))
+  if (!d.heal) html += bar('Magazine', d.mag / 60)
+  return html
+}
+
 function weaponsWindow(tab) {
   if (tab === 'skins') return skinsWindow()
-  const list = Object.entries(WEAPONS).filter(([, w]) => w.slot === 'primary' || w.slot === 'secondary')
-  const cards = list
-    .map(([id, w]) => {
-      const own = owns('weapons', id)
-      const eq = profile.loadout.primary === id || profile.loadout.secondary === id
-      const dmg = w.damage * (w.pellets || 1)
-      let btn
-      if (eq) btn = `<button class="buy equipped o" disabled>Equipped</button>`
-      else if (own) btn = `<button class="buy owned o" data-equip="${id}">Equip ${w.slot}</button>`
-      else btn = `<button class="buy ${profile.coins >= w.price ? 'price' : 'cant'} o" data-buy="${id}">${coinImg()}${fmtN(w.price)}</button>`
-      return `<div class="card${eq ? ' sel' : ''}">${eq ? `<span class="tag gold">${w.slot === 'primary' ? 'PRIMARY' : 'SECONDARY'}</span>` : ''}
-        <div class="pic"><img alt="" src="${weaponIcon(id, skinFor(id))}"></div>
-        <div class="nm o">${w.name}</div><div class="sub">${w.kind.toUpperCase()} · ${w.slot}</div>
-        ${statRow('Damage', dmg, statLimits.damage)}${statRow('Fire rate', 1 / w.interval, statLimits.rate)}${statRow('Range', w.range, statLimits.range)}${statRow('Magazine', w.mag, statLimits.mag)}
-        ${btn}</div>`
+  const items = wsItems(wsCat)
+  if (!wsSel || !items.some((x) => x.type === wsSel.type && x.id === wsSel.id)) wsSel = items[0]
+  const sel = wsSel
+  const d = wsDef(sel)
+  const own = wsOwned(sel)
+  const eq = wsEquipped(sel)
+  const pass = PASSES.basic
+  const passOwned = owns('passes', 'basic')
+  const cats = WEAPON_CATS.map((c) => `<button class="wsc o${c.id === wsCat ? ' on' : ''}" data-cat="${c.id}">${c.name}</button>`).join('')
+  const tiles = items
+    .map((it) => {
+      const on = it.type === sel.type && it.id === sel.id
+      const badge = wsEquipped(it) ? '<span class="wb eq o">EQUIPPED</span>' : wsOwned(it) ? '<span class="wb ok o">OWNED</span>' : `<span class="wb pr o">${gemImg()}${fmtN(wsDef(it).price)}</span>`
+      return `<button class="wsi ${rarity(it)}${on ? ' on' : ''}" data-type="${it.type}" data-id="${it.id}" title="${esc(wsDef(it).name)}"><img alt="" src="${wsPic(it, 256, 110)}">${badge}<span class="wn o">${esc(wsDef(it).name)}</span></button>`
     })
     .join('')
-  const win = frame('Weapons Store', `<div class="grid">${cards}</div><div class="hint">Prices are in coins. Earn coins in every match: eliminations, damage, wins and MVP.</div>`, [['weapons', 'Weapons'], ['skins', 'Skins']], 'weapons')
-  wireTabs(win)
-  win.querySelectorAll('[data-buy]').forEach((b) => b.addEventListener('click', () => bought(buyWeapon(b.dataset.buy))))
-  win.querySelectorAll('[data-equip]').forEach((b) =>
+  let act
+  if (eq) act = `<button class="wsb eqd o" disabled>EQUIPPED</button>`
+  else if (own) act = `<button class="wsb equip o" data-act="equip">EQUIP${sel.type === 'weapon' ? `<small>${d.slot}</small>` : ''}</button>`
+  else act = `<button class="wsb buy o${profile.gems >= d.price ? '' : ' cant'}" data-act="buy"><span class="wsp o">${gemImg()}${fmtN(d.price)}</span>BUY</button>`
+  const canTest = sel.type === 'weapon' || sel.type === 'grenade'
+  const slotLine = sel.type === 'weapon' ? `${d.slot === 'primary' ? 'Primary' : 'Secondary'} slot${d.tier === 'basic' ? ` · in the ${pass.name}` : ''}` : 'Throwable (T)'
+  modal.innerHTML = `<div class="ws">
+    <div class="ws-h">
+      <div class="ws-gems" title="Gems: earned in matches, never sold">${gemImg()}<span class="o">${fmtN(profile.gems || 0)}</span></div>
+      <div class="ws-t o">Weapons Store</div>
+      <button class="ws-skins o" data-skins>Skins</button>
+      <button class="ws-x o" aria-label="Close">&times;</button>
+    </div>
+    <div class="ws-pass${passOwned ? ' owned' : ''}">
+      <div class="pi o"><svg viewBox="0 0 24 24"><path d="M12 2l2.9 6.2 6.8.8-5 4.6 1.3 6.7L12 17l-6 3.3 1.3-6.7-5-4.6 6.8-.8z" fill="#2a1a00"/></svg>PASS</div>
+      <div class="pt"><b class="o">${pass.name}</b><span>${pass.desc}</span></div>
+      ${passOwned ? '<span class="pb own o">Owned</span>' : `<button class="pb o${profile.gems >= pass.price ? '' : ' cant'}" data-pass="basic">${gemImg()}${fmtN(pass.price)}</button>`}
+    </div>
+    <div class="ws-cats">${cats}</div>
+    <div class="ws-list">${tiles}</div>
+    <div class="ws-main">
+      <div class="ws-name o">${esc(d.name)}</div>
+      <div class="ws-sub">${slotLine}</div>
+      <div class="ws-desc">${esc(d.desc || '')}</div>
+      <div class="ws-pic ${rarity(sel)}"><img alt="" src="${wsPic(sel, sel.type === 'weapon' ? 720 : 300, sel.type === 'weapon' ? 310 : 300)}"></div>
+      <div class="ws-stats">${wsStats(sel)}</div>
+      <div class="ws-act">${canTest ? '<button class="wsb test o" data-act="test">TEST</button>' : ''}${act}</div>
+    </div>
+  </div>`
+  modal.classList.add('on', 'wsm')
+  const win = modal.querySelector('.ws')
+  win.querySelector('.ws-x').addEventListener('click', close)
+  win.querySelector('[data-skins]').addEventListener('click', () => {
+    current = { kind: 'weapons', opt: 'skins' }
+    skinsWindow()
+  })
+  win.querySelectorAll('[data-cat]').forEach((b) =>
     b.addEventListener('click', () => {
-      equipWeapon(b.dataset.equip)
-      sfx.equip()
-      reopen()
+      wsCat = b.dataset.cat
+      wsSel = null
+      sfx.click?.()
+      weaponsWindow('weapons')
     }),
   )
+  win.querySelectorAll('.wsi').forEach((b) =>
+    b.addEventListener('click', () => {
+      wsSel = { type: b.dataset.type, id: b.dataset.id }
+      weaponsWindow('weapons')
+    }),
+  )
+  win.querySelector('[data-pass]')?.addEventListener('click', () => bought(buyPass('basic')))
+  win.querySelector('[data-act="buy"]')?.addEventListener('click', () => {
+    const ok = sel.type === 'weapon' ? buyWeapon(sel.id) : buyGrenade(sel.id)
+    if (ok) {
+      if (sel.type === 'weapon') equipWeapon(sel.id)
+      else equipGrenade(sel.id)
+      cb.onLoadout?.()
+    }
+    bought(ok)
+  })
+  win.querySelector('[data-act="equip"]')?.addEventListener('click', () => {
+    if (sel.type === 'weapon') equipWeapon(sel.id)
+    else equipGrenade(sel.id)
+    sfx.equip()
+    cb.onLoadout?.()
+    weaponsWindow('weapons')
+  })
+  win.querySelector('[data-act="test"]')?.addEventListener('click', () => {
+    close()
+    cb.onTestWeapon?.(sel.type === 'weapon' ? sel.id : null, sel.type === 'grenade' ? sel.id : null)
+  })
+  // Keep the chosen tile in view after a rebuild.
+  win.querySelector('.wsi.on')?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
 }
 
 let skinWeapon = null
@@ -572,11 +694,13 @@ function patchQueue(info) {
 function setQueued(on, kind = '') {
   if (!root) return
   root.classList.toggle('queued', on)
-  const label = !on ? 'PLAY' : kind === 'vote' ? 'Map<br>voting...' : kind === 'wait' ? 'Finding<br>players...' : 'Next<br>round...'
+  const wait = !on && waitsForLeader()
+  root.classList.toggle('member-wait', wait)
+  const label = wait ? 'Waiting for<br>leader...' : !on ? 'PLAY' : kind === 'vote' ? 'Map<br>voting...' : kind === 'wait' ? 'Finding<br>players...' : 'Next<br>round...'
   const btn = root.querySelector('.playbtn')
   if (btn.dataset.label !== label) {
     btn.dataset.label = label
-    btn.innerHTML = on ? `<span class="pq">${label}</span>` : label
+    btn.innerHTML = on || wait ? `<span class="pq">${label}</span>` : label
   }
 }
 
@@ -628,10 +752,14 @@ const lobby = {
   },
   refresh,
   close,
+  // Back to the Weapons Store (after the Weapon Test).
+  openStore: () => open('weapons', 'weapons'),
   showQueue,
   hideQueue,
   setRoster,
   status: setStatus,
-  squad: () => roomPlayers.filter((m) => !m.me),
+  // Teammates (the lobby team), and the names over them on the platform.
+  squad: () => party.info().mates,
+  placePlates: party.placePlates,
 }
 export default lobby

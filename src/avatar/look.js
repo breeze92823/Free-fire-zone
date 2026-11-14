@@ -18,6 +18,7 @@ import { applyProportions, attachCharacterAccessories, attachEquippedAccessories
 import { isEquipped } from './cdn.js'
 import { PRIO, makeGate, sleep, withTimeout } from './assets.js'
 import * as bloxity from '../bloxity.js'
+import { warmObject } from '../warmup.js'
 
 const SDK_TIMEOUT = 12000 // getCharacterFor / kit.dress: the portal must answer within this
 const buildGate = makeGate(3) // looks being assembled at once (each one fans out into many requests)
@@ -107,6 +108,9 @@ export async function streamLook(look, { prio = PRIO.normal, isStale = () => fal
     if (isStale()) return
     const built = await buildLook(look, { prio })
     const usable = !!built && isBloxityRig(built.root)
+    // Shaders compiled and textures uploaded before it is shown (the old look stays on meanwhile):
+    // otherwise the first frame that draws a new look stalls while the GPU catches up.
+    if (usable && !isStale() && !(delivered && !built.complete)) await warmObject(built.root)
     if (isStale() || !usable || (delivered && !built.complete)) {
       disposeLook(built?.root) // stale, the blocky stand-in, or no better than what is already shown
     } else {

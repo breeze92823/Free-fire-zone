@@ -64,16 +64,37 @@ export function weaponIcon(id, skin = 'standard', w = 256, h = 110) {
   const def = WEAPONS[id]
   let url = ''
   if (def.model === 'fists') url = svgData(SVG.fist)
-  else url = snapshot(buildWeapon(def.model, skin), w, h, def.model === 'knife' ? -Math.PI / 2 : -Math.PI / 2, def.model === 'knife' ? 0.6 : 0.1)
+  else url = snapshot(buildWeapon(def.model, skin), w, h, -Math.PI / 2, def.model === 'knife' || def.model === 'blade' ? 0.6 : 0.1)
   cache.set(key, url)
   return url
+}
+
+// Icons are drawn on demand by a second WebGL context (its own shaders) and PNG-encoded: 30-170 ms
+// each the first time. The HUD asks for the loadout's icons when a round starts and the kill feed for
+// each weapon's on its first elimination, so they are made ahead here, one per idle slice in the
+// lobby. list: [id, skin, w, h] entries; already cached ones cost nothing.
+const warmQueue = []
+let warming = false
+const idle = (fn) => (typeof requestIdleCallback === 'function' ? requestIdleCallback(fn, { timeout: 400 }) : setTimeout(fn, 30))
+export function prewarmIcons(list) {
+  for (const e of list) if (!cache.has(`w:${e[0]}:${e[1]}:${e[2]}x${e[3]}`)) warmQueue.push(e)
+  if (warming || !warmQueue.length) return
+  warming = true
+  const step = () => {
+    const e = warmQueue.shift()
+    if (e) weaponIcon(...e)
+    if (warmQueue.length) idle(step)
+    else warming = false
+  }
+  idle(step)
 }
 
 export function itemIcon(kind, size = 96) {
   const key = `i:${kind}:${size}`
   if (cache.has(key)) return cache.get(key)
   let url = ''
-  if (kind === 'frag' || kind === 'frost') url = snapshot(buildGrenade(kind === 'frag' ? 'frag' : 'ice'), size, size, 0.6, 0.2)
+  if (kind === 'frag' || kind === 'pulse' || kind === 'breach') url = snapshot(buildGrenade(kind), size, size, 0.6, 0.2)
+  else if (kind === 'frost') url = snapshot(buildGrenade('ice'), size, size, 0.6, 0.2)
   else if (kind === 'medkit') url = snapshot(buildMedkit(), size, size, 0.3, 0.1)
   cache.set(key, url)
   return url
@@ -85,6 +106,10 @@ export const svgData = (svg) => `data:image/svg+xml;utf8,${encodeURIComponent(sv
 export const SVG = {
   heart: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#ff3b5c" stroke="#7a0a1e" stroke-width="1.2" d="M12 21s-7.5-4.6-9.6-9.2C1 8.6 3 5 6.6 5c2.1 0 3.6 1.2 5.4 3.2C13.8 6.2 15.3 5 17.4 5 21 5 23 8.6 21.6 11.8 19.5 16.4 12 21 12 21z"/><path fill="#fff" opacity=".45" d="M6.5 7.2c-1.6.2-2.6 1.8-2 3.4.3-1.5 1-2.6 2.4-3 .5-.2.2-.5-.4-.4z"/></svg>',
   coin: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#ffc83d" stroke="#a86b00" stroke-width="1.6"/><circle cx="12" cy="12" r="6.8" fill="none" stroke="#e09a12" stroke-width="1.4"/><path d="M10 8.6h3.2a2 2 0 0 1 0 4H10.4h3.4a2 2 0 0 1 0 4H10z" fill="none" stroke="#a86b00" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  // The game's own Gems (earned, never sold): a mint hexagonal crystal.
+  gem: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 1.6l8.6 5v10.8L12 22.4l-8.6-5V6.6z" fill="#1fd6b0" stroke="#053f37" stroke-width="1.4" stroke-linejoin="round"/><path d="M12 1.6v6.2l8.6-1.2M12 7.8L3.4 6.6M12 7.8l-4.6 8.4h9.2zM7.4 16.2l-4 1.2M16.6 16.2l4 1.2M12 22.4v-6.2" fill="none" stroke="#053f37" stroke-width=".9" stroke-linejoin="round" opacity=".75"/><path d="M12 7.8L3.4 6.6 12 1.6z" fill="#c4fff1" opacity=".9"/><path d="M12 7.8l-4.6 8.4-4-1.2V6.6z" fill="#7cf2d8" opacity=".55"/></svg>',
+  // Rank points: a star over a chevron.
+  rp: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 17.2l8-3.2 8 3.2v3.6l-8-3.2-8 3.2z" fill="#ff9f1f" stroke="#5a3200" stroke-width="1.2" stroke-linejoin="round"/><path d="M12 1.8l2.3 4.5 5 .7-3.6 3.5.9 4.9L12 13l-4.6 2.4.9-4.9L4.7 7l5-.7z" fill="#ffd84a" stroke="#5a3200" stroke-width="1.2" stroke-linejoin="round"/></svg>',
   helmet: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#ffd23f" stroke="#5a4300" stroke-width="1.2" d="M3 15c0-5.5 3.8-10 9.5-10S21 9 21 14v2h-6.5l-1.5 2H5c-1.2 0-2-1.3-2-3z"/><path fill="#1d1d1d" d="M14 12h7v3h-7z" opacity=".8"/><path fill="#fff" opacity=".4" d="M7 8c1.5-1.3 3.2-1.8 5-1.8-2.2.6-3.8 1.8-4.6 3.6z"/></svg>',
   vest: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#ffd23f" stroke="#5a4300" stroke-width="1.2" d="M8 3l2 3h4l2-3 3 2v15H5V5z"/><path stroke="#5a4300" stroke-width="1" fill="none" d="M7 11h10M7 15h10M12 6v14"/></svg>',
   wall: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#9fe6ff" stroke="#0b5a8a" stroke-width="1.1" d="M3 20l2-9 3 3 2-8 3 6 2-5 3 7 3-2 1 8z"/><path fill="#fff" opacity=".6" d="M10 6l1 7-2-1zM15 7l1 6-1.6-1z"/></svg>',

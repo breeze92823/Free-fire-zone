@@ -299,13 +299,15 @@ export function createLobbyScene() {
   star.position.set(0, 0.05, 0.12)
   shield.add(star)
 
-  // Squad: the player in the middle, up to three other players in the room.
+  // Squad: the player in the middle, up to three teammates (the lobby team; players who joined the team).
   const squad = []
+  // The first teammate stands on the right (clear of the left menu), the second on the left.
   const spots = [
-    [-2.1, -0.8, 0.3],
     [2.1, -0.8, -0.3],
+    [-2.1, -0.8, 0.3],
     [3.7, -2.5, -0.45],
   ]
+  let spread = 1 // < 1 on narrow screens: teammates stand closer so the player list on the right does not hide them
   let playerAvatar = null
   const playerGroup = new Group()
   scene.add(playerGroup)
@@ -320,7 +322,7 @@ export function createLobbyScene() {
       const m = mates[i]
       const a = new Actor({ name: '', team: 'blue', noTag: true, outfit: m.outfit || randomOutfit(), scene, loadout: { primary: m.primary || 'striker', secondary: m.secondary || 'viper', skins: {} } })
       a.addToScene(scene)
-      a.pos.set(x, 0.32, z)
+      a.pos.set(x * spread, 0.32, z)
       a.facing = yaw
       a.ready = 0.2
       a.grounded = true
@@ -349,12 +351,25 @@ export function createLobbyScene() {
 
   let t = 0
   const aim = new Vector3()
+  const anchor = new Vector3()
   return {
     scene,
     camera,
     rebuildSquad,
     setMateAvatar,
     setPlayerAvatar,
+    // Screen positions (px) over the heads of [the player, ...the platform's mates] for the name
+    // plates (party.js placePlates). `on` = in front of the camera.
+    anchors() {
+      const w = window.innerWidth
+      const h = window.innerHeight
+      const out = []
+      for (const a of playerActor ? [playerActor, ...squad] : squad) {
+        anchor.set(a.pos.x, a.pos.y + 2.0, a.pos.z).project(camera)
+        out.push({ x: (anchor.x * 0.5 + 0.5) * w, y: (-anchor.y * 0.5 + 0.5) * h, on: anchor.z < 1 })
+      }
+      return out
+    },
     get playerActor() {
       return playerActor
     },
@@ -372,6 +387,8 @@ export function createLobbyScene() {
       camera.aspect = w / h
       // Narrow screens: step back so the squad still fits.
       const narrow = w / h < 1.2
+      spread = narrow ? 0.7 : 1
+      squad.forEach((a, i) => a.pos.set(spots[i][0] * spread, 0.32, spots[i][1]))
       camera.position.set(0, narrow ? 2.3 : 1.95, narrow ? 11 : 6.6)
       camera.fov = narrow ? 52 : 46
       camera.updateProjectionMatrix()

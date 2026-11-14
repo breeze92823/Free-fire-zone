@@ -30,7 +30,7 @@ Common root rules (`.hud`, `.lobby`, `.results`, `.loading`): `position: fixed; 
 | Phase | Rendered scene | Visible UI | Toggled by |
 | --- | --- | --- | --- |
 | `boot` | none | `.loading` (`showLoading(true, step, progress)`) | `main.js` top level |
-| `lobby` | lobby scene via `lobbyFx` | `.lobby` (top bar, menu, squad list, PLAY, stats, net line, windows) | `lobby.show(true)` at boot end and in `backToLobby` |
+| `lobby` | lobby scene via `lobbyFx` | `.lobby` (top bar, menu, Players online dock + lobby team (`party.js`), PLAY, stats, net line, windows) | `lobby.show(true)` at boot end and in `backToLobby` |
 | `queue` | lobby scene | `.lobby.queued` + the queue / vote panel in `.lb-modal.q` | `lobby.showQueue(queueInfo())` every frame from `syncFlow`; `lobby.hideQueue()` on leaving the queue |
 | `intro` | game scene (orbit flyover) | `.hud.on`, but `hud.update` is not called | `enterRound`: `lobby.hideQueue()`, `lobby.show(false)`, `hud.begin(map.name)`, `hud.show(true)` |
 | `countdown` | game scene | HUD updating, `hud.countdown('3'..'FIGHT!')` | `gameFrame` |
@@ -47,12 +47,12 @@ After `results` the server moves to `vote` / `waiting`; `nextRound()` calls `clo
 | `G` (`state.js`): `G.player`, `G.actors`, `G.match` (`score`, `duration`, `mvp`, `zone`, `drops`), `G.time`, `G.phase`, `G.spectating`, `G.island` | `hud.js`, `results.js` | read every frame in `hud.update`; `results.js` reads `G.island.spawnAreas` and `G.actors` |
 | Event bus `on(type, fn)` (`state.js`) | `hud.js` `wireEvents` | `damage`, `knock`, `elimination`, `loot`, `shot` (emitters: `online.js`, `loot.js`, `combat.js`) |
 | `save.js` `profile` + `onProfile(fn)` | `lobby.js` (`refresh`), `results.js` (`rankOf`), `main.js` (`loadoutForActor`), `match.js` (`upgradeLevel`), `controller.js` (`profile.loadout.emote`) | the profile object is mutated in place; listeners are told after every change |
-| Server messages (`net.js` `onNet`) | `save.js`: `profile`, `shop`, `joined`; `main.js`: `rewards`, `status`, `left` | `main.js` turns `net.state` into plain objects for the UI: `queueInfo()` for `lobby.showQueue`, `roster()` (`online.js`) for `lobby.setRoster` and `showMates` |
+| Server messages (`net.js` `onNet`) | `save.js`: `profile`, `shop`, `joined`, `reward` (Gems total); `main.js`: `rewards`, `status`, `left` | `main.js` turns `net.state` into plain objects for the UI: `queueInfo()` for `lobby.showQueue`, `roster()` (`online.js`) for `lobby.setRoster` (-> `party.js`) and `showMates`; `party.js` itself listens to `invite`, `inviteEnd`, `squadNote` |
 | Callback objects | `initHud(callbacks)`, `initLobby(callbacks)`, `showResults(winner, reward, done)` | the UI never imports `main.js`; every action leaves through a callback (tables in 2.2 and 3.2) |
 | `config.js` tables | `hud.js`: `HEALTH`, `ITEMS`, `OPERATIVES`, `TEAMS`, `WEAPONS`; `lobby.js`: `MATCH_MODES`, `OPERATIVES`, `SKINS`, `STORE`, `WEAPONS`, `GAME_TITLE`, `QUALITY_OPTIONS` (`NET` is imported but unused); `save.js`: `OPERATIVES`, `RANKS`, `SKINS`, `START_PROFILE`, `STORE`, `WEAPONS`; `lobbyScene.js`: `RANKS`; `characters.js`: `OUTFITS`, `PLAYER_DIMS`, `RIG_HEIGHT`, `TEAMS`; `weaponModels.js`: `SKINS`; `icons.js`: `WEAPONS`; `mapimage.js`: `FONT_FAMILY` | static lookups |
 | `bloxity.js` | `hud.js` and `lobby.js`: `onReservedAreas`; `lobby.js`: `displayName()`, `getPfp()`; `main.js` passes the death handle to `hud.setDeath` | see 2.8 and 3.9 |
 
-Frame order relevant to the UI (`main.js` `frame`): `syncFlow()`; once a second `lobby.setRoster(roster(), net.status)` and `showMates(list)`; then either `lobbyScene.update(dt)` + `lobbyFx.render()` (phases `lobby`, `queue`) or `gameFrame(dt)`, which ends with `hud.update(...)` when the phase is `playing`, `countdown` or `ending`.
+Frame order relevant to the UI (`main.js` `frame`): `syncFlow()`; every 0.25 s in the `lobby` / `queue` phases (1 s otherwise) `lobby.setRoster(roster(), net.status)` and `showMates(list)`; then either `lobbyScene.update(dt)` + `lobbyFx.render()` + `lobby.placePlates(lobbyScene.anchors())` (phases `lobby`, `queue`) or `gameFrame(dt)`, which ends with `hud.update(...)` when the phase is `playing`, `countdown` or `ending`.
 
 ## 2. `hud.js`
 
@@ -94,7 +94,6 @@ Internal helpers worth knowing: `set(key, value, fn)` is the write cache (runs `
 | `onSpectate(dir)` | `.arrow.prev` / `.arrow.next` | `cycleSpectate(dir)` |
 | `onMapOpen(open)` | `toggleMap` | `document.exitPointerLock()` when opening |
 | `onInteract()` | `.hud-prompt` `pointerdown` | `controller.js interactPress()` (opens the supplies in reach; the revive hold uses `hud.interactHeld`) |
-| `coinsPerElim` | read in the `elimination` handler for the "+N coins" notice | literal `12` |
 
 ### 2.3 `hud.update(dt, camera, info)`
 
@@ -110,7 +109,8 @@ All selectors are under `div.hud`. "Built" says when the inner DOM is created: `
 | --- | --- | --- | --- | --- |
 | Score bar | `.hud-score` (`.team.blue`, `.mid`, `.team.orange`) | init | `update`: `G.match.score`, `duration - G.time` (`.clock.low` under 30 s), `.mapname` from `begin`, MVP pictures from `G.match.mvp[team]` (`actor.portrait` or `portrait(actor.outfit)`) | moved by `--res-top` and `--score-shift` |
 | Zone timer | `.hud-zone` | init | `update`: `G.match.zone.info(G.time)` gives `{ label, time, shrinking }`; prefix "OUTSIDE ZONE" when `zone.outside(player)`; `.warn` when shrinking or outside | `.hud-zonetint.on` (blue edge tint) while outside and not dead |
-| Streak banner | `.hud-banner` (`.emb` SVG emblem, `.txt`) | init | `elimination` event when the killer is the player and `streak >= 2`; `STREAK_TEXT` (2 Double, 3 Triple, 4 Rampage, 5 Unstoppable, 6+ Godlike); 2.2 s | emblem colour changes at streak 4 |
+| Multi-kill banner | `.hud-banner` (`.emb` badge SVG, `.txt`, `.sub` "Streak bonus 💎+N") | init, hidden in `begin` | `reward` event of kind `elim` with `streak >= 2`; `STREAK_TIERS` (2 Double Elimination, 3 Triple Elimination, 4 Quad Elimination, 5 Rampage!, 6+ Unstoppable!), each with its own colour; `BADGE(n, c, d)` draws a hexagonal medal with a reticle, blade fins and one pip per elimination (original art); restarts its pop when the streak climbs; 2.4 s | portrait: compact (64 px badge, two-line text, no `.sub`) under the zone timer; short landscape: one row (40 px badge + text) under the zone timer |
+| Kill reward popup | `.hud-reward` > `.rw` (`.knock` or `.elim`) > `.c.gem` / `.c.coin` / `.c.rp` (icon, `+N`, label) | init, emptied in `begin` | `reward` event (`rewardPopup`): one row per grant with only the non-zero amounts (Gems from `SVG.gem`, coins, rank points from `SVG.rp`); pops in, floats up and fades (`rewardPop`, 2.2 s; `prefers-reduced-motion`: fade only); newest at the bottom, max 3 | right of the crosshair, wrapped before the weapon panel; portrait: left of the crosshair (the right column can sit level with it); short landscape: only the newest row, one line; touch hides the labels |
 | Announcement | `.hud-announce` (`.big`, `.small`) | init | `announce()` | |
 | Squad list | `.hud-squad` > `.sq` rows | begin (`buildSquad`: `G.actors` with the player's team at that moment) | `update`: bar = `hp / maxHp` (knocked: `downHp / HEALTH.knockedHp`), row class = `life`, status "HELP!" or respawn seconds | top = `--res-bottom + 8px`; rows are not added or removed mid-round (7.6) |
 | Minimap | `.hud-minimap-wrap` > `canvas` 220 x 220 | init | `drawMinimap()` every frame | tap opens the big map; "M" label |
@@ -142,7 +142,8 @@ All selectors are under `div.hud`. "Built" says when the inner DOM is created: `
 | --- | --- | --- |
 | `damage` | `target, attacker, amount, head, point, zone` | damage number + hit marker (player is the attacker); direction arc (player is the target, not zone damage) |
 | `knock` | `target, attacker, weapon` | kill-feed row; notice when the attacker is the player |
-| `elimination` | `target, killer, weapon, head, streak` | kill-feed row (kind `zone`, `frag`, `head` or `elim`); for the player's own: kill marker, notice, streak banner |
+| `elimination` | `target, killer, weapon, head, streak` | kill-feed row (kind `zone`, `frag`, `head` or `elim`); for the player's own: kill marker, "Eliminated <name>" notice |
+| `reward` | `kind, gems, coins, rp, streak, bonus` | kill reward popup; multi-kill banner for an elimination with `streak >= 2` |
 | `loot` | `actor, items` | toasts for the player |
 | `shot` | `actor` | enemy gunfire ping on the maps (2.5 s, max 24) |
 
@@ -205,6 +206,8 @@ Media queries:
 | `(orientation: portrait) and (max-width: 600px)` | squad 128 px wide, health 62vw (both then overridden by the portrait block below) |
 | `(max-width: 980px)` + `body:not(.touch-ui)` | health bar slides to `left: 40%` so the item row fits beside it |
 | `(max-height: 520px)` + `.touch-ui` | squad rows shrink to picture + health bar chips (no name / status), max 4 rows |
+| `(orientation: portrait)` (reward block) | kill popup left of the crosshair; compact two-line multi-kill banner under the zone timer |
+| `(orientation: landscape) and (max-height: 500px)` | multi-kill banner one row under the zone timer; kill popup: only the newest row, 18 px chips, wrapped before the weapon panel |
 | `(orientation: portrait)` | right column starts below the score bar (`max(--res-rtop, --res-top)` + offset); squad rows are the same chips; health sits above the joystick (`bottom: clamp(190px, 27vh, 230px)`), ability button hangs off its right end; feed above the health bar; toasts at 40 %; touch items in a column on the left edge at 42 % |
 
 ## 3. `lobby.js`
@@ -216,7 +219,7 @@ Media queries:
 | `initLobby` | `(callbacks) -> lobby` | builds `div.lobby`, wires the static buttons, subscribes `bloxity.onReservedAreas` and `onProfile(refresh)` |
 | `close` | `()` | closes whatever is in `.lb-modal` (also `lobby.close`); no outside caller |
 | `showLoading` | `(on, step = '', progress = 0)` | the boot loading screen (3.8) |
-| default `lobby` | object | `show(on)`, `refresh()`, `close()`, `showQueue(info)`, `hideQueue()`, `setRoster(list, status)`, `status(text)`, `squad()` |
+| default `lobby` | object | `show(on)`, `refresh()`, `close()`, `showQueue(info)`, `hideQueue()`, `setRoster(list, status)`, `status(text)`, `squad()`, `placePlates(anchors)` |
 
 | `lobby` method | What it does | Called by |
 | --- | --- | --- |
@@ -224,9 +227,27 @@ Media queries:
 | `refresh()` | repaints the top bar, mode chip and stats line from `profile`, calls `cb.onRank(rankIndex)`, and re-renders the open window (unless it is the queue panel) | `onProfile`, `show(true)`, `main.js` on sign-in change |
 | `showQueue(info)` | queue / vote panel and the queued PLAY button (3.6) | `startMatchFlow`, `syncFlow` every frame in `queue`, `nextRound` |
 | `hideQueue()` | closes the panel and resets the queued state and button | `enterRound`, `backToLobby` |
-| `setRoster(list, status)` | squad list (`.lb-squad`, other players only, first 5 + "+N more") and the net line | `main.js` `frame`, once a second |
+| `setRoster(list, status)` | hands the roster to `party.setRoster` (the dock, invites, banner, plates), repaints the PLAY button for team members and the net line | `main.js` `frame`, 4 times a second in the lobby |
 | `status(text)` | overrides the net line text (`''` returns to the automatic text) | `main.js` connect / reconnect paths |
-| `squad()` | other players in the room | no caller |
+| `squad()` | the lobby team's other members (`party.info().mates`) | no caller |
+| `placePlates(anchors)` | positions the teammates' name plates (`party.js`) from `lobbyScene.anchors()` | `main.js` `frame`, every lobby frame |
+
+### 3.9 The lobby team and Players online (`party.js` / `party.css`)
+
+Backend: `squad` / `squadLead` on `PlayerState`, messages `invite`, `inviteReply`, `leaveSquad`, `kick` (client -> server) and `invite`, `inviteEnd`, `squadNote` (server -> client): see the backend's `docs/protocol.md`. The server owns every rule (3 players at most, who can be invited, expiry, the leader); the client only draws and sends.
+
+`initParty(root)` (called by `initLobby`) adds `.pt-under` (before `.lb-modal`: banner, plates, dock) and `.pt-over` (after it: invite cards and toasts, above the shop windows) and registers the three `onNet` listeners. `setRoster(list)` re-renders from `roster()` (only when the markup key changed); `info()` returns `{ size, lead, busy, mates, squad, mine }` for `lobby.js` (PLAY / Leave the team) and `main.js`.
+
+| Part | Behaviour |
+| --- | --- |
+| Dock (`.pt-dock`) | Right edge, under the top bar. Collapsed: a column of portraits (you, then "In your team" + teammates with a status dot, then up to 4 other players with a + button, "+N" for the rest). The yellow arrow expands it into the "Players online" list (portrait, name, status: `Playing` / `In queue` / `In the lobby`, + or "In your team"). The + sends `invite { to }` and turns into "Sent" until an answer / ~21 s. No + while you are queued or your team is full (3). The leader sees an x on teammates (`kick`, not while queued) |
+| Invite card (`.pt-inv`) | From `invite`: inviter's picture and name, Accept / Decline (`inviteReply`), a bar counting the server's 20 s down; up to 3 cards; `inviteEnd` removes it. Portrait phones: left of the dock, buttons in their own row |
+| Toast (`.pt-toast`) | `squadNote` -> text from `NOTES` (e.g. "Mike is currently in a game and cannot view invitations at this time.", "Mike declined your invitation.", "tessa joined your team!", "Only the team leader can start the match."); right of the dock on landscape, centred in portrait; 4 at most, 4.7 s |
+| Banner (`.pt-banner`) | "You are in a team · MODE: <mode name> · n/3" while in a team; hidden on short landscape phones |
+| Plates (`.pt-plate`) | In a team: a "LEADER" tag over the leader's head and a name + status plate over each teammate, positioned each lobby frame from `lobbyScene.anchors()` (`placePlates`) |
+| PLAY / Leave | `lobby.js`: a member who is not the leader sees "Waiting for leader..." (`.lobby.member-wait`, styled like the queued button) and PLAY only toasts; the leader's PLAY queues the whole team (the server sends the members to the queue: `syncFlow` moves them from `lobby` to `queue`, guarded by `leftLobbyAt` so a fresh "back to the menus" is not undone by the server's old `inMatch`). "Leave the team" shows while in a team (`.lobby.in-team`) or queued: in a team it sends `leaveSquad` (`main.js onLeaveTeam`), alone it is the old leave-queue |
+
+The platform shows only the team's members (`main.js showMates`): players join it by invitation, other players in the room are just prewarmed.
 
 ### 3.2 Callbacks (`initLobby(callbacks)`)
 
@@ -247,9 +268,9 @@ Media queries:
 
 | Element | Content | Behaviour |
 | --- | --- | --- |
-| `.lb-top` | `.chip.profile` (picture + name from `bloxity.getPfp()` / `displayName()`, fallback `portrait(...)`), `.chip.coins`, `.chip.rank` (shield SVG tinted with the rank colour, name, progress bar; tooltip with RP to the next rank), spacer, `.iconbtn.settings` | profile chip opens Inventory; gear opens Settings; `.compact` hides the profile chip and the rank text |
+| `.lb-top` | `.chip.profile` (picture + name from `bloxity.getPfp()` / `displayName()`, fallback `portrait(...)`), `.chip.coins`, `.chip.gems` (the Gems balance, `SVG.gem`), `.chip.rank` (shield SVG tinted with the rank colour, name, progress bar; tooltip with RP to the next rank), spacer, `.iconbtn.settings` | profile chip opens Inventory; gear opens Settings; `.compact` hides the profile chip and the rank text |
 | `.lb-menu` | four `.menubtn[data-open]`: `weapons` (gold), `store`, `characters`, `inventory` | `open(kind)` |
-| `.lb-squad` | `.mate` rows from `setRoster` | status text: "In a round" (`inMatch` and `team`), "Ready" (`inMatch`), "In the lobby"; empty-room and connecting placeholders |
+| `.pt-under` / `.pt-over` | built by `party.js` (section 3.9) | the Players online dock, team banner, name plates; invite cards and toasts |
 | `.lb-play` | `.lb-mode` (team-size badge, name, description from `MATCH_MODES[profile.mode]`), `.playbtn` | mode chip opens the mode window; PLAY see 3.6 |
 | `.lb-stats` | "Matches / Wins / Eliminations / Best" from `profile.stats` | hidden in portrait, short landscape and while queued |
 | `.lb-leave` | "Leave the team" | only visible under `.lobby.queued` |
@@ -264,7 +285,7 @@ Every `button` in the root gets a `pointerenter` handler that plays `sfx.hover()
 
 | `kind` | Function | Content | Actions |
 | --- | --- | --- | --- |
-| `weapons` (tab `weapons`) | `weaponsWindow` | a card per `WEAPONS` entry with `slot` `primary` or `secondary`: icon (`weaponIcon(id, skinFor(id))`), name, kind, four stat bars scaled by `statLimits` (`damage * pellets` / 165, `1 / interval` / 14, `range` / 400, `mag` / 60) | `data-buy` -> `buyWeapon`; `data-equip` -> `equipWeapon`; equipped cards get the `PRIMARY` / `SECONDARY` tag |
+| `weapons` (tab `weapons`) | `weaponsWindow`: the full-screen Weapons Store (section 3.10), not a `.win` | categories, the category's items, the selected item's picture, stats, TEST and BUY / EQUIP, the pass | see 3.10 |
 | `weapons` (tab `skins`) | `skinsWindow` | pills for the owned guns (`skinWeapon`, default the equipped primary), a card per `SKINS` entry previewed on that gun | `data-buy` -> `buySkin` then `equipSkin(skinWeapon, id)`; `data-equip` -> `equipSkin` + `cb.onLoadout()` |
 | `store` | `storeWindow` | a card per `STORE` entry; icon from `STORE_ICON[item.icon]` (`medkit`, `wall`, `frag`, `armor`, `emote`; fallback coin); upgrades show level pips and "Maxed", owned emotes "Owned" | `data-buy` -> `buyStoreItem` |
 | `characters` | `charactersWindow` | a card per `OPERATIVES` entry: initial on a colour tile (`.opface`), role, ability, description | `data-buy` -> `buyOperative` then `equipOperative`; `data-equip` -> `equipOperative` |
@@ -272,7 +293,17 @@ Every `button` in the root gets a `pointerenter` handler that plays `sfx.hover()
 | `settings` | `settingsWindow` | Sound (range + Mute pill), Graphics (`QUALITY_OPTIONS` pills + note; Auto shows the running tier), Look sensitivity (range), the key list, the phone hint and the save notice (`account.saved`) | see 3.7 |
 | `mode` | `modeWindow` | a card per `MATCH_MODES` entry (team size, description, minutes, score to win) | `data-mode` -> `setMode(id)`, then `close()` |
 
-Tabs exist only in the Weapons Store; `wireTabs` sets `current = { kind: 'weapons', opt: tab }` so `reopen()` returns to the same tab.
+Tabs exist only in the skins window (Weapons / Skins); `wireTabs` sets `current = { kind: 'weapons', opt: tab }` so `reopen()` returns to the same tab, and the Weapons tab goes back to the Weapons Store.
+
+### 3.10 The Weapons Store (Gems)
+
+`weaponsWindow('weapons')` writes `.ws` straight into `.lb-modal` (class `wsm`: no padding, darker backdrop) instead of using `frame()`. Everything in it is priced in the game's own Gems (`profile.gems`, earned in matches, never sold); skins stay in coins behind the Skins button.
+
+- **Layout** (`lobby.css`, "Weapons Store"): a grid with the header across the top (Gems balance, title, Skins, close; the header starts right of the platform toolbar via `--res-right`, and the whole store starts under the toolbar when the toolbar spans the screen, `--res-tool` set from `onReservedAreas`), then the category column (`WEAPON_CATS`: All, Pistols, Rifles, Shotguns, SMGs, Grenades, Specials; the open one orange), the item column (`.wsi` tiles: picture, name, a Gem price / OWNED / EQUIPPED badge; grey for starters and cheaper items, purple from 1,800 Gems, gold for specials; the selected one has a yellow border) and the detail column (name, slot line, description, big picture, stat bars, TEST and BUY). The pass box (`.ws-pass`: icon, name, "All basic weapons, forever", Gem price or Owned) floats top-right of the detail column.
+- **Portrait phones** (`max-width: 700px`): one column; the pass under the header; categories and items scroll sideways; the details scroll with TEST / BUY sticky at the bottom. **Short landscape** (`max-height: 500px`): narrow columns (96 / 112 px), the pass without its blurb, the description clamped to three lines.
+- **State**: `wsCat`, `wsSel = { type: 'weapon' | 'grenade', id }` survive rebuilds (`reopen()` after a purchase or a `profile` change). Items: `wsItems(cat)` = the category's weapons (any `WEAPONS` entry with `cat`, cheapest first) and, for All / Grenades, the `GRENADES`.
+- **Stats** (`wsStats`): guns: Damage (`damage * pellets` / 220), Fire rate (`1 / interval` / 17), Range (/ 400), Healing for the Mender (`heal` / 15, green), Reload speed, Accuracy (aimed spread), Magazine (/ 60); melee: Damage, Reach, Swing speed, Mobility (`speedMul`); grenades: Damage, Blast radius, Fuse speed.
+- **Actions**: BUY (red, the Gem price above it; dimmed when short) -> `buyWeapon` / `buyGrenade`, then equips it at once (`equipWeapon` picks the slot; `equipGrenade`) and calls `cb.onLoadout()`; EQUIP (green, shows the slot) for owned items; EQUIPPED (grey, disabled); the pass -> `buyPass('basic')`; TEST (blue) closes the store and calls `cb.onTestWeapon(weaponId, grenadeId)` (the test range, [gameplay.md](gameplay.md) section 17), which reopens the store (`lobby.openStore()`) when the player leaves.
 
 Button states (`.buy` + modifier): `price` (affordable, gold), `cant` (not enough coins, grey; still clickable, the purchase then fails), `owned` (blue: Equip / Apply / Select / Change), `equipped` (dark with gold border, disabled).
 
@@ -314,11 +345,11 @@ The portal's own settings (`SETTINGS` in `config.js`, applied by `main.js` `appl
 
 `showLoading(on, step, progress)` lazily creates `div.loading` (title from `GAME_TITLE` with "Zone" highlighted, progress bar, step text, a random entry of `TIPS` chosen once per showing). `main.js` calls it between boot stages and `showLoading(false)` before the first frame.
 
-The lobby has no toast or badge system. Its only message channels are the net line (`lobby.status`, `setRoster`), the squad list and the denial sound. Friend-join notifications are portal notifications raised by `online.js` `trackRoster`, not lobby DOM.
+The lobby's message channels are the net line (`lobby.status`, `setRoster`), the toasts and invite cards of `party.js` (section 3.9) and the denial sound. Friend-join notifications are portal notifications raised by `online.js` `trackRoster`, not lobby DOM.
 
 ### 3.9 `lobby.css`
 
-Structure: shared root rules for `.lobby`, `.results`, `.loading` + `.o`; top bar (`.lb-top`, `.chip`, `.iconbtn`); left menu (`.lb-menu`, `.menubtn`); right side (`.lb-squad`, `.lb-play`, `.lb-mode`, `.playbtn`); `.lb-stats`, `.lb-net`; modal and window parts (`.lb-modal`, `.win`, `.win-h`, `.win-x`, `.tabs`, `.tab`, `.win-b`, `.grid`, `.card`, `.stat`, `.buy`, `.pips`, `.tag`, `.opface`, `.row`, `.pillsel`, `.pill`, `.qnote`, `.section-t`, `.kv`, `.setting`, `.keys`, `.hint`); map vote (`.mv*`); queued state (`.lobby.queued ...`, `.lb-leave`); loading; results (`.results .banner`, `.plate`, `.summary`, `.lobbybtn`); two closing media queries.
+Structure: shared root rules for `.lobby`, `.results`, `.loading` + `.o`; top bar (`.lb-top`, `.chip`, `.iconbtn`); left menu (`.lb-menu`, `.menubtn`); right side (`.lb-play`, `.lb-mode`, `.playbtn`; the Players online dock is in `party.css`); `.lb-stats`, `.lb-net`; modal and window parts (`.lb-modal`, `.win`, `.win-h`, `.win-x`, `.tabs`, `.tab`, `.win-b`, `.grid`, `.card`, `.stat`, `.buy`, `.pips`, `.tag`, `.opface`, `.row`, `.pillsel`, `.pill`, `.qnote`, `.section-t`, `.kv`, `.setting`, `.keys`, `.hint`); map vote (`.mv*`); queued state (`.lobby.queued ...`, `.lb-leave`); loading; results (`.results .banner`, `.plate`, `.summary`, `.lobbybtn`); two closing media queries.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -335,7 +366,7 @@ Responsive rules:
 
 - Sizes are `clamp(..., vmin, ...)`; window grids are `repeat(auto-fill, minmax(clamp(150px, 26vmin, 220px), 1fr))`; `.win` is `min(96vw, 1040px)` by `max-height: min(92vh, 760px)` with a scrolling body.
 - The vote panel `.mv` is a size container (`container-type: inline-size`): width `min(94vw, 900px, (100dvh - safe insets - 28px) * 1.66)`, and everything inside uses `cqw` with pixel floors (`max(4.2cqw, 17px)` etc.), so it scales like a picture and always fits the height.
-- `(orientation: portrait)`: `.lb-leave` moves into the PLAY column above the mode chip; the queued net line is hidden; `.summary` is centred; `.lb-menu` is 46vw wide; `.lb-squad` and `.lb-stats` are hidden.
+- `(orientation: portrait)`: `.lb-leave` moves into the PLAY column above the mode chip; the queued net line is hidden; `.summary` is centred; `.lb-menu` is 46vw wide; `.lb-stats` is hidden (the Players online dock stays, narrower).
 - `(max-height: 460px)`: the menu becomes a 2 x 2 grid in the bottom-left corner with shorter buttons; `.lb-stats` hidden.
 - Touch: buttons use `touch-action: manipulation`; there are no `.touch-ui` rules in this file. All lobby handlers are `click` or `pointerdown`; hover effects (`.menubtn:hover`, `.playbtn:hover`, `.mv-card:hover`, the hover sound) are cosmetic only.
 
@@ -347,9 +378,13 @@ The profile lives on the server (per verified Bloxity account); this module hold
 
 | Field | Type | Start value | Meaning |
 | --- | --- | --- | --- |
-| `coins` | number | 600 | the only currency |
+| `coins` | number | 600 | skins, operatives and the Store, earned in matches |
+| `gems` | number | 0 | the game's own Gems: earned by knocks and eliminations (granted by the server at once, `reward`) and at each round's results; spent in the Weapons Store (weapons, grenades, the pass). Not Bloxity Gems, never sold for real money or Bloxity Gems |
 | `rp` | number | 0 | rank points; `rankOf` maps them onto `RANKS` |
-| `owned.weapons` | string[] | `striker`, `viper`, `knife`, `fists` | `WEAPONS` ids |
+| `owned.weapons` | string[] | `striker`, `viper`, `knife`, `fists` | `WEAPONS` ids (a pass adds its whole set) |
+| `owned.grenades` | string[] | `frag` | `GRENADES` ids |
+| `owned.passes` | string[] | none | `PASSES` ids |
+| `loadout.grenade` | string | `frag` | the throwable T throws (`actor.grenade`) |
 | `owned.skins` | string[] | `standard` | `SKINS` ids; a skin is owned per account and can be applied to any gun |
 | `owned.operatives` | string[] | `rook` | `OPERATIVES` ids |
 | `owned.emotes` | string[] | `wave` | emote names (`STORE` items of type `emote` carry `emote`) |
@@ -372,6 +407,8 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `owns` | `(kind, id)` | `kind` is the key in `profile.owned`: `weapons`, `skins`, `operatives`, `emotes` |
 | `upgradeLevel` | `(id) -> number` | |
 | `buyWeapon`, `buySkin`, `buyOperative`, `buyStoreItem` | `(id) -> boolean` | message kinds `weapon`, `skin`, `operative`, `store`; `false` = not sent |
+| `buyGrenade`, `buyPass` | `(id) -> boolean` | message kinds `grenade`, `pass`; paid in Gems (`purchase(..., 'gems')`); a pass adds `passWeapons(id)` locally |
+| `equipGrenade` | `(id)` | `equip { kind: 'grenade', id }` |
 | `equipWeapon`, `equipOperative`, `equipEmote` | `(id)` | message kinds `weapon`, `operative`, `emote`; `equipWeapon` picks the loadout slot from `WEAPONS[id].slot` |
 | `equipSkin` | `(weaponId, skinId)` | `equip { kind: 'skin', id: skinId, weapon: weaponId }` |
 | `setMode` | `(id)` | `equip { kind: 'mode', id }`; no local validation |
@@ -384,6 +421,7 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `joined` (local `net.js` event) | | sends `getProfile` |
 | `profile { profile, saved }` | in | sets `account.loaded = true`, `account.saved`, `replace(msg.profile)` |
 | `shop { ok, ... }` | in | when `ok` is false, sends `getProfile` |
+| `reward { gems, total, ... }` | in | mirrors the server's Gems total (`profile.gems = total`) and notifies; the next `profile` replaces it anyway |
 | `buy { kind, id }` | out | from `purchase` |
 | `equip { kind, id, weapon? }` | out | from `equip` |
 | `getProfile` | out | resync |
@@ -397,14 +435,14 @@ Prices used for the local affordability check come from `config.js`; the server 
 `createLobbyScene()` builds a self-contained `Scene` (background and fog `#0b1222`) and `PerspectiveCamera`, and returns `{ scene, camera, rebuildSquad, setMateAvatar, setPlayerAvatar, playerActor (getter), releasePlayer, setRank, resize, update }`. It creates no renderer and no composer: `main.js` builds a second post-processing chain for it (`lobbyFx = createPostFx(renderer, lobbyScene.scene, lobbyScene.camera)`) and renders it in the `lobby` and `queue` phases.
 
 - Set: hex floor (two canvas textures, emissive seams), a U of ribbed wall panels with gold / cyan neon strips, a bay window showing a painted sky / sea / island picture, five ceiling arches with lamps, crates, two weapon racks (bars only), hemisphere + ambient + shadow-casting key + rim + warm point light.
-- Squad platform: a hexagonal base with a gold rim and an inner disc with a pulsing cyan ring. The player stands at `(0, 0.32, 0.4)`; three mate spots `[x, z, yaw]`: `[-2.1, -0.8, 0.3]`, `[2.1, -0.8, -0.3]`, `[3.7, -2.5, -0.45]`.
+- Squad platform: a hexagonal base with a gold rim and an inner disc with a pulsing cyan ring. The player stands at `(0, 0.32, 0.4)`; three mate spots `[x, z, yaw]`: `[2.1, -0.8, -0.3]` (the first teammate, on the right), `[-2.1, -0.8, 0.3]`, `[3.7, -2.5, -0.45]`; on narrow screens (`w / h < 1.2`) the x values are scaled by 0.7 so the dock does not hide them. `anchors()` returns `[{ x, y, on }]` px positions 2 m over the heads of `[player, ...mates]` for the name plates.
 - Rank shield: an extruded shield with a star on a pedestal at the left, spinning and bobbing; `setRank(index)` tints it with `RANKS[index].color`.
 - `rebuildSquad(loadout, nextMates = mates)`: disposes the mate actors and creates one `Actor` per mate (`{ outfit, primary, secondary }`, at most as many as there are spots) as a blocky stand-in (`buildCharacter` inside `Actor`) holding its weapons with standard skins; then re-creates the player actor if an avatar is known.
 - `setMateAvatar(i, root)`: swaps a built Bloxity look onto spot `i`, refreshes the held weapon and frees the previous look with `disposeLook`.
 - `setPlayerAvatar(avatar, loadout)`: disposes the previous player `Actor` and creates a new one wearing `avatar` (the avatar itself survives: `Actor.dispose` keeps the player's avatar). `releasePlayer()` drops the actor so the match can use the avatar.
 - `resize(w, h)`: aspect; when `w / h < 1.2` the camera steps back (`z` 11, `y` 2.3, fov 52) so the squad still fits. `update(dt)`: camera sway, shield, ring pulse, `updateModel` for every actor.
 
-`showMates(list)` and `resetMates()` are in `main.js`, not here. `showMates` (called once a second with the roster, only in `lobby` / `queue`) takes the first three other players, calls `rebuildSquad` only when the set of `id:primary:secondary` changes, then streams each mate's Bloxity look (`streamLook` -> `setMateAvatar`) when its look key changed, and prewarms the looks of everyone beyond the third. `resetMates()` clears that bookkeeping after `main.js` has rebuilt the platform (`nextRound`, `backToLobby`) so every spot is dressed again. With `DEV_MODE` the mates stay blocky.
+`showMates(list)` and `resetMates()` are in `main.js`, not here. `showMates` (called with the roster 4 times a second, only in `lobby` / `queue`) takes the other members of the player's lobby team (`squad`, at most two; solo = nobody), calls `rebuildSquad` only when the set of `id:primary:secondary` changes, then streams each mate's Bloxity look (`streamLook` -> `setMateAvatar`) when its look key changed, and prewarms the looks of everyone else in the room. `resetMates()` clears that bookkeeping after `main.js` has rebuilt the platform (`nextRound`, `backToLobby`) so every spot is dressed again. With `DEV_MODE` the mates stay blocky.
 
 ### 5.2 `results.js`
 
@@ -414,9 +452,9 @@ Prices used for the local affordability check come from `config.js`; the server 
 | `updateResults` | `(dt, camera) -> { from, lookAt }` | per frame in `results`; the pose goes to `updateCamera(..., { mode: 'look' })` |
 | `hideResults` | `()` | removes `.on`, clears the lineup |
 
-`reward` is the server's `rewards` message; fields read: `won`, `eliminations`, `damage`, `coins`, `rp`, `knocks`, `assists`, `headshots`, `deaths`, `score.blue`, `score.orange`, `mvp`.
+`reward` is the server's `rewards` message; fields read: `won`, `eliminations`, `damage`, `coins`, `gems`, `rp`, `knocks`, `assists`, `headshots`, `deaths`, `score.blue`, `score.orange`, `mvp`.
 
-- DOM: `.banner` ("VICTORY" with `.win`, or "DEFEAT"), `.plates` (one `.plate` per lineup member: name, eliminations, damage; "MVP" tag on the first), `.summary` (eliminations, damage, coins with the coin SVG, rank points with `rankOf().name`, a line of knocks / assists / headshots / deaths, the final score and "MATCH MVP"), `button.lobbybtn`.
+- DOM: `.banner` ("VICTORY" with `.win`, or "DEFEAT"), `.plates` (one `.plate` per lineup member: name, eliminations, damage; "MVP" tag on the first), `.summary` (eliminations, damage, coins with the coin SVG, "Gems earned" when `reward.gems > 0`, rank points with `rankOf().name`, a line of knocks / assists / headshots / deaths, the final score and "MATCH MVP"), `button.lobbybtn`.
 - Stage: `G.island.spawnAreas[winner]`; `topPlayers(winner, 3)` (`match.js`) stand in a line facing the island centre, everyone else gets `hidden = true`; they are set alive at full health with emotes `cheer`, `flex`, `dance`; if the local player is in the lineup its physics body is moved too (`resetPlayer`, `syncYawToPlayer`).
 - Timeline: plates fade in from 0.8 s (0.3 s apart) and follow their actor's projected position; the summary and the Lobby button appear at 4.2 s (`revealSummary`, with `sfx.coins()`); the camera pushes in slowly over 6 s.
 - Buttons: only "Lobby", which hides the screen and calls `done` (`main.js` passes `leaveMatch`, i.e. `send('leave')` and back to the menus). Doing nothing keeps the player in the room: when the server starts the next vote, `nextRound()` hides the results.
@@ -438,13 +476,13 @@ Both render on the main canvas into a scissored viewport and copy the pixels out
 | Export | Signature | Notes |
 | --- | --- | --- |
 | `weaponIcon` | `(id, skin = 'standard', w = 256, h = 110) -> data URL` | renders `buildWeapon(WEAPONS[id].model, skin)` side-on; `model: 'fists'` returns the fist SVG; cached by `id:skin:WxH` |
-| `itemIcon` | `(kind, size = 96) -> data URL` | `frag`, `frost` (the ice grenade), `medkit`; no caller |
+| `itemIcon` | `(kind, size = 96) -> data URL` | `frag`, `pulse`, `breach` (the store's grenade pictures), `frost` (the ice grenade), `medkit` |
 | `svgData` | `(svg) -> data URL` | for `img.src` / CSS |
 | `SVG` | object of SVG strings | below |
 
 PNG rendering uses its own small `WebGLRenderer` (a second WebGL context: alpha, antialias, `preserveDrawingBuffer`, ACES tone mapping), one scene with three lights and an orthographic camera fitted to the model's bounding box (`snapshot`). If the context cannot be created the icon URL is an empty string. Sizes in use: 256 x 110 (shop cards, weapon card) and 160 x 70 (HUD slots, kill feed).
 
-`SVG` icon names: `heart`, `coin`, `helmet`, `vest`, `wall`, `frag`, `medkit`, `dash`, `emote`, `fist`, `skull`, `head`, `shield`, `bolt`, `eye`, `map`, `gear`. Most have baked colours; `shield` and `gear` use `currentColor` (only meaningful when inlined as markup, as the lobby does with `gear`). Unused: `head`, `shield`, `eye`, `map`.
+`SVG` icon names: `heart`, `coin`, `gem` (the game's Gems: a mint hexagonal crystal), `rp` (rank points: a star over a chevron), `helmet`, `vest`, `wall`, `frag`, `medkit`, `dash`, `emote`, `fist`, `skull`, `head`, `shield`, `bolt`, `eye`, `map`, `gear`. Most have baked colours; `shield` and `gear` use `currentColor` (only meaningful when inlined as markup, as the lobby does with `gear`). Unused: `head`, `shield`, `eye`, `map`.
 
 ### 5.5 `characters.js`
 
@@ -478,7 +516,7 @@ Local frame of every model: grip at the origin, barrel along +Z, up +Y, metres.
 | --- | --- | --- |
 | `buildWeapon` | `(modelId, skinId = 'standard') -> Group` | `userData.muzzle`, `userData.ejector` (marker `Object3D`s) and `userData.length`; an unknown id (including `fists`) returns an empty group with markers |
 | `skinMaterials` | `(skinId) -> { body, accent, furniture, steel, dark, lens, glow, blade }` | cached per skin and shared by every weapon; no outside caller |
-| `buildGrenade` | `(kind = 'frag')` | `'frag'`, anything else builds the ice canister; used by `actor.js`, `items.js`, `icons.js` |
+| `buildGrenade` | `(kind = 'frag')` | `'frag'`, `'pulse'` (dark cylinder, glowing cyan bands), `'breach'` (olive charge with a red light); anything else builds the ice canister; used by `actor.js`, `items.js` (`GRENADES[kind].model`), `icons.js` |
 | `buildMedkit` | `()` | only referenced by `itemIcon` |
 
 Model id mapping: `WEAPONS[id].model` selects the builder in `BUILDERS`.
@@ -493,6 +531,14 @@ Model id mapping: `WEAPONS[id].model` selects the builder in `BUILDERS`.
 | `dmr` | `buildDMR` | `marksman` | long handguard, scope |
 | `sniper` | `buildSniper` | `hawk` | bolt handle, long barrel with brake, thumbhole stock, bipod, large scope |
 | `knife` | `buildKnife` | `knife` | handle, guard, blade |
+| `heavy` | `buildHeavy` | `talon` | long chunky slide, ported shroud, big grip |
+| `wasp` | `buildWasp` | `wasp` | short angular SMG, vertical grip, stub stock, red dot |
+| `ridge` | `buildRidge` | `ridgeback` | curved magazine, furniture stock and handguard, gas tube |
+| `bullpup` | `buildBullpup` | `kestrel` | magazine behind the grip, top optic |
+| `double` | `buildDouble` | `breaker` | two side-by-side barrels, exposed hammers |
+| `autoshot` | `buildAutoshot` | `cyclone` | boxy receiver, box magazine, ribbed shroud |
+| `blade` | `buildBlade` | `ronin` | wrapped grip, guard, long single-edged blade |
+| `mender` | `buildMender` | `mender` | fixed white / red body with a cross, glowing vial canister (ignores skins) |
 | `fists` | none | `fists` | empty group |
 
 Shared part helpers: `rail` (notched strip), `scope`, `redDot`; geometry is cached by dimensions (`box`, `cyl`).
@@ -531,9 +577,9 @@ In a match the models are not used directly: `actor.js` `weaponMesh` bakes each 
 ### 6.4 Add a weapon model and its icon
 
 1. `weaponModels.js`: write `buildFoo(g, m)` from `add`, `box`, `cyl`, `rail`, `scope`, `redDot`, using `m.body` / `m.accent` / `m.furniture` for skinnable parts and `m.steel` / `m.dark` / `m.lens` for fixed ones; add the `if (m.glow)` strip; return `{ muzzle: [x, y, z], ejector: [x, y, z], length }`. Register it in `BUILDERS`.
-2. `config.js` `WEAPONS`: a new entry with `model: 'foo'`, a `slot`, stats and a coin `price`; mirror slot and price in the backend `catalog.ts` (`WEAPON_PRICES`) and its rules.
+2. `config.js` `WEAPONS`: a new entry with `model: 'foo'`, a `cat`, a `slot`, stats, a `desc` and a Gem `price`; mirror slot and price in the backend `catalog.ts` (`WEAPON_PRICES`) and its rules.
 3. The icon needs no extra work: `weaponIcon(id, skin)` renders the model and every UI (shop card, HUD card and slots, kill feed) picks it up. Check the side view at 256 x 110 and 160 x 70.
-4. The shop's stat bars are normalised by `statLimits` in `lobby.js`; raise a limit if the new weapon exceeds it.
+4. The store's stat bars are normalised in `wsStats` (`lobby.js`); bars clamp at full, so raise a divisor if the new weapon exceeds it.
 
 ### 6.5 Add a weapon skin
 
@@ -592,7 +638,7 @@ Leftovers from single-player / bots
 
 - Hearts and revive in the spectate panel: `.hearts`, `.revive`, `SVG.heart`, `cb.onRevive` (bound to `sfx.deny`), `info.hearts` (always 0) and the "uses 1 heart" texts remain; CSS hides both elements in every mode.
 - `hudCb` duplicates `cb` in `hud.js`.
-- `newSquad()` in `lobby.js` is an empty function that is still called; `toolbarBottom` is computed and discarded (`void toolbarBottom`); the import of `NET` is unused; the `.lb-mode .mi` template text "6v6" is a placeholder overwritten by `refresh()`.
+- `toolbarBottom` in `lobby.js` is computed and discarded (`void toolbarBottom`); the import of `NET` is unused; the `.lb-mode .mi` template text "6v6" is a placeholder overwritten by `refresh()`.
 - `characters.js` header comment and the `OUTFITS` comment in `config.js` still say "bots"; `paintShirtFront(o, teamColor)` never receives or uses `teamColor`; `void side` in the arm loop.
 - `main.js` listens for a bus event `announce`, but nothing emits it.
 
@@ -613,4 +659,3 @@ Statements the code contradicts
 - `main.js` comment on the FPS readout says "bottom-right corner"; its style places it bottom-left.
 - `state.js` lists the phases as `boot | lobby | vote | intro | ...`; the client phase is `queue` (`vote` is a server phase).
 - `config.js` comment on `MATCH_MODES` says the round's mode is voted by the players; the lobby has no mode vote, only the mode window (`setMode`) and `play { mode }`.
-- `coinsPerElim: 12` in `main.js` duplicates `REWARDS.perElimination`; the "+12 coins" notice will be wrong if only the config value changes.

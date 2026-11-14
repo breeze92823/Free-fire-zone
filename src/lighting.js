@@ -193,6 +193,14 @@ export function createLighting(scene, renderer, preset) {
     toggleDayNight() {
       target = target === 1 ? 0 : 1
     },
+    // Shadows off without a shader change (for lowering the graphics mid-round): the shadow pass is
+    // skipped and the sun's shadow drawn at zero strength, but every material keeps its shadow-receiving
+    // shader. Turning castShadow or shadowMap.enabled off instead recompiles every material in the scene.
+    setShadowsActive(on) {
+      sun.shadow.intensity = on ? 1 : 0
+      renderer.shadowMap.autoUpdate = on
+      if (on) renderer.shadowMap.needsUpdate = true
+    },
     setShadows(next) {
       sun.castShadow = next.shadows
       if (sun.shadow.mapSize.x !== next.shadowMap) {
