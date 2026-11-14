@@ -38,7 +38,7 @@ Common root rules (`.hud`, `.lobby`, `.results`, `.loading`): `position: fixed; 
 | `ending` | game scene, `G.slowmo = 0.3` | HUD (still updating), `hud.announce('VICTORY!' / 'TIME!')` | bus `matchEnd`, `syncFlow` |
 | `results` | game scene, camera from `updateResults` | `.results` (banner, plates, then summary + Lobby button) | `toResults`: `hud.show(false)`; `showResults(...)` once the `rewards` message has arrived |
 
-After `results` the server moves to `vote` / `waiting`; `nextRound()` calls `closeMatch()` (which calls `hideResults()` and `hud.show(false)`), sets `G.phase = 'queue'` and shows the lobby with the queue panel again. The Lobby buttons (results screen, spectate panel, "Leave the team") all end in `leaveMatch()` = `send('leave')` + `backToLobby()`.
+After `results` the server moves to `vote` / `waiting`; `nextRound()` calls `closeMatch()` (which calls `hideResults()` and `hud.show(false)`), sets `G.phase = 'queue'` and shows the lobby with the queue panel again. The results screen is built when the server's `rewards` message has arrived; if it has not after `REWARDS_WAIT` (1.5 s) `syncFlow` shows it anyway with the server-mirrored stats (`fallbackRewards`, coins / gems / rank points 0), so the Lobby button always appears. The Lobby buttons (results screen, spectate panel, "Leave the team") all end in `leaveMatch()` = `send('leave')` + `backToLobby()`.
 
 ### 1.3 Where the UI gets its data
 

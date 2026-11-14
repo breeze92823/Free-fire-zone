@@ -7,7 +7,8 @@
 import { AUTO_GRAPHICS, COARSE_POINTER, GRAPHICS_PRESETS } from './config.js'
 
 const TIERS = Object.keys(GRAPHICS_PRESETS) // Low .. Ultra
-const STORE_KEY = 'ffz.auto'
+const STORE_KEY = 'ffz.auto2' // (v2: phones got their own ladder, old rung indexes would point at other rungs)
+const LADDER = COARSE_POINTER ? AUTO_GRAPHICS.touchLadder : AUTO_GRAPHICS.ladder
 const lower = (a, b) => TIERS[Math.min(TIERS.indexOf(a), TIERS.indexOf(b))]
 
 // The GPU's name ('' when the browser hides it), read from a throwaway WebGL context.
@@ -58,12 +59,12 @@ export function detectTier() {
   return { tier, gpu, why: why.join(', ') }
 }
 
-const rungOf = (tier) => AUTO_GRAPHICS.ladder.findIndex((r) => r.tier === tier)
+const rungOf = (tier) => LADDER.findIndex((r) => r.tier === tier)
 
 function loadSaved(gpu) {
   try {
     const s = JSON.parse(localStorage.getItem(STORE_KEY) || 'null')
-    if (s && s.gpu === gpu && Number.isInteger(s.rung) && AUTO_GRAPHICS.ladder[s.rung]) return s.rung
+    if (s && s.gpu === gpu && Number.isInteger(s.rung) && LADDER[s.rung]) return s.rung
   } catch {
     // Storage blocked / bad JSON.
   }
@@ -87,8 +88,8 @@ export function createGovernor(onChange) {
   let good = 0
   let clock = 0
   let lastFps = 0
-  const blockedUntil = new Array(A.ladder.length).fill(0)
-  const strikes = new Array(A.ladder.length).fill(0)
+  const blockedUntil = new Array(LADDER.length).fill(0)
+  const strikes = new Array(LADDER.length).fill(0)
 
   function save() {
     try {
@@ -109,14 +110,14 @@ export function createGovernor(onChange) {
     good = 0
     reset()
     save()
-    onChange(A.ladder[rung], rung)
+    onChange(LADDER[rung], rung)
   }
 
   return {
     detected,
     remembered: saved >= 0,
     get rung() {
-      return A.ladder[rung]
+      return LADDER[rung]
     },
     get index() {
       return rung
@@ -155,7 +156,7 @@ export function createGovernor(onChange) {
       frames = 0
       if (fps < A.down[kind]) {
         good = 0
-        if (rung < A.ladder.length - 1) {
+        if (rung < LADDER.length - 1) {
           // Leaving this rung for being too slow: don't come back to it for a while.
           strikes[rung]++
           blockedUntil[rung] = clock + A.cooldown * 2 ** (strikes[rung] - 1)

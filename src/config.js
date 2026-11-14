@@ -139,6 +139,20 @@ export const AUTO_GRAPHICS = {
     { tier: 'Low', dpr: 0.85 },
     { tier: 'Low', dpr: 0.7 },
   ],
+  // Phones and tablets: the same idea with finer pixel-ratio steps. Resolution is what the governor gives up
+  // first (view distance, textures and the tier's other settings stay), because a phone's screen is 2-3 px per
+  // CSS px and the cheap way to stay smooth is to render fewer of them, not to draw a shorter world.
+  touchLadder: [
+    { tier: 'High' },
+    { tier: 'High', dpr: 1.75 },
+    { tier: 'Medium' },
+    { tier: 'Medium', dpr: 1.75 },
+    { tier: 'Medium', dpr: 1.5 },
+    { tier: 'Low', dpr: 1.5 },
+    { tier: 'Low', dpr: 1.25 },
+    { tier: 'Low', dpr: 1 },
+    { tier: 'Low', dpr: 0.85 },
+  ],
   window: 3, // s of frames averaged per decision
   settle: 2.5, // s ignored after a change / a phase change (shader compiles hitch)
   down: { desktop: 45, touch: 28 }, // average FPS below this: one rung down
@@ -159,14 +173,17 @@ export const NEON = { k: 3.5, plainMax: 1.2 }
 // and any preset is capped there.
 export const COARSE_POINTER = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 export const DEFAULT_GRAPHICS = COARSE_POINTER ? 'Medium' : 'High'
-export const MOBILE_GRAPHICS_CAP = { dpr: 1.5, shadowMap: 1024, particles: 0.6, anisotropy: 4 }
+// dpr: phones render at up to 2x (a 3x screen at 1.5x looked blurry and jagged); every tier starts there and
+// Auto's touchLadder lowers it when the frame rate asks. antialias: MSAA on the screen's own framebuffer is
+// cheap on a phone's tiled GPU (no bloom composer there), and it removes most of the stair-stepping.
+export const MOBILE_GRAPHICS_CAP = { dpr: 2, shadowMap: 1024, particles: 0.6, anisotropy: 4 }
 
 // The preset to render with on this device. dprCap: an extra pixel-ratio cap (Auto's lower rungs).
 export function graphicsPreset(name, dprCap = Infinity) {
   let p = GRAPHICS_PRESETS[name] ?? GRAPHICS_PRESETS[DEFAULT_GRAPHICS]
   if (COARSE_POINTER) {
     const cap = MOBILE_GRAPHICS_CAP
-    p = { ...p, dpr: Math.min(p.dpr, cap.dpr), shadowMap: Math.min(p.shadowMap, cap.shadowMap), bloom: false, particles: Math.min(p.particles, cap.particles), anisotropy: Math.min(p.anisotropy, cap.anisotropy) }
+    p = { ...p, dpr: p === GRAPHICS_PRESETS.Low ? 1.5 : cap.dpr, antialias: true, shadowMap: Math.min(p.shadowMap, cap.shadowMap), bloom: false, particles: Math.min(p.particles, cap.particles), anisotropy: Math.min(p.anisotropy, cap.anisotropy) }
   }
   return dprCap < p.dpr ? { ...p, dpr: dprCap } : p
 }

@@ -177,7 +177,7 @@ Transitions out: `results` -> `queue` when the server goes back to `vote` / `wai
 | `ffz.quality` | graphics choice (`Auto`, `Low`, ...) | `main.js` |
 | `ffz.volume` | master volume 0..1 from the lobby slider (written by `lobby.js`, read at boot by `main.js`; the portal's `master_volume` wins when the SDK is present) | `lobby.js` / `main.js` |
 | `ffz.devUser` | dev-only account id (`dev-...`) | `net.js` |
-| `ffz.auto` | Auto graphics: `{ gpu, rung }` remembered per GPU (`STORE_KEY` in `perf.js`) | `perf.js` |
+| `ffz.auto2` | Auto graphics: `{ gpu, rung }` remembered per GPU (`STORE_KEY` in `perf.js`) | `perf.js` |
 | `free-fire-zone.sound` | `muted` or `on` (`AUDIO.storageKey`) | `audio/core.js` |
 
 Progress (coins, rank, items, loadout, stats) is not stored in the browser: the server owns it and sends it as `profile`. Every storage access is wrapped in try/catch because the portal iframe can block storage.

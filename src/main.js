@@ -647,13 +647,39 @@ function syncFlow() {
     G.phase = 'ending'
     G.slowmo = 0.3
   }
+  if (G.phase === 'results' && !resultsShown && performance.now() - resultsAt > REWARDS_WAIT) showRoundResults() // no `rewards` came: never leave the player without the Lobby button
   if (sp === 'results' && G.phase !== 'results') toResults()
   else if ((sp === 'vote' || sp === 'waiting') && G.phase === 'results') nextRound()
   else if ((sp === 'vote' || sp === 'waiting') && RUNNING.has(G.phase)) nextRound()
 }
 
+let resultsAt = 0 // when the results phase began (the rewards message normally arrives before it)
+const REWARDS_WAIT = 1500 // ms to wait for `rewards` before showing the screen with local numbers
+
+// What the screen shows if the server never sent `rewards` (the player was not counted for the round):
+// the server-mirrored stats; coins / gems / rank points are unknown here, so 0.
+function fallbackRewards() {
+  const s = G.player?.stats || {}
+  const m = G.match
+  return {
+    won: net.state?.winner === G.player?.team,
+    mvp: false,
+    coins: 0,
+    gems: 0,
+    rp: 0,
+    eliminations: s.eliminations || 0,
+    knocks: s.knocks || 0,
+    assists: s.assists || 0,
+    damage: s.damage || 0,
+    deaths: s.deaths || 0,
+    headshots: s.headshots || 0,
+    score: { blue: net.state?.blue ?? m?.score.blue ?? 0, orange: net.state?.orange ?? m?.score.orange ?? 0 },
+  }
+}
+
 function toResults() {
   G.phase = 'results'
+  resultsAt = performance.now()
   G.slowmo = 1
   endGameplay()
   hud.show(false)
@@ -666,7 +692,7 @@ function toResults() {
 function showRoundResults() {
   if (resultsShown || !G.match) return
   resultsShown = true
-  showResults(net.state?.winner || G.player.team, rewards, leaveMatch)
+  showResults(net.state?.winner || G.player.team, rewards || fallbackRewards(), leaveMatch)
 }
 
 onNet('rewards', (r) => {
@@ -719,7 +745,9 @@ function closeMatch() {
   hideResults()
   hud.show(false)
   if (G.match) teardownMatch()
-  if (pendingGraphics) applyGraphics(pendingGraphics) // held back during the round (see applyGraphics)
+  // A graphics switch held back during the round (pendingGraphics) is NOT applied here: it recompiles
+  // shaders and re-uploads textures (seconds on a weak GPU) and the lobby is not drawn meanwhile, which
+  // left the last results frame frozen on screen. frame() applies it right after the lobby's first frame.
   setGameInput(false)
   setTouchActive(false)
   setMood(MAPS[0])
@@ -1095,7 +1123,11 @@ function frame(dt) {
     pumpWarmup()
     spanEnd('warmup', t)
     t = span()
-    if (!lobbyHold) lobbyFx.render()
+    if (!lobbyHold) {
+      lobbyFx.render()
+      // The lobby is on the canvas now: a switch held back during the round can freeze it safely.
+      if (pendingGraphics && !G.match && !skipRender) applyGraphics(pendingGraphics)
+    }
     spanEnd('render', t)
     lobby.placePlates(lobbyScene.anchors())
     ambLevel = 0

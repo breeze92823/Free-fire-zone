@@ -300,9 +300,9 @@ Auto graphics: a starting tier, then a frame-rate governor.
 
 Governor object: `detected`, `remembered` (a saved rung was loaded), getters `rung` (`{ tier, dpr? }`), `index`, `fps` (last window average), `enabled`; methods `setEnabled(on)`, `hold()` (restart the settle time), `update(dt, active)`.
 
-- Ladder: `AUTO_GRAPHICS.ladder`, best first (Ultra, High, High dpr 1.5, Medium, Medium dpr 1, Low, Low dpr 0.85, Low dpr 0.7). Start rung = the saved one, else the first ladder entry of the detected tier.
+- Ladder: `AUTO_GRAPHICS.ladder`, best first (Ultra, High, High dpr 1.5, Medium, Medium dpr 1, Low, Low dpr 0.85, Low dpr 0.7). Coarse-pointer devices use `AUTO_GRAPHICS.touchLadder` instead (High, High 1.75, Medium, Medium 1.75, Medium 1.5, Low 1.5, Low 1.25, Low 1, Low 0.85): resolution is given up first, the view distance is never part of it. Start rung = the saved one, else the first ladder entry of the detected tier.
 - `update(dt, active)`: does nothing (and resets its window) when disabled, not `active`, or the document is hidden. After `AUTO_GRAPHICS.settle` seconds it averages FPS over `window` seconds. Below `down[kind]` -> one rung down, and the rung it left is blocked for `cooldown * 2^(strikes - 1)` seconds. At or above `up[kind]` for `upAfter` seconds -> one rung up if that rung is not blocked. `kind` is `touch` or `desktop` from `COARSE_POINTER`.
-- Storage: `localStorage['ffz.auto'] = { gpu, rung }`, written on every move, read only when the stored `gpu` equals the current GPU name and the rung index exists. Strikes and blocks live in memory only.
+- Storage: `localStorage['ffz.auto2'] = { gpu, rung }`, written on every move, read only when the stored `gpu` equals the current GPU name and the rung index exists. Strikes and blocks live in memory only.
 
 `main.js` wiring: the governor is enabled only when the choice is Auto (`localStorage['ffz.quality']` absent or `'Auto'`); `onChange` calls `applyGraphics(currentPreset())`; `governor.hold()` on resize and phase change; `update` is active only in `playing`/`countdown`; `currentPreset()` = `graphicsPreset(rung.tier, rung.dpr)`. Because the rung is remembered, load-time fields follow it on the next visit.
 
@@ -317,7 +317,7 @@ Preset fields (`GRAPHICS_PRESETS`: Low, Medium, High, Ultra) and where they appl
 | `view { near, far }` | `main.updateView()` -> `lighting.setView`, `camera.far`, `world.setViewFit` | yes |
 | `anisotropy` | `setTextureQuality` at boot, `setAnisotropy` | between rounds (it re-uploads every texture) |
 
-Why "between rounds": shadows on/off and bloom on/off change the shader of every material in the scene, and on an Intel iGPU (ANGLE / D3D11) a full recompile measured 8-10 s of frozen game. `main.applyGraphics(next)` therefore splits a change: when a round is on (`G.match`) and `shadows`, `bloom` or `anisotropy` differ from the applied preset (`appliedGraphics`), it applies dpr, view distance and shadow map size / range at once, fades shadows and bloom off (or keeps them off) without a shader change, and keeps `next` in `pendingGraphics`. `closeMatch()` applies the pending preset; the lobby then compiles its new shaders in parallel and skips its own redraw until they are ready (`lobbyHold`), and the game scene is re-warmed in the background (see `warmup.js`).
+Why "between rounds": shadows on/off and bloom on/off change the shader of every material in the scene, and on an Intel iGPU (ANGLE / D3D11) a full recompile measured 8-10 s of frozen game. `main.applyGraphics(next)` therefore splits a change: when a round is on (`G.match`) and `shadows`, `bloom` or `anisotropy` differ from the applied preset (`appliedGraphics`), it applies dpr, view distance and shadow map size / range at once, fades shadows and bloom off (or keeps them off) without a shader change, and keeps `next` in `pendingGraphics`. `closeMatch()` does NOT apply it (the switch would freeze the canvas on the last results frame): `frame()` applies the pending preset right after the lobby has drawn its first frame, so the frozen picture is the lobby; the lobby then compiles its new shaders in parallel and skips its own redraw until they are ready (`lobbyHold`), and the game scene is re-warmed in the background (see `warmup.js`).
 
 ### warmup.js
 
@@ -347,7 +347,7 @@ Round start after all of this: worst frame 91 ms (was 0.3-1 s of CPU plus 3.4 s 
 | `particles` | `game/fx.js initFx` | load time |
 | `detail` | `world.js` (sea material, cloud puffs), `world/` (geometry, lamp count, small-prop shadows) | load time |
 
-`graphicsPreset(name, dprCap)` also applies `MOBILE_GRAPHICS_CAP` on coarse-pointer devices (dpr, shadowMap, particles, anisotropy capped; bloom off).
+`graphicsPreset(name, dprCap)` also applies `MOBILE_GRAPHICS_CAP` on coarse-pointer devices (dpr 2 for every tier, 1.5 for Low; MSAA antialias on; shadowMap, particles, anisotropy capped; bloom off). Auto's `touchLadder` lowers the dpr when the frame rate needs it.
 
 ### world.js
 
