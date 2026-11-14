@@ -1,8 +1,8 @@
-// One character in a match: the local player or a bot. Holds the gameplay
+// One character in a match: the local player or another player (`remote`). Holds the gameplay
 // state (health, armour, life, weapons, utility, stats), the visual model
 // (blocky avatar + animator + held/back weapons + name tag) and the hitboxes
 // (a body capsule and a head sphere, laid flat while knocked down).
-// Movement lives elsewhere (player.js for the player, bots.js for bots); each
+// Movement lives elsewhere (player.js for the player, online.js applyRemote for the others); each
 // frame they copy their interpolated feet position into `actor.pos`.
 import { CanvasTexture, Group, Object3D, Sprite, SpriteMaterial, SRGBColorSpace, Vector3 } from 'three'
 import { HEALTH, ITEMS, OPERATIVES, PLAYER_DIMS, SKINS, TEAMS, WEAPONS, WEAPON_SCALE } from '../config.js'
@@ -59,7 +59,6 @@ export class Actor {
     this.scene = opts.scene || null // where the held weapon lives (defaults to the game scene)
     this.outfit = opts.outfit
     this.operative = opts.operative || 'rook'
-    this.bot = null // set by bots.js
 
     // Gameplay state
     this.hp = HEALTH.max
@@ -74,6 +73,11 @@ export class Actor {
     this.lastDamageAt = -99
     this.protectedUntil = 0
     this.respawnAt = 0
+    this.autoRespawnAt = 0 // the local player: respawn without pressing Revive (no portal death screen)
+    this.level = 1 // from the server (career stats), shown on the spectate card
+    this.rp = 0 // rank points (rank badge)
+    this.hearts = 0 // hearts spectators gave this round
+    this.watchers = 0 // players spectating this one right now
     this.revivedBy = null
     this.reviveProgress = 0
 
@@ -174,6 +178,9 @@ export class Actor {
       if (root.nodes) root.nodes.ArmR2_leaf = leaf
     }
     this.hand = leaf
+    // A reused root may still be faded from its last actor (e.g. hidden at the results, cloaked):
+    // start it solid, since update() only re-fades when the wanted opacity changes.
+    if (root.userData.opacity !== undefined && root.userData.opacity !== 1) setOpacity(root, 1)
     this.opacity = 1
   }
 
@@ -410,7 +417,7 @@ export class Actor {
     disposeAnimator(this.animator)
     if (this.isPlayer) return // the player's avatar is reused by the lobby and the next match
     disposeLook(this.avatar) // a kit-dressed rig gives its outfit back
-    // Bots own their merged meshes, outfit textures and name tag: free them (weapons are shared).
+    // Other players own their merged meshes, outfit textures and name tag: free them (weapons are shared).
     this.avatar.traverse((n) => {
       if (n.isMesh && n.userData.ownGeometry) n.geometry.dispose()
     })

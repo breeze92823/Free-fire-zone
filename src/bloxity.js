@@ -324,25 +324,6 @@ function initLeaderboards(SDK) {
   }
 }
 
-// Final scores of a finished (or abandoned) match, from main.js matchRewards(). `sum` boards get
-// this match's amount only. Zero is never sent.
-export function submitMatchScores(r) {
-  const lb = sdk()?.leaderboard
-  if (!lb?.submit || !r) return
-  const send = (id, value) => {
-    if (!(value > 0)) return
-    try {
-      Promise.resolve(lb.submit(id, Math.round(value))).catch(() => {})
-    } catch {
-      // Non-fatal.
-    }
-  }
-  send('eliminations', r.eliminations)
-  send('weekly_elims', r.eliminations)
-  send('best_match', r.eliminations)
-  send('wins', r.won ? 1 : 0)
-}
-
 // --- Death screen ----------------------------------------------------------
 // The portal runs the respawn countdown (>= 4 s, banner ads); the game only draws the button and
 // respawns when handle.respawn() returns true. Without the SDK the old timer is the fallback.
@@ -453,17 +434,6 @@ export function getSkinTextureUrl() {
   }
 }
 
-export const canCustomize = () => typeof sdk()?.avatar?.toggleCustomizer === 'function'
-
-// Opens / closes the portal's avatar editor; edits come back through onAvatarChanged.
-export function toggleCustomizer() {
-  try {
-    sdk()?.avatar.toggleCustomizer()
-  } catch {
-    // Ignore.
-  }
-}
-
 // --- Game server ------------------------------------------------------
 // Bloxity hosting has no fixed socket URL: the matchmaker picks a pod with room (or wakes one) and
 // the SDK returns its endpoint (the dev channel reaches the dev backend, prod the prod one). Each
@@ -565,13 +535,6 @@ export function registerFeature(name) {
 // Boxity seats a party in one room itself on hosted servers; the game enables it on boot, passes the
 // party's roomKey in the join options (the server puts party members on one team) and reports the
 // room it landed in.
-export function enableParty(maxPartySize) {
-  try {
-    sdk()?.party?.enable?.({ maxPartySize })
-  } catch {
-    // Non-fatal.
-  }
-}
 export function partyLaunch() {
   try {
     return sdk()?.party?.getLaunch?.() ?? null

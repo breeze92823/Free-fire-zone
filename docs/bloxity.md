@@ -109,11 +109,7 @@ Because a value equal to the default never emits, `main.js` also loops over `blo
 
 ### 3.6 Leaderboards
 
-| Export | Wraps | Without SDK | Called by |
-| --- | --- | --- | --- |
-| `submitMatchScores(r)` | `leaderboard.submit(id, Math.round(value))` for `eliminations`, `weekly_elims`, `best_match` (all `r.eliminations`) and `wins` (`r.won ? 1 : 0`); values `<= 0` are not sent; rejections swallowed | no-op | no caller (see Observations) |
-
-`initLeaderboards` (private) calls `leaderboard.define(LEADERBOARDS)` (four boards: `eliminations`, `wins`, `best_match`, `weekly_elims`).
+`initLeaderboards` (private) calls `leaderboard.define(LEADERBOARDS)` (four boards: `eliminations`, `wins`, `best_match`, `weekly_elims`). The client submits no scores: the server's `reporters.ts` does.
 
 ### 3.7 Death screen and respawn
 
@@ -123,7 +119,7 @@ Because a value equal to the default never emits, `main.js` also loops over `blo
 | `showDeathScreen()` | `deathScreen.show()` -> handle `{ onCountdown(fn) -> unsubscribe, respawn() -> boolean, ready }` | `null` | `main.js` `on('elimination')` |
 | `hideDeathScreen()` | `deathScreen.hide()` | no-op | `main.js clearDeath` (on `spawn`, `endGameplay`) |
 
-Flow with the SDK: the local player is eliminated while `G.phase === 'playing'` -> `showDeathScreen()` -> `portalDeath = !!handle`, `hud.setDeath(handle)` (the Respawn button shows the portal's countdown and stays disabled until it reaches 0) -> button press -> `main.js onRespawn(death)` -> `death.respawn()` returns true -> `requestRespawn(true)` -> `send('respawn')`. Without the SDK (`portalDeath` false): `gameFrame` sends `respawn` once `G.time >= p.respawnAt`; `online.js` sets `respawnAt = G.time + NET.respawnFallback` (5 s).
+Flow with the SDK: the local player is eliminated while `G.phase === 'playing'` -> `showDeathScreen()` -> `portalDeath = !!handle`, `hud.setDeath(handle)` (the spectate panel's Revive button shows the portal's countdown and stays disabled until it reaches 0) -> button press (or G) -> `main.js onRespawn(death)` -> `death.respawn()` returns true -> `requestRespawn(true)` -> `send('respawn')`. Without the SDK (`portalDeath` false): Revive works once `G.time >= p.respawnAt` (`NET.respawnFallback`, 5 s) and `gameFrame` sends `respawn` by itself at `p.autoRespawnAt` (`NET.autoRespawn`, 20 s). Meanwhile the player spectates (ui.md 2.7).
 
 ### 3.8 Emotes
 
@@ -160,8 +156,6 @@ The portal draws the chat UI; the game only floats bubbles. `THREE` is passed in
 | `characterAccessoryMatrix(character, bone)` | `avatar.characterAccessoryMatrix`; only a 16-number array passes | `null` | `avatar/loader.js attachCharacterAccessories` |
 | `accessorySlots()` | `avatar.getAccessorySlots()` -> `[{ field, bone, dir, origin, inheritScale, mirrorBone? }]`; empty arrays become `null` | `null` | `avatar/loader.js itemSlots` |
 | `accessoryUrls(field, id)` | `avatar.getAccessoryUrls(field, id)` | `null` | `avatar/loader.js itemUrlsFor` |
-| `canCustomize()` | `typeof avatar.toggleCustomizer === 'function'` | `false` | no caller |
-| `toggleCustomizer()` | `avatar.toggleCustomizer()` | no-op | no caller |
 
 ### 3.11 Game server, rooms, party, friends
 
@@ -174,7 +168,6 @@ The portal draws the chat UI; the game only floats bubbles. `THREE` is passed in
 | `updateRoom(roomId, partyId)` | `game.updateRoom(roomId[, partyId])`; `''` = not in a joinable room | no-op | `net.js reportRoom` (`"<relay>~<roomId>"`, team as `partyId`) |
 | `wantsPrivateRoom()` | `?instantMultiplayer=true` | `false` when absent | `net.js joinOnce` |
 | `registerFeature(name)` | `game.registerFeature(name)`, once per name | marks the name done without calling anything | `net.js attach` (`'play_with_friends'`, after each join) |
-| `enableParty(maxPartySize)` | `party.enable({ maxPartySize })` | no-op | no caller (`init` calls the SDK directly) |
 | `partyLaunch()` | `party.getLaunch()` (`net.js` reads `.roomKey`) | `null` | `net.js joinOnce` |
 | `partyJoined(roomId)` | `party.joined(roomId)` | no-op | `net.js connect` |
 | `partyFailed(reason)` | `party.failed(reason)` | no-op | `net.js joinOnce` (`'room-full'` when the join error matches `full|locked`) |
@@ -215,8 +208,8 @@ How `net.js` strings these together (`joinOnce`): `partyLaunch()` -> join option
 
 ## Observations
 
-- **`submitMatchScores` is dead code.** Nothing in `src/` calls it, and its comment refers to `main.js matchRewards()`, which does not exist. `BLOXITY_CODE_METADATA.md` says scores are reported by the server (`reporters.ts`), which matches; `CLAUDE.md` still says "`submitMatchScores` at match end / leave". The comment above `LEADERBOARDS` in `config.js` names `defineLeaderboards`, which is `initLeaderboards` here.
-- **Unused exports:** `enableParty` (duplicate of the direct `SDK.party.enable` call in `init`), `canCustomize`, `toggleCustomizer`. `authState` and `sdk` are exported but only used inside this file.
+- Removed 2026-11-14: `submitMatchScores` (scores are reported by the server's `reporters.ts`), `enableParty`, `canCustomize`, `toggleCustomizer`.
+- `authState` and `sdk` are exported but only used inside this file.
 - **`CLAUDE.md` contradicts the code on multiplayer.** Its "Bloxity integrations" paragraph lists "multiplayer/party/rooms/friends/server stats (single player)" as not applicable, but this file wraps `net.resolveEndpoint`, `party.*`, `game.updateRoom`, `game.playerJoined` / `playerInRoom` and `registerFeature('play_with_friends')`, all called from `net.js` / `online.js`. `BLOXITY_CODE_METADATA.md` is correct (its `notApplicable` list is only gems, rewarded ads, music volume).
 - **Screen ads never show.** `BLOXITY_CODE_METADATA.md` describes "`declareScreens` + `screen(lobby / panel / results / gameplay)`", but every `AD_SCREENS` entry is `show: false` and all four types are in `NO_AD_SCREENS`, so `ads.screen()` is unreachable and `showAdScreen` only ever calls `hideScreen()`. The comment in `main.js enterRound` ("this just reports the screen") is inaccurate for the same reason.
 - **Respawn timer wording.** `CLAUDE.md` mentions both "a 5 s timer without the SDK" and "the 10 s timer and hearts are bypassed"; the code has only `NET.respawnFallback = 5` and `main.js` passes `hearts: 0` to the HUD.

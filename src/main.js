@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { ACESFilmicToneMapping, Clock, PCFSoftShadowMap, PerspectiveCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer } from 'three'
-import { AUTO_GRAPHICS, CAMERA, DEV_MODE, graphicsPreset, MATCH, MAPS, NET, RENDER, TIME_OF_DAY, WEAPONS } from './config.js'
+import { AUTO_GRAPHICS, CAMERA, DEV_MODE, graphicsPreset, MATCH, MAPS, NET, RENDER, SPECTATE, TIME_OF_DAY, WEAPONS } from './config.js'
 import { createGovernor } from './perf.js'
 import { setAnisotropy, setTextureQuality } from './textures.js'
 import * as bloxity from './bloxity.js'
@@ -20,7 +20,7 @@ import { setNeonBloom } from './propkit.js'
 import { loadBaseCharacter } from './avatar/character.js'
 import { applyProportions } from './avatar/loader.js'
 import { PRIO } from './avatar/assets.js'
-import { disposeLook, isBloxityRig, lookFromJson, lookToJson, prewarmLook, streamLook } from './avatar/look.js'
+import { disposeLook, lookFromJson, lookToJson, prewarmLook, streamLook } from './avatar/look.js'
 import { buildIsland } from './world/index.js'
 import { installAudio, setBreakMuted, setListener, setVolume, setDucked, sfx, spatial, updateAmbience } from './audio/index.js'
 import { hasEmoteClip, registerEmoteClip } from './avatar/animator.js'
@@ -38,6 +38,7 @@ import { renderMapImage, renderMapShot } from './game/mapimage.js'
 import { createLobbyScene } from './game/lobbyScene.js'
 import lobby, { initLobby, showLoading } from './game/lobby.js'
 import { hideResults, showResults, updateResults } from './game/results.js'
+import { startTutorial, stopTutorial, updateTutorial } from './game/tutorial.js'
 import { profile } from './game/save.js'
 import { connect, disconnect, me, net, onNet, online, reportRoom, send, setJoinOptions } from './net.js'
 import { applyState, initOnline, outfitForId, prebuildRemotes, reconcile, remoteAimDir, roster, sendPose, setThree, syncClock, syncLoot, trackRoster } from './game/online.js'
@@ -296,7 +297,7 @@ hud.init({
   onUlt: () => useUlt(),
   onInteract: () => interactPress(), // the prompt as a button (touch): open supplies; revives are a hold
   onLobby: () => leaveMatch(),
-  onRevive: () => sfx.deny(),
+  // Revive (the spectate panel's yellow button, or G): back into the round.
   // The portal's death screen owns the wait: respawn only when it says go (respawn() === true).
   onRespawn: (death) => {
     const p = G.player
@@ -306,6 +307,13 @@ hud.init({
     else sfx.deny()
   },
   onSpectate: (dir) => cycleSpectate(dir),
+  // Spectator social buttons: a heart / reaction for the watched player, and their public profile.
+  onHeart: () => giveHeart(),
+  onReact: (id) => sendReaction(id),
+  onProfile: () => {
+    const a = G.spectating
+    if (a?.netId) send('profileOf', { t: a.netId })
+  },
   onMapOpen: (open) => {
     if (open) document.exitPointerLock?.()
   },
@@ -450,8 +458,15 @@ bloxity.subscribeAuth((s) => {
 })
 bloxity.onAvatarChanged(loadAvatar)
 bloxity.onProportionsChanged(() => {
-  // Custom characters keep their own shape (docs: no proportion sliders on them).
-  if (!avatar.userData?.customCharacter) applyProportions(avatar, bloxity.getProportions())
+  // A kit-dressed body takes its shape from the outfit key (the new key carries the proportions);
+  // custom characters keep their own shape (docs: no proportion sliders on them).
+  const handle = avatar.userData?.lookHandle
+  if (handle) {
+    const gen = generation
+    Promise.resolve(handle.update(bloxity.getOutfitKey()))
+      .then((ok) => !ok && gen === generation && loadAvatar())
+      .catch(() => gen === generation && loadAvatar())
+  } else if (!avatar.userData?.customCharacter) applyProportions(avatar, bloxity.getProportions())
   sendAvatar()
 })
 // The portal menu's "Respawn" button: in a match, a stuck player is moved to a fresh spawn point.
@@ -574,6 +589,7 @@ function enterRound() {
   hud.begin(currentMap.name)
   spanEnd('enter:hud', t)
   hud.show(true)
+  startTutorial() // first-round tips, once per account
   bloxity.showAdScreen('gameplay') // gameplay banners are declared off; this just reports the screen
   setGameInput(true)
   setTouchActive(true)
@@ -744,6 +760,7 @@ function closeMatch() {
   endGameplay()
   hideResults()
   hud.show(false)
+  stopTutorial()
   if (G.match) teardownMatch()
   // A graphics switch held back during the round (pendingGraphics) is NOT applied here: it recompiles
   // shaders and re-uploads textures (seconds on a weak GPU) and the lobby is not drawn meanwhile, which
@@ -839,14 +856,53 @@ function showMates(list) {
   for (const m of others) prewarmLook(lookFromJson(m.avatar, m.outfitKey))
 }
 
+// --- Spectating (eliminated: watch the killer first, then anyone with the arrows) -------------------
+// Who can be watched: every other player in the round who is still up (either team), teammates
+// first. The server is told (`spectate`) so the watched player's eye counter and hearts work.
+function watchable() {
+  const p = G.player
+  const list = G.actors.filter((a) => a !== p && a.remote && a.life !== 'dead')
+  return list.sort((a, b) => (a.team === p.team ? 0 : 1) - (b.team === p.team ? 0 : 1))
+}
+function spectateActor(a) {
+  const next = a && a !== G.player ? a : null
+  if (next === G.spectating) return
+  G.spectating = next
+  send('spectate', { t: next?.netId || '' })
+}
 function cycleSpectate(dir) {
-  const mates = G.actors.filter((a) => a.team === G.player.team && a !== G.player && a.life !== 'dead')
-  if (!mates.length) {
-    G.spectating = null
-    return
-  }
-  const i = mates.indexOf(G.spectating)
-  G.spectating = mates[(i + dir + mates.length) % mates.length]
+  const list = watchable()
+  if (!list.length) return spectateActor(null)
+  const i = list.indexOf(G.spectating)
+  spectateActor(list[i < 0 ? 0 : (i + dir + list.length) % list.length])
+}
+let spectCheckT = 0
+// Every frame while dead: the watched player left or went down for good -> the next one.
+function updateSpectate(dt) {
+  const p = G.player
+  if (!p || p.life !== 'dead' || G.phase !== 'playing') return
+  spectCheckT -= dt
+  const s = G.spectating
+  if (s && G.actors.includes(s) && s.life !== 'dead') return
+  if (spectCheckT > 0) return
+  spectCheckT = SPECTATE.retarget
+  cycleSpectate(1)
+}
+let heartAt = -1e9
+function giveHeart() {
+  const a = G.spectating
+  const now = performance.now()
+  if (!a?.netId || G.player?.life !== 'dead' || now - heartAt < SPECTATE.heartGap * 1000) return
+  heartAt = now
+  send('heart', { t: a.netId })
+}
+let reactAt = -1e9
+function sendReaction(id) {
+  const a = G.spectating
+  const now = performance.now()
+  if (!a?.netId || G.player?.life !== 'dead' || now - reactAt < SPECTATE.reactGap * 1000) return sfx.deny()
+  reactAt = now
+  send('react', { t: a.netId, e: id })
 }
 
 // Lost the room mid-round (the SDK's own reconnect failed): back to the menus; net.js reconnects.
@@ -865,12 +921,14 @@ on('spawn', ({ actor, pos, facing }) => {
   syncYawToPlayer(facing)
   setView(facing + Math.PI, CAMERA.startPitch)
   snapFollow()
-  G.spectating = null
+  spectateActor(null)
   clearDeath()
 })
-on('elimination', ({ target }) => {
+on('elimination', ({ target, killer }) => {
   if (target === G.player) {
-    cycleSpectate(1)
+    // The camera starts on whoever eliminated us, looking where they look.
+    if (killer && killer !== G.player && killer.remote && killer.life !== 'dead') spectateActor(killer)
+    else cycleSpectate(1)
     inputState.aim = false
     hud.touch?.syncAim()
     // Required death screen: the portal counts down, the centred Respawn button waits for it.
@@ -880,7 +938,11 @@ on('elimination', ({ target }) => {
       hud.setDeath(handle)
     }
   }
-  if (G.spectating === target) cycleSpectate(1)
+  // The watched player went down for good: follow whoever got them (a chain of fights), else the next.
+  if (G.spectating === target) {
+    if (killer && killer !== G.player && killer.remote && killer.life !== 'dead') spectateActor(killer)
+    else cycleSpectate(1)
+  }
 })
 on('matchEnd', ({ winner }) => {
   G.slowmo = 0.3
@@ -888,7 +950,6 @@ on('matchEnd', ({ winner }) => {
   endGameplay()
   hud.announce(winner === G.player.team ? 'VICTORY!' : 'TIME!', winner === G.player.team ? 'Your squad wins the clash' : 'The other squad takes it', 2400)
 })
-on('announce', ({ big, small }) => hud.announce(big, small))
 let fellAt = 0
 body.onFellOut = () => {
   if (G.test) {
@@ -910,6 +971,7 @@ const aimDir = new Vector3()
 const focus = new Vector3()
 const stepAcc = new Map()
 const introLook = new Vector3()
+const specView = { yaw: 0, pitch: 0, set(yaw, pitch) { this.yaw = yaw; this.pitch = pitch; return this } } // the watched player's view
 let ambLevel = 0
 let skipRender = false // dev stepping without drawing
 
@@ -1038,6 +1100,8 @@ function gameFrame(dt) {
       crouch: watching.crouch,
       knocked: watching.life === 'knocked',
       noLook: p.life === 'dead', // dead: camera control exits
+      // Spectating: look where the watched player looks (their pose yaw + pitch).
+      view: p.life === 'dead' && G.spectating ? specView.set(watching.facing + Math.PI, watching.pitch || 0) : null,
     })
   }
   setFxScale(renderer.domElement.height / 2 / Math.tan((camera.fov * Math.PI) / 360))
@@ -1054,11 +1118,14 @@ function gameFrame(dt) {
   }
 
   if (p && (G.phase === 'playing' || G.phase === 'countdown' || G.phase === 'ending')) {
-    // Without the portal's death screen a short timer respawns the player; with it, only its button does.
-    if (p.life === 'dead' && G.phase === 'playing' && !portalDeath && G.time >= p.respawnAt) requestRespawn()
+    // Without the portal the Revive button works after NET.respawnFallback; an idle player is put back
+    // in after NET.autoRespawn anyway.
+    if (p.life === 'dead' && G.phase === 'playing' && !portalDeath && G.time >= Math.max(p.respawnAt, p.autoRespawnAt || 0)) requestRespawn()
+    updateSpectate(dt)
     t = span()
-    hud.update(dt, camera, { scoped: view.scoped && G.phase === 'playing', spread: view.spread, onEnemy: view.onEnemy, prompt: view.prompt, yaw: getYaw(), hearts: 0, touch: touchShown() })
+    hud.update(dt, camera, { scoped: view.scoped && G.phase === 'playing', spread: view.spread, onEnemy: view.onEnemy, prompt: view.prompt, yaw: getYaw(), touch: touchShown() })
     spanEnd('hud', t)
+    updateTutorial(dt)
   }
   lockHint.style.display = G.phase === 'playing' && !isLocked() && !touchShown() && p?.life !== 'dead' && !mapOpen() ? 'block' : 'none'
 
@@ -1095,7 +1162,7 @@ function frame(dt) {
     governor.hold()
   }
   governor.update(dt, G.phase === 'playing' || G.phase === 'countdown')
-  // Ad break: nothing advances (simulation, bots, match clock, audio is muted) until it ends.
+  // Ad break: nothing advances (simulation, match clock, audio is muted) until it ends.
   // The room keeps running on the server: only this client's drawing and input pause.
   if (bloxity.isAdBreak()) {
     if (!skipRender) (G.phase === 'lobby' || G.phase === 'queue' ? lobbyFx : postfx).render()

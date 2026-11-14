@@ -1,4 +1,4 @@
-// Blocky characters for bots (and the fallback player): the same proportions
+// Blocky stand-in characters (worn until a Bloxity look loads): the same proportions
 // and bone names as the Bloxity base rig (player.glb: torso 2.8 x 2.4 x 1.6,
 // arms 1.2 wide, legs 1.4 wide, 1.6 head, 6.4 units tall), so the shared
 // animator drives them, plus elbows/knees (two boxes per limb) and outfits:
@@ -482,15 +482,30 @@ export function setFlash(root, k, color = '#ff3030') {
 }
 
 // Fade a character (cloak / dissolve). opacity 1 = solid.
+// Each material's own settings are remembered on the first fade and restored at opacity 1, so a
+// Bloxity item that is meant to be see-through (alpha cut-outs, glass) stays that way afterwards.
+// root.userData.opacity records the current fade: a root that is worn again (the local player's
+// avatar is reused by the lobby and every round) must be reset with setOpacity(root, 1).
 export function setOpacity(root, opacity) {
+  const solid = opacity >= 1
   root.traverse((n) => {
     if (!n.isMesh) return
+    const u = n.userData
+    if (u.baseCastShadow === undefined) u.baseCastShadow = n.castShadow
     const list = Array.isArray(n.material) ? n.material : [n.material]
     for (const m of list) {
-      m.transparent = opacity < 1
-      m.opacity = opacity
-      m.depthWrite = opacity >= 1
+      if (!m) continue
+      const b = m.userData
+      if (b.baseOpacity === undefined) {
+        b.baseOpacity = m.opacity
+        b.baseTransparent = m.transparent
+        b.baseDepthWrite = m.depthWrite
+      }
+      m.opacity = b.baseOpacity * opacity
+      m.transparent = solid ? b.baseTransparent : true
+      m.depthWrite = solid ? b.baseDepthWrite : false
     }
-    n.castShadow = opacity > 0.5
+    n.castShadow = u.baseCastShadow && opacity > 0.5
   })
+  root.userData.opacity = opacity
 }

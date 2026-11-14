@@ -13,6 +13,8 @@ import { activeDrops, resetLoot, updateLoot } from './loot.js'
 import { randomWalkable } from './navgrid.js'
 import { profile, upgradeLevel } from './save.js'
 import * as fx from './fx.js'
+import { send } from '../net.js'
+import { emoteLength } from '../avatar/animator.js'
 
 const rnd = (a, b) => a + Math.random() * (b - a)
 const tmp = new Vector3()
@@ -183,7 +185,11 @@ export function updateMatch(dt) {
         a.reloadT = -1
       }
     }
-    if (a.emote && a.emoteT > 4.5) a.emote = null
+    // The player's emote ends after its own length; the server clears it so others stop too.
+    if (a.emote && a.emoteT > emoteLength(a.emote)) {
+      a.emote = null
+      if (a === G.player) send('emote', { emote: '' })
+    }
     if (live) updateActorItems(a, dt, tmp.set(Math.sin(a.facing) * Math.cos(a.pitch), -Math.sin(a.pitch), Math.cos(a.facing) * Math.cos(a.pitch)))
   }
   if (live) {

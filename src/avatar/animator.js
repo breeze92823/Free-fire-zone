@@ -1,4 +1,4 @@
-// Procedural animator for every character (player and bots), ported from Clean
+// Procedural animator for every character (the player and the others), ported from Clean
 // Leaves for Loot and extended for the shooter. Lower body: states idle / run /
 // airborne / landing blended through pose buffers; the walk and run are ONE
 // cycle at two depths, its phase advancing with distance travelled. On top of
@@ -27,6 +27,16 @@ export function registerEmoteClip(id, clip) {
   if (clip && clip.tracks && typeof clip.tracks === 'object') PORTAL_CLIPS.set(`portal:${id}`, clip)
 }
 export const hasEmoteClip = (id) => PORTAL_CLIPS.has(`portal:${id}`)
+
+// Seconds an emote plays before it ends by itself: `ANIM.emotes[name].duration` for the built-in
+// ones, the clip's own length for a catalogue emote (a looping clip runs `ANIM.emoteLoopMax`).
+export function emoteLength(name) {
+  const own = ANIM.emotes[name]
+  if (own) return own.duration
+  const clip = PORTAL_CLIPS.get(name)
+  if (!clip) return ANIM.emoteLoopMax
+  return clip.loop ? ANIM.emoteLoopMax : Math.max(0.5, clip.len || 0) + 0.2
+}
 
 const L = ANIM.locomotion
 const LIE_RAISE = 0.22 // m the root lifts so a lying body rests on the ground

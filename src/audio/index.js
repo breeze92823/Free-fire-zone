@@ -2,10 +2,10 @@
 //   import { sfx, installAudio, updateAmbience, spatial } from './audio/index.js'
 // installAudio() once at boot (waits for the first gesture to start). Every
 // button press anywhere gets its click here (one capture-phase listener).
-import { A, installAudio as installCore, onStart, setBreakMuted, setDucked, setMuted, setVolume, isMuted, toggleMuted } from './core.js'
+import { A, installAudio as installCore, onStart, setBreakMuted, setDucked, setMuted, setVolume, isMuted } from './core.js'
 import * as sfx from './sfx.js'
 
-export { sfx, setVolume, setMuted, setBreakMuted, isMuted, toggleMuted, setDucked }
+export { sfx, setVolume, setMuted, setBreakMuted, isMuted, setDucked }
 
 function onPress(e) {
   if (e.button > 0) return

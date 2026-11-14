@@ -51,6 +51,11 @@ export function bindKeys(hud) {
     if (G.player?.life === 'dead' && G.phase === 'playing') hud.pressRespawn()
     else useItem('frostWall')
   })
+  // Spectating (eliminated): arrows switch the watched player, H gives them a heart.
+  const spectating = () => G.player?.life === 'dead' && G.phase === 'playing'
+  onKey('ArrowLeft', () => spectating() && hud.spectateStep(-1))
+  onKey('ArrowRight', () => spectating() && hud.spectateStep(1))
+  onKey('KeyH', () => spectating() && hud.giveHeart())
   onKey('KeyT', () => useItem('frag'))
   onKey('KeyX', () => useItem('medkit'))
   onKey('KeyF', () => useItem('dash'))

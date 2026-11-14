@@ -1,6 +1,6 @@
 # Engine layer reference
 
-Scope: the root-of-`src/` "engine" modules: `physics.js`, `player.js`, `camera.js`, `input.js`, `touch.js` + `touch.css`, `lighting.js`, `postfx.js`, `perf.js`, `world.js` (sea + clouds), `textures.js`, `propkit.js`, `bake.js`, `modes.js`, and `index.html`. Everything below was read from those files, plus `src/main.js` and `src/config.js` for how they are wired. Gameplay (`src/game/`), the island (`src/world/`), networking and the Bloxity SDK are documented elsewhere and only named here as callers.
+Scope: the root-of-`src/` "engine" modules: `physics.js`, `player.js`, `camera.js`, `input.js`, `touch.js` + `touch.css`, `lighting.js`, `postfx.js`, `perf.js`, `world.js` (sea + clouds), `textures.js`, `propkit.js` and `index.html`. Everything below was read from those files, plus `src/main.js` and `src/config.js` for how they are wired. Gameplay (`src/game/`), the island (`src/world/`), networking and the Bloxity SDK are documented elsewhere and only named here as callers.
 
 All of these modules are singletons with module-level state (one physics world, one player body, one camera state, one `inputState`). The factory-style ones (`createLighting`, `createPostFx`, `createWorld`, `createGovernor`) return plain objects of closures.
 
@@ -36,7 +36,7 @@ Consequences of this order: look input moves the view one frame after it arrives
 
 ### Module dependency graph
 
-`player.js` -> `input.js`, `camera.js`, `physics.js`. `camera.js` -> `input.js`, `physics.js`. `touch.js` -> `input.js`. `lighting.js`, `world.js`, `propkit.js` -> `textures.js`. `propkit.js` -> `physics.js`. All read `config.js`. `postfx.js`, `perf.js`, `bake.js`, `modes.js` depend only on `config.js` / three.
+`player.js` -> `input.js`, `camera.js`, `physics.js`. `camera.js` -> `input.js`, `physics.js`. `touch.js` -> `input.js`. `lighting.js`, `world.js`, `propkit.js` -> `textures.js`. `propkit.js` -> `physics.js`. All read `config.js`. `postfx.js` and `perf.js` depend only on `config.js` / three.
 
 ## 2. Per-file reference
 
@@ -128,7 +128,7 @@ Over-the-shoulder camera that owns yaw and pitch (the body faces where it looks)
 | `aimRay` | `{ origin: Vector3, dir: Vector3 }` | Camera position + forward of the last `update`. Read by `controller.js` for firing and the crosshair. |
 | `update(camera, dt, opts)` | | Called once per frame from `main.js` as `updateCamera`. |
 
-`update` opts: `mode` (`'play'` default, `'scope'`, `'spectate'`, `'orbit'`, `'look'`), `target` (feet `{x,y,z}`), `aim` (bool), `zoomFov` (degrees), `crouch`, `knocked`, `noLook`, and for the fixed modes `from`, `lookAt`, `distance`, `height`, `time`.
+`update` opts: `mode` (`'play'` default, `'scope'`, `'spectate'`, `'orbit'`, `'look'`), `target` (feet `{x,y,z}`), `aim` (bool), `zoomFov` (degrees), `crouch`, `knocked`, `noLook`, `view` (`{ yaw, pitch }`: in `spectate`, the camera's yaw / pitch ease toward it at `CAMERA.spectateEase`), and for the fixed modes `from`, `lookAt`, `distance`, `height`, `time`.
 
 Steps common to every mode, in order:
 1. Look: `k = CAMERA.lookSensitivity * sensitivity * zoomScale`, where `zoomScale = CAMERA.aimSensitivity * (fovNow / CAMERA.fov)` while `opts.aim`, else 1. `yaw -= look.dx * k`, `pitch += look.dy * k`, skipped in `look`/`orbit` and with `noLook`. `inputState.look` is zeroed in every case.
@@ -141,7 +141,7 @@ Modes:
 |---|---|---|
 | `play` | alive (also dead with nobody to spectate) | Pivot at `followed + height`, shifted right by the shoulder offset, boom back along the view. `aim` is not a mode: `opts.aim` blends `distance -> aimDistance`, `shoulder -> aimShoulder`, `height -> aimHeight` by `aimK` and narrows the FOV. Height is `knockedHeight` when knocked, `crouchHeight + 0.3` when crouched. |
 | `scope` | `view.scoped` in `playing` | Camera at the eye: `followed.y + 1.58` (1.3 crouched), 0.25 m forward. No collision test. `main.js` hides the player's model. |
-| `spectate` | dead with `G.spectating` | Same boom maths with `CAMERA.spectateDistance` and a 0.3 m shoulder, target = the teammate. `main.js` passes `noLook: true`, so the view direction stays as it was. |
+| `spectate` | dead with `G.spectating` | Same boom maths with `CAMERA.spectateDistance` and a 0.3 m shoulder, target = the watched player (any team). `main.js` passes `noLook: true` and `view` = the watched player's pose yaw + PI and pitch, so the camera turns to look where they look. |
 | `orbit` | `intro` flyover | Position `(cos(time * 0.12) * distance, height, sin(time * 0.12) * distance)` around the world origin (defaults 120 / 70), `lookAt(opts.lookAt)`. Returns early. |
 | `look` | `results` | `camera.position = opts.from`, `lookAt(opts.lookAt)`. Returns early. |
 
@@ -151,7 +151,7 @@ Collision (play/spectate): `segmentClear(pivot -> shoulder point)` pulls the sho
 
 Shake: random offset of up to `shakeAmt * 0.125` per axis on the position, decaying with `CAMERA.shakeDecay`. Not applied or decayed in `orbit`/`look`.
 
-Config: `CAMERA` (`fov`, `startPitch`, `minPitch`, `maxPitch`, `distance`, `aimDistance`, `shoulder`, `aimShoulder`, `height`, `aimHeight`, `crouchHeight`, `knockedHeight`, `aimFov`, `fitAspect`, `fitMax`, `aimEase`, `followLerp`, `lookSensitivity`, `aimSensitivity`, `clearEase`, `shakeDecay`, `spectateDistance`). `CAMERA.near` / `far` are used by `main.js`. Callers: `main.js` (`update`, `setView`, `snapFollow`, `syncYawToPlayer`, `getYaw`, sensitivity), `player.js` (`getYaw`), `controller.js` (`aimRay`, `addRecoil`, `addShake`), `results.js` (`syncYawToPlayer`).
+Config: `CAMERA` (`fov`, `startPitch`, `minPitch`, `maxPitch`, `distance`, `aimDistance`, `shoulder`, `aimShoulder`, `height`, `aimHeight`, `crouchHeight`, `knockedHeight`, `aimFov`, `fitAspect`, `fitMax`, `aimEase`, `followLerp`, `lookSensitivity`, `aimSensitivity`, `clearEase`, `shakeDecay`, `spectateDistance`, `spectateEase`). `CAMERA.near` / `far` are used by `main.js`. Callers: `main.js` (`update`, `setView`, `snapFollow`, `syncYawToPlayer`, `getYaw`, sensitivity), `player.js` (`getYaw`), `controller.js` (`aimRay`, `addRecoil`, `addShake`), `results.js` (`syncYawToPlayer`).
 
 ### input.js
 
@@ -406,14 +406,6 @@ Small building blocks for props.
 
 Used outside: `solidBox` (`game/loot.js`), `neon` (`world/relay.js`), `fontReady` (`world/materials.js`), `setNeonBloom` (`main.js`, `devview.js`).
 
-### bake.js
-
-`bake(root, castShadow = false)` -> `Group`: merges every mesh under `root` that shares a look (material type, colours, flags, opacity, blending, map, roughness, metalness, `userData.k`) into one mesh per look, in `root`'s local space; multi-material meshes are kept as they are. Not imported by any file.
-
-### modes.js
-
-Player-mode switch (`MODES = ['character', 'player']`, `START_MODE`): `getMode()`, `isFirstPerson()`, `setMode(next)`, `toggleMode()`, `onModeChanged(fn)` (returns an unsubscribe). Not imported by any file; the shooter's first-person view is the camera's `scope` mode.
-
 ### index.html
 
 Viewport meta with `user-scalable=no` and `viewport-fit=cover`, theme colour, inline SVG favicon, Fredoka 500/600/700 from Google Fonts, base CSS (`overflow: hidden`, background `#0b1222`, `overscroll-behavior: none`, canvas `display: block; touch-action: none`, no text selection). Scripts: the Bloxity Legion SDK (`https://sdk.bloxity.io/v1/legion-sdk.min.js`, classic script, before the module) and `./src/main.js` as a module. The body has no other markup: the canvas, HUD, lobby and touch layer are created in JS.
@@ -486,7 +478,6 @@ Viewport meta with `user-scalable=no` and `viewport-fit=cover`, theme colour, in
 ## 5. Observations
 
 Dead code and unused exports (no importer found under `src/`):
-- `bake.js` and `modes.js` are not imported at all. The header of `modes.js` describes a V key and wheel-zoom switching that do not exist. `MODES` / `START_MODE` in config.js are only read by `modes.js`.
 - `physics.js`: `bindMesh`, `unbindMesh`, `addDynamic`, `addFixedBoxFor`, `removeBody`, `bodyCount` are unused outside the file. No dynamic body is ever created, so the mesh-sync/interpolation list stays empty and the controller's impulse-to-dynamic-bodies setting and `PHYSICS.pushMass` have nothing to act on.
 - `player.js`: `player.dims` is never read; `respawn()` is only the fallback for a missing `onFellOut`, and its `syncYawToPlayer()` call passes no argument, which is a no-op. `PLAYER_DIMS.crouchHeight` is not used by the capsule (it never shrinks) and `PHYSICS.turnSpeed` is not used anywhere.
 - `camera.js`: `getPitch` is unused. `CAMERA.results` in config.js is not read anywhere.
@@ -506,7 +497,6 @@ Stale comments in the files:
 - `FOG` and `RENDER.exposure` are only initial values: the preset's `view` and the mood's `exposure` replace them.
 
 Things that differ from CLAUDE.md or look like bugs:
-- CLAUDE.md lists `bake.js` among the root modules in use; nothing imports it.
 - "Every action needs a touch path": the scoreboard (`hud.showBoard`) is reached only from the `Tab` key. (Opening a supply crate from touch was fixed on 2026-11-14: `main.js` now passes `onInteract: () => interactPress()` to `hud.init`.)
 - "Tap targets >= 44px": the touch RELOAD and CROUCH buttons are `0.8` and `0.86` of `--side`, whose minimum is 48 px (44 px in portrait), so they can be about 35 to 41 px on small screens.
 - "Avoid per-frame allocations": see the exceptions under Gotchas.

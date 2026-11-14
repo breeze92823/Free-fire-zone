@@ -14,6 +14,7 @@ import { markOpened, syncCrates, syncDrops } from './loot.js'
 import { mulberry32 } from './zone.js'
 import { spawnActor, updateMvp } from './match.js'
 import { disposeLook, lookFromJson, streamLook } from '../avatar/look.js'
+import { hasEmoteClip, registerEmoteClip } from '../avatar/animator.js'
 import { sfx, spatial } from '../audio/index.js'
 import * as fx from './fx.js'
 import * as bloxity from '../bloxity.js'
@@ -26,6 +27,21 @@ const tmp2 = new Vector3()
 const TAU = Math.PI * 2
 
 export const byNet = (id) => (id ? G.actors.find((a) => a.netId === id) : null) || null
+
+// Another player's catalogue emote ('portal:<id>'): fetch and register its clip the first time it
+// is seen, so the animator can play it here too. A failed fetch is retried the next time.
+const clipLoads = new Set()
+function loadPortalClip(id) {
+  if (!id || hasEmoteClip(id) || clipLoads.has(id)) return
+  clipLoads.add(id)
+  bloxity
+    .getEmoteClip(id)
+    .then((clip) => registerEmoteClip(id, clip))
+    .catch(() => {})
+    .finally(() => {
+      if (!hasEmoteClip(id)) clipLoads.delete(id)
+    })
+}
 
 function hash(s) {
   let h = 2166136261
@@ -209,6 +225,7 @@ function applyRemote(a, p, dt, now) {
   a.vest = p.vest
   a.helmet = p.helmet
   a.protectedUntil = p.protectedUntil
+  copyPublic(a, p)
   const f = p.flags
   a.crouch = !!(f & FLAG.crouch)
   a.aiming = !!(f & FLAG.aim)
@@ -236,9 +253,17 @@ function applyRemote(a, p, dt, now) {
   if (emote !== a.emote) {
     a.emote = emote
     a.emoteT = 0
+    if (emote?.startsWith('portal:')) loadPortalClip(emote.slice(7))
   }
   copyStats(a, p)
   if (`${p.outfitKey}|${p.avatar}` !== a.lookKey) loadRemoteAvatar(a, p)
+}
+
+// Public profile bits (spectate card) and this round's hearts from spectators.
+function copyPublic(a, p) {
+  a.level = p.level || 1
+  a.rp = p.rp || 0
+  a.hearts = p.hearts || 0
 }
 
 function copyStats(a, p) {
@@ -283,7 +308,10 @@ export function applyState(dt) {
         if (pl.life !== p.life) {
           pl.life = p.life
           // A lost 'elim' message: still give the dead player a respawn timer.
-          if (p.life === 'dead') pl.respawnAt = G.time + NET.respawnFallback
+          if (p.life === 'dead') {
+            pl.respawnAt = G.time + NET.respawnFallback
+            pl.autoRespawnAt = G.time + NET.autoRespawn
+          }
         }
       }
       pl.hp = p.hp
@@ -291,12 +319,20 @@ export function applyState(dt) {
       pl.vest = p.vest
       pl.helmet = p.helmet
       pl.protectedUntil = p.protectedUntil
+      copyPublic(pl, p)
       if (pl.team !== p.team && p.team) pl.team = p.team
       copyStats(pl, p)
       return
     }
     const a = byNet(sid)
     if (a) applyRemote(a, p, dt, now)
+  })
+  // Spectators per player (the spectate panel's eye counter).
+  for (const a of G.actors) a.watchers = 0
+  st.players.forEach((p) => {
+    if (!p.watch) return
+    const w = p.watch === net.sessionId ? G.player : byNet(p.watch)
+    if (w) w.watchers++
   })
   mvpT -= dt
   if (mvpT <= 0) {
@@ -383,8 +419,10 @@ export function initOnline() {
     target.reviveSent = false
     target.reloadT = target.healT = target.throwT = -1
     target.aiming = false
-    emit('knock', { target, attacker: byNet(a) || (a === net.sessionId ? G.player : null), weapon: w, head: !!h })
+    const attacker = byNet(a) || (a === net.sessionId ? G.player : null)
+    emit('knock', { target, attacker, weapon: w, head: !!h })
     if (target === G.player) sfx.hurt(true)
+    else if (attacker === G.player) sfx.knock()
   })
   onNet('elim', ({ t, k, w, h, s }) => {
     const target = byNet(t) || (t === net.sessionId ? G.player : null)
@@ -396,14 +434,21 @@ export function initOnline() {
     if (target === G.player) {
       target.lastKilledBy = killer
       target.respawnAt = G.time + NET.respawnFallback
+      target.autoRespawnAt = G.time + NET.autoRespawn
     }
     fx.poof(target.pos, fx.FX_COLORS.white, 20)
     emit('elimination', { target, killer, weapon: w || null, head: !!h, streak: s || 0 })
+    // The player's own eliminations: a bell that climbs with the streak, plus a fanfare from 2 on.
+    if (killer === G.player && target !== G.player) {
+      sfx.elimination(Math.max(1, s | 0))
+      if (s >= 2) sfx.streak(s)
+    }
   })
   // What the server granted this player for a knock / elimination (Gems now, coins + rank points
   // counted into the round's rewards): the HUD's popup and multi-kill banner.
   onNet('reward', ({ k, t, gems, coins, rp, h, s, b }) => {
     if (!G.match) return
+    sfx.pickup()
     emit('reward', { kind: k === 'knock' ? 'knock' : 'elim', target: byNet(t), gems: gems | 0, coins: coins | 0, rp: rp | 0, head: !!h, streak: s | 0, bonus: b | 0 })
   })
   onNet('revive', ({ t, b }) => {
@@ -417,6 +462,20 @@ export function initOnline() {
     fx.ring(target.pos, 0.3, 2.2, 0.6, '#7dffb0')
     if (target === G.player || target.pos.distanceTo(G.player?.pos ?? target.pos) < 30) sfx.revive()
     emit('revive', { target, by: byNet(b) || (b === net.sessionId ? G.player : null) })
+  })
+  // Spectators: a heart / reaction for a player (from an eliminated player watching them), and the
+  // public profile asked for with `profileOf` (spectate "View profile").
+  const actorOf = (id) => byNet(id) || (id === net.sessionId ? G.player : null)
+  onNet('heart', ({ f, t }) => {
+    const target = actorOf(t)
+    if (target && G.match) emit('heart', { from: actorOf(f), target })
+  })
+  onNet('react', ({ f, t, e }) => {
+    const target = actorOf(t)
+    if (target && G.match && typeof e === 'string') emit('react', { from: actorOf(f), target, reaction: e })
+  })
+  onNet('playerProfile', (msg) => {
+    if (msg && typeof msg.t === 'string') emit('playerProfile', { ...msg, actor: actorOf(msg.t) })
   })
   onNet('spawn', ({ id, first }) => {
     if (!G.match) return
@@ -499,8 +558,9 @@ export function initOnline() {
     if (a && G.match) remoteWall(new Vector3(x, y, z), yaw, a)
   })
   onNet('ult', ({ id, op }) => {
+    // The player's own ability already played its effect locally (items.js useUltimate).
     const a = byNet(id)
-    if (a && G.match) ultVisual(a, op)
+    if (a && a !== G.player && G.match) ultVisual(a, op)
   })
   onNet('opened', ({ c, d, by }) => {
     if (!G.match || by === net.sessionId) return

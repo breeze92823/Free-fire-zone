@@ -6,13 +6,13 @@
 // Also the waiting / map-vote panel after PLAY (the room's server runs the
 // rounds: real players only) and the loading screen.
 import './lobby.css'
-import { GRENADES, MATCH_MODES, NET, OPERATIVES, PASSES, SKINS, STORE, WEAPONS, WEAPON_CATS, GAME_TITLE, QUALITY_OPTIONS } from '../config.js'
+import { GRENADES, MATCH_MODES, OPERATIVES, PASSES, RANKS, SKINS, STORE, WEAPONS, WEAPON_CATS, GAME_TITLE, QUALITY_OPTIONS } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { sfx, setVolume, isMuted, setMuted } from '../audio/index.js'
 import { SVG, itemIcon, svgData, weaponIcon } from './icons.js'
 import { portrait, randomOutfit } from './characters.js'
 import party, { initParty } from './party.js'
-import { account, buyGrenade, buyOperative, buyPass, buySkin, buyStoreItem, buyWeapon, equipEmote, equipGrenade, equipOperative, equipSkin, equipWeapon, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
+import { account, buyGrenade, buyOperative, buyPass, buySkin, buyStoreItem, buyWeapon, claimable, claimMission, equipEmote, equipGrenade, equipOperative, equipSkin, equipWeapon, missionList, missionResets, missionText, onClaimed, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
 
 const h = (tag, cls = '', html = '') => {
   const e = document.createElement(tag)
@@ -48,6 +48,7 @@ export function initLobby(callbacks) {
     </div>
     <div class="lb-menu">
       <button class="menubtn gold" data-open="weapons"><span class="ic"><img alt="" src="${svgData(SVG.frag)}"></span><span class="tx o">Weapons Store</span></button>
+      <button class="menubtn missions" data-open="missions"><span class="ic"><img alt="" src="${svgData(SVG.missions)}"></span><span class="tx o">Missions</span><span class="badge o" hidden></span></button>
       <button class="menubtn" data-open="store"><span class="ic"><img alt="" src="${svgData(SVG.coin)}"></span><span class="tx o">Store</span></button>
       <button class="menubtn" data-open="characters"><span class="ic"><img alt="" src="${svgData(SVG.emote)}"></span><span class="tx o">Characters</span></button>
       <button class="menubtn" data-open="inventory"><span class="ic"><img alt="" src="${svgData(SVG.vest)}"></span><span class="tx o">Inventory</span></button>
@@ -176,6 +177,10 @@ function refresh() {
   const s = profile.stats
   root.querySelector('.lb-stats').innerHTML = `<span class="o">Matches ${s.matches} · Wins ${s.wins} · Eliminations ${s.eliminations} · Best ${s.best}</span>`
   cb.onRank?.(r.index)
+  const ready = claimable()
+  const badge = root.querySelector('.menubtn.missions .badge')
+  badge.hidden = !ready
+  badge.textContent = ready
   if (modal.classList.contains('on') && current && current.kind !== 'queue') reopen()
 }
 
@@ -211,6 +216,7 @@ function open(kind, opt) {
   current = { kind, opt }
   cb.onWindow?.(true)
   if (kind === 'weapons') return weaponsWindow(opt || 'weapons')
+  if (kind === 'missions') return missionsWindow(opt || 'daily')
   if (kind === 'store') return storeWindow()
   if (kind === 'characters') return charactersWindow()
   if (kind === 'inventory') return inventoryWindow()
@@ -426,6 +432,81 @@ function wireTabs(win) {
     }),
   )
 }
+
+// --- Missions (daily / weekly) and rank rewards ---------------------------------------------------
+// The server (backend progress.ts) rolls the sets, counts the rounds and pays a claim; this window
+// shows them. A finished mission waits for its Claim until the set rolls over.
+const MISSION_ICON = { play: SVG.flag, win: SVG.flag, elims: SVG.skull, knocks: SVG.fist, damage: SVG.bolt, headshots: SVG.head, assists: SVG.shield, revives: SVG.heart }
+function fmtLeft(ms) {
+  const m = Math.max(1, Math.ceil(ms / 60000))
+  const d = Math.floor(m / 1440)
+  const hh = Math.floor((m % 1440) / 60)
+  if (d) return `${d}d ${hh}h`
+  return hh ? `${hh}h ${m % 60}m` : `${m}m`
+}
+function resetText(tab) {
+  const r = missionResets()
+  return tab === 'weekly' ? `New weekly missions in ${fmtLeft(r.weekly)}` : `New daily missions in ${fmtLeft(r.daily)}`
+}
+function missionsWindow(tab) {
+  let body
+  if (tab === 'ranks') {
+    const now = rankOf().index
+    const rows = RANKS.map((r, i) => {
+      if (!i) return ''
+      const paid = (profile.rankReward | 0) >= i
+      // Reached but not paid yet: the server pays it with the next round's results.
+      const state = paid ? '<span class="ms-state ok o">Paid</span>' : profile.rp >= r.rp ? '<span class="ms-state ok o">Reached</span>' : `<span class="ms-state o">${fmtN(r.rp - profile.rp)} RP to go</span>`
+      return `<div class="ms rank${paid ? ' claimed' : ''}${i === now ? ' cur' : ''}"><div class="ms-ic">${RANK_SVG(r.color)}</div><div class="ms-main"><div class="ms-t o">${r.name}</div><div class="ms-sub">Reach ${fmtN(r.rp)} rank points</div></div><div class="ms-rw o"><span>${coinImg()}${fmtN(r.coins)}</span><span>${gemImg()}${fmtN(r.gems)}</span></div>${state}</div>`
+    }).join('')
+    body = `<div class="ms-list">${rows}</div><div class="hint">Each rank pays once, the first time you reach it. Win rounds and eliminate enemies to earn rank points.</div>`
+  } else {
+    const list = missionList(tab)
+    const rows = list
+      .map((m) => {
+        const pct = Math.round((m.n / m.def.goal) * 100)
+        let act
+        if (m.claimed) act = '<button class="buy equipped o" disabled>Claimed</button>'
+        else if (m.done) act = `<button class="buy price o" data-claim="${m.i}">Claim</button>`
+        else act = `<span class="ms-state o">${pct}%</span>`
+        return `<div class="ms${m.done ? ' done' : ''}${m.claimed ? ' claimed' : ''}"><div class="ms-ic"><img alt="" src="${svgData(MISSION_ICON[m.def.stat] || SVG.missions)}"></div><div class="ms-main"><div class="ms-t o">${missionText(m.def)}</div><div class="ms-bar"><i style="width:${pct}%"></i><span class="o">${fmtN(m.n)} / ${fmtN(m.def.goal)}</span></div></div><div class="ms-rw o"><span>${coinImg()}${fmtN(m.def.coins)}</span><span>${gemImg()}${fmtN(m.def.gems)}</span></div>${act}</div>`
+      })
+      .join('')
+    body = list.length
+      ? `<div class="ms-reset o">${resetText(tab)}</div><div class="ms-list">${rows}</div><div class="hint">Missions count the online rounds you play. Claim a finished mission before the set changes.</div>`
+      : `<div class="hint">Your missions arrive with your profile from the game server.</div>`
+  }
+  const win = frame('Missions', body, [['daily', 'Daily'], ['weekly', 'Weekly'], ['ranks', 'Rank rewards']], tab)
+  win.querySelectorAll('[data-tab]').forEach((b) =>
+    b.addEventListener('click', () => {
+      current = { kind: 'missions', opt: b.dataset.tab }
+      sfx.click?.()
+      missionsWindow(b.dataset.tab)
+    }),
+  )
+  win.querySelectorAll('[data-claim]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!claimMission(tab, +b.dataset.claim)) return bought(false)
+      b.disabled = true
+    }),
+  )
+}
+// The server's answer to a claim: a coin shower and a toast, or a refusal.
+onClaimed((msg) => {
+  if (msg.error) {
+    sfx.deny()
+    if (msg.error === 'loading' || netStatus !== 'online') setStatus('Missions need the game server — reconnecting…')
+    return
+  }
+  sfx.purchase()
+  party.toast(`Mission reward: +${fmtN(msg.coins)} coins, +${fmtN(msg.gems)} Gems`, 'good')
+})
+// The reset line counts down while the window is open.
+setInterval(() => {
+  if (current?.kind !== 'missions' || !modal?.classList.contains('on')) return
+  const el = modal.querySelector('.ms-reset')
+  if (el) el.textContent = resetText(current.opt || 'daily')
+}, 30000)
 
 const STORE_ICON = { medkit: SVG.medkit, wall: SVG.wall, frag: SVG.frag, armor: SVG.vest, emote: SVG.emote }
 function storeWindow() {

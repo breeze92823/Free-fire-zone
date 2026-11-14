@@ -58,13 +58,16 @@ async function build(look, prio) {
         const base = await loadBaseCharacter()
         let handle = null
         try {
-          // proportions 'game': our loader shapes the bones (applyProportions) and the outfit follows.
-          handle = await withTimeout(kit.dress({ THREE, GLTFLoader, root: base, outfitKey: key, proportions: 'game' }), SDK_TIMEOUT, 'character.dress')
+          // The kit shapes the body from the proportions inside the outfit key, exactly like the
+          // portal (it widens the torso skin, moves the limbs and keeps the head's shape); our
+          // animator only rotates bones, so both work together.
+          handle = await withTimeout(kit.dress({ THREE, GLTFLoader, root: base, outfitKey: key }), SDK_TIMEOUT, 'character.dress')
         } catch (err) {
           console.warn('[look] character kit failed, drawing the look by hand', err)
         }
         if (handle) {
-          applyProportions(base, look.proportions || null)
+          base.userData.kitProportions = true
+          applyProportions(base, null) // the unit scale only
           base.userData.lookHandle = handle
           return { root: base, kind: 'kit', handle, complete: true }
         }

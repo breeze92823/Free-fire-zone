@@ -26,8 +26,7 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 | Export | Used by | Mirrored on server |
 | --- | --- | --- |
 | `GAME_SLUG`, `GAME_TITLE`, `DEV_MODE` (`VITE_DEV_MODE === 'true'`) | `bloxity.js`, `net.js`, `online.js`, `main.js` | no |
-| `WATER`, `SPAWN`, `SPAWN_FACING` (`GROUND_Y` is unread) | sea, nav grid, `player.js` | no |
-| `MODES`, `START_MODE` | only `modes.js`, which nothing imports (dead) | no |
+| `WATER`, `SPAWN`, `SPAWN_FACING` | sea, nav grid, `player.js` | no |
 | `PHYSICS` (gravity, speeds, accel, jump, step, slope, `killY`) | `physics.js`, `player.js`, `controller.js` | server only bounds speed (`MAX_SPEED` 32) |
 | `PLAYER_DIMS` | `player.js`, `actor.js` (`CAPSULE`) | no |
 | `RENDER`, `FOG`, `TIME_OF_DAY` (`day`, `sunset`, `night`, `transition`), `LIGHT` | `main.js`, `lighting.js` | no |
@@ -36,7 +35,7 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 | `AUDIO` | `audio/` | no |
 | `SETTINGS`, `coerceSetting` | `bloxity.js`, `main.js applySetting` | no |
 | `LEADERBOARDS` | `bloxity.js` | `reporters.ts` `BOARDS` |
-| `NET` (`room`, `roomSize` (unread), `teamMax`, `minPlayers`, `devServer`, `devPort`, `poseHz`, `interpDelay`, `connectTimeout`, `respawnFallback`) | `net.js`, `online.js`, `main.js` | `constants.ts` (`ROOM_MAX_CLIENTS`, `TEAM_MAX`, `MIN_PLAYERS`) |
+| `NET` (`room`, `roomSize` (unread), `teamMax`, `minPlayers`, `devServer`, `devPort`, `poseHz`, `interpDelay`, `connectTimeout`, `respawnFallback`, `autoRespawn`) | `net.js`, `online.js`, `main.js` | `constants.ts` (`ROOM_MAX_CLIENTS`, `TEAM_MAX`, `MIN_PLAYERS`) |
 | `AD_SCREENS`, `NO_AD_SCREENS` | `bloxity.js` | no |
 | `RIG_HEIGHT`, `RIG`, `PROPORTIONS`, `ANIM`, `CHARACTER_COLORS`, `MATERIAL_PBR` | `avatar/` | no |
 | `WEAPONS`, `SCOPE_FOV`, `WEAPON_SCALE`, `BULLET` | combat, actor, HUD, lobby, models, test range | `rules.ts` `WEAPONS`, `FALLOFF_START`; Gem prices in `catalog.ts` `WEAPON_PRICES` |
@@ -51,7 +50,8 @@ Units: metres, seconds, radians unless noted. Axes: +X east, +Z south, +Y up.
 | `MAPS` (`id`, `name`, `mood`, `tint`, `focus`, `shot`) | `main.js`, `mapimage.js`, lobby vote, `zone.js` | `rules.ts` `MAP_FOCUS` (same order) |
 | `ZONE` | `zone.js`, HUD | `rules.ts` `ZONE`, `ISLAND_RADIUS` |
 | `LOOT` | `loot.js` | `rules.ts` `LOOT` |
-| `BOTS` | only `BOTS.navCell` (1.25 m) is read, by `navgrid.js`; the rest is unused since bots were removed | no |
+| `NAV` (`cell` 1.25 m) | `navgrid.js` | no |
+| `MISSIONS` (`daily`, `weekly`: `{ id, stat, goal, coins, gems }`; `text`: how each stat reads) | `save.js`, `lobby.js`, `results.js` | `progress.ts` `MISSIONS` (ids, goals, rewards) |
 | `OUTFITS`, `TEAMS` | `characters.js`, HUD, actor name tags | no |
 | `RANKS`, `START_PROFILE`, `STORE` | `save.js`, lobby, `lobbyScene.js` | `catalog.ts` `START_PROFILE`, `STORE` (ranks exist only on the client; the server stores `rp`) |
 | `REWARDS` | not read by any client code; kept as a copy of the server's table (the HUD's kill popup shows the amounts the server sends in `reward`) | `rules.ts` `REWARDS` |
@@ -83,7 +83,7 @@ A gun is "anything with `mag`": `controller.js` uses `!!def.mag` to allow aiming
 | `time` | round clock in seconds, follows the server | `online.js syncClock` |
 | `slowmo` | time scale (0.3 while `ending`) | `main.js` |
 | `phase` | `boot`, `lobby`, `queue`, `intro`, `countdown`, `playing`, `ending`, `results` (the comment in `state.js` still lists `vote`; the real value while voting is `queue`) | `main.js` |
-| `spectating` | the teammate the camera follows while dead | `main.js cycleSpectate` |
+| `spectating` | the player the camera watches while dead (the killer first, then any player who is up) | `main.js spectateActor` / `cycleSpectate` |
 
 `on(type, fn)` returns an unsubscribe function; `emit(type, data)` calls listeners inside try/catch. Helpers `enemiesOf(a)` and `alliesOf(a)` exist but nothing imports them.
 
@@ -95,6 +95,9 @@ A gun is "anything with `mag`": `controller.js` uses `!!def.mag` to allow aiming
 | `elimination` | `{ target, killer, weapon, head, streak }` | `online.js` (`elim`) | `hud.js`, `main.js` (spectate, death screen) |
 | `reward` | `{ kind: 'elim' \| 'knock', target, gems, coins, rp, head, streak, bonus }`: what the server granted the local player for a knock / elimination (`bonus` = the streak's extra Gems) | `online.js` (`reward`) | `hud.js` (kill popup, multi-kill banner) |
 | `revive` | `{ target, by }` | `online.js` (`revive`) | none |
+| `heart` | `{ from, target }`: a spectator liked `target`'s play | `online.js` (`heart`) | `hud.js` (floating hearts, toast for the target) |
+| `react` | `{ from, target, reaction }` (a `REACTIONS` id) | `online.js` (`react`) | `hud.js` (glyph over the target's head, toast for the target) |
+| `playerProfile` | the server's `playerProfile` message + `actor` | `online.js` (`playerProfile`) | `hud.js` (profile window) |
 | `spawn` | `{ actor, first, pos, facing }` | `match.js spawnActor` | `main.js` (moves the body and camera, clears the death screen) |
 | `matchEnd` | `{ winner }` | `online.js` (`matchEnd`) | `main.js` (slow motion, banner) |
 | `explosion` | `{ pos, radius }` | `combat.explodeVisual` | `controller.js` (shake) |
@@ -104,7 +107,6 @@ A gun is "anything with `mag`": `controller.js` uses `!!def.mag` to allow aiming
 | `wall` | `{ wall }` | `FrostWall` constructor | none |
 | `ultimate` | `{ actor, op }` | `items.ultVisual` | none |
 | `healed` | the actor | `items.updateActorItems` | none |
-| `announce` | `{ big, small }` | nothing emits it today | `main.js` (`hud.announce`) |
 
 Events with no listener are safe hooks for new HUD or audio features.
 
@@ -124,7 +126,9 @@ Gameplay fields:
 | `life` | `alive`, `knocked`, `dead`; server-driven |
 | `downHp` | bleed-out pool while knocked |
 | `protectedUntil` | round-clock time spawn protection ends (shimmer) |
-| `respawnAt` | fallback respawn time when there is no portal death screen |
+| `respawnAt` | without the portal death screen: when Revive starts to work (`NET.respawnFallback`) |
+| `autoRespawnAt` | without the portal: when the player is put back in without pressing Revive (`NET.autoRespawn`) |
+| `level`, `rp`, `hearts`, `watchers` | from the server (`copyPublic`, `applyState`): level, rank points, hearts from spectators this round, players spectating this one now |
 | `revivedBy`, `reviveProgress`, `reviveSent` | local revive hold state |
 | `pos`, `vel`, `facing`, `pitch`, `crouch`, `grounded`, `aiming` | pose |
 | `impulse` | knockback vector the player body consumes (`body.impulse = p.impulse`) |
@@ -164,7 +168,7 @@ Module exports besides `Actor`: `raySphere`, `rayCapsule`, `CAPSULE`.
 `updateController(dt, hud)` runs before physics, every frame of a round except `results`:
 
 1. Mouse wheel cycles slots.
-2. Moving or firing cancels an emote (`send('emote', { emote: '' })`).
+2. Moving or firing cancels an emote (`send('emote', { emote: '' })`); `match.js` also ends it after `emoteLength(name)` (`ANIM.emotes[name].duration`, a catalogue clip's own length, `ANIM.emoteLoopMax` for a looping one) and tells the server, so other players' copies stop too.
 3. Sets `p.aiming`, `p.crouch`, sprint, and the body's `moveSpeed` (`PHYSICS.walkSpeed` / `sprintSpeed` / `aimSpeed` / `crouchSpeed` / `crawlSpeed`; Nova's Overdrive multiplies by 1.3), `frozen`, `canJump`, `impulse`.
 4. Aim: copies `camera.js aimRay`, casts the world (300 m), then tests enemy hitboxes; writes `view.aimPoint`, `view.onEnemy`, `view.scoped`, `view.spread`. `p.pitch` comes from the aim direction.
 5. Fire: `inputState.fire` held, alive, `playing`. Automatic weapons repeat; others fire once per press. A shot adds camera recoil (`addRecoil`) and shake for sniper / shotgun.
@@ -281,7 +285,7 @@ Everything is pooled at `initFx(scene, preset)`; nothing allocates per shot and 
 
 ## 13. Support modules
 
-- `navgrid.js`: `buildNav(island)` rasterises walkability from the physics world at `BOTS.navCell` (1.25 m): a floor ray per cell and a character-sized box overlap test; flood fill marks the largest connected component as `main`. The game only uses `randomWalkable(nav, x, z, r, ok?, tries?)` for spawn points. `cellOf`, `cellX`, `cellZ`, `nearestWalkable`, `findPath` (A* + string pulling) and `walkLine` remain from the removed bots and have no callers outside the file.
+- `navgrid.js`: `buildNav(island)` rasterises walkability from the physics world at `NAV.cell` (1.25 m): a floor ray per cell and a character-sized box overlap test; flood fill marks the largest connected component as `main`. The game only uses `randomWalkable(nav, x, z, r, ok?, tries?)` for spawn points. `cellOf`, `cellX`, `cellZ` and `nearestWalkable` have no callers outside the file (the bots' A* pathfinding was removed).
 - `merge.js`: `mergeChildren(parent, material)` merges plain coloured child meshes into one vertex-coloured mesh; `bakeWeapon(root, { metal })` flattens a weapon model into one mesh plus one mesh per "special" material (textured, emissive, transparent). Used by `actor.js weaponMesh` and `characters.js`.
 
 ## 14. Recipes
@@ -337,14 +341,14 @@ Send a message, relay it on the server, and handle it in `online.js initOnline`.
 - New server message types must be listed in `MESSAGES` (`net.js`).
 - `send()` silently returns false when offline; nothing queues.
 - Frost wall health is simulated independently on each client, so a wall can break at slightly different moments for different players.
-- The server broadcasts `ult` to the sender too, and `byNet` resolves the local session id to `G.player`, so `ultVisual` runs twice for the local player (once in `useUltimate`, once from the broadcast). Keep `ultVisual` idempotent or filter the own id.
+- `byNet` resolves the local session id to `G.player` (its `netId` is set). The server's relays skip the sender, and the `ult` handler also ignores the player's own id, because `useUltimate` already ran `ultVisual` locally. A new relay handler should do the same.
 - The server refuses an ability used less than 18 s after the last one (`ULT_MIN_GAP_S`) without telling the client, which has already spent its charge.
 - Crate rotation is not shared: loot spots carry no `yaw`, so `buildLoot` picks a random one per client (the crate and its box collider can face a different way for each player).
 - The client grants a crate's ammo and items before the server answers; a refused open (`openFail`) is not handled.
 
 ## 16. Leftovers from the single-player / bot version
 
-Safe to remove, kept for now: `BOTS` except `navCell`; `Actor.bot`, `streak`, `lastElimAt`, `damagers`; `navgrid.js` pathfinding; `combat.finishReload`, `combat.operativeOf`; `state.js enemiesOf` / `alliesOf`; `online.js mapOf`; `loot.js allCrates`; comments that mention bots (`actor.js` header, `combat.js` "noise for the bots", `main.js` ad-break comment); the `vote` phase name in the `state.js` comment; `FLAG.sprint`; `GROUND_Y`; `MATCH.endSlowmo`, `MATCH.streakWindow`, `MATCH.countdown` and `MATCH.voteTime` (nothing reads them: the server's `PHASES` / `STREAK_WINDOW` rule, and only `MATCH.introFlyover` and `MATCH.spawnSafeDistance` are used).
+Safe to remove, kept for now: `Actor.streak`, `lastElimAt`, `damagers`; `combat.finishReload`, `combat.operativeOf`; `state.js enemiesOf` / `alliesOf`; `online.js mapOf`; `loot.js allCrates`; the `vote` phase name in the `state.js` comment; `FLAG.sprint`; `MATCH.endSlowmo`, `MATCH.streakWindow`, `MATCH.countdown` and `MATCH.voteTime` (nothing reads them: the server's `PHASES` / `STREAK_WINDOW` rule, and only `MATCH.introFlyover` and `MATCH.spawnSafeDistance` are used).
 
 ## 17. The Weapon Test range (`testRange.js`)
 
@@ -355,3 +359,14 @@ The Weapons Store's TEST button (any weapon or grenade, owned or not) opens an o
 - **No server**: `gameFrame` skips `reconcile`, `applyState`, `syncClock` and `sendPose` and advances `G.time` itself; `combat.setLocalHits(onLocalHit)` routes this client's hits on net-less actors (shots, melee blows, grenade blasts) to `testRange.js`, which applies the same damage maths as the server (falloff, head multiplier, melee damage, blast falloff; no armour), emits `damage`, `heal` and `elimination` for the HUD, and counts progress. `player.offline` stops `throw` from being sent. Nothing is rewarded.
 - **Steps** (`buildSteps`, by weapon type): guns: hit the target 5 times (scoped weapons stand 40 m off, shotguns 7 m), 2 headshots, then eliminate a strafing dummy at full health; the blade: 3 strikes, sprint to a ring (shows the speed bonus), eliminate the strafing dummy; the Mender: heal an ally from 30 to 100 HP, heal a knocked ally 3 times (its bleed-out pool), sting an enemy 5 times; grenades (6, refilled when empty): land a blast on the dummy, catch two dummies in one blast, eliminate the dummy. A step finishes with an "OK!" pop; after the third the card reads "Test complete!" and the portal is labelled "Back to the lobby".
 - **UI** (`testRange.css`): the step card at the top centre (step n/3, title, text, progress bar, EXIT; below the platform toolbar when they would overlap; on short landscape phones narrower, without the step line, text clamped to two lines), floating labels projected over actors (the instructor's line, HP / knocked counters, hit counters, the portal label).
+
+## 18. Missions, rank rewards and the first-round tips
+
+Long-term goals. The server owns all of it (backend `src/progress.ts`, `docs/server.md` 5.13); the client shows it.
+
+- **Missions**: each UTC day the profile gets 3 random daily missions from `MISSIONS.daily`, each week (Monday 00:00 UTC) 3 weekly ones from `MISSIONS.weekly`. Stats: `play` / `win` (rounds played to the results; leaving early does not count), `elims`, `knocks`, `damage`, `headshots` (headshot hits), `assists`, `revives`. The server adds a round's numbers in `grant` and lists the missions that round finished in `rewards.missions`. A finished mission is claimed in the lobby's Missions window (`save.js claimMission` -> `claim { m, i }` -> `claimed`) and pays its coins and Gems. Unclaimed rewards are lost when the set rolls over.
+- **Rank rewards**: `RANKS[i].coins` / `.gems`, paid once by the server the first time `rp` reaches that rank (`profile.rankReward` = the highest rank paid; saves from before this existed count their current rank as paid). Shown on the results (`rewards.rankUp`) and in the Missions window's Rank rewards tab.
+- **Gems** from missions and ranks are earned by playing like every other Gem; nothing here can be bought.
+- **First-round tips** (`tutorial.js` / `tutorial.css`): while `profile.tutorial` is false, `main.js enterRound` calls `startTutorial()`. A card under the score bar shows 7 tips (move, fire, aim, crates, utility, ability, zone and revive); each waits for its action (`done(state)`) or moves on after `max` s (20 by default). Desktop and touch have their own text (`body.touch-ui`). The last tip or "Skip tips" calls `finishTutorial()` (`tutorialDone` to the server). Tips not finished come back next round; `closeMatch` hides them. The server marks players who finished rounds before the tips existed as done.
+
+Recipe, add a mission: append `{ id, stat, goal, coins, gems }` to the list in both `config.js MISSIONS` and `progress.ts MISSIONS` (same id). A new `stat` also needs a `MISSIONS.text` line, a key in `progress.ts MissionStat`, its number in `MatchRoom.grant`'s `countRound` call and an icon in `lobby.js MISSION_ICON`.

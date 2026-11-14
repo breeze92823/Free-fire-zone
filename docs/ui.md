@@ -67,14 +67,15 @@ The default export is the object `hud`; some of its methods are also named expor
 | `hud.show` | `(on)` | toggles `.hud.on`; turning off also closes the big map and the scoreboard | `enterRound`, `toResults`, `closeMatch` |
 | `hud.update` | `(dt, camera, info)` | per-frame refresh of everything (2.3) | `main.js` `gameFrame` |
 | `hud.countdown` | `(text)` | sets `.hud-countdown` and restarts its `pop` animation | `gameFrame` during `countdown` |
-| `hud.announce` / `announce` | `(big, small = '', ms = 2600)` | centre announcement, auto-hides | `main.js`: mode name on entering a round, "ZONE SHRINKING", "VICTORY!" / "TIME!", bus `announce` |
+| `hud.announce` / `announce` | `(big, small = '', ms = 2600)` | centre announcement, auto-hides | `main.js`: mode name on entering a round, "ZONE SHRINKING", "VICTORY!" / "TIME!" |
 | `hud.toast` / `toast` | `(text)` | pickup toast (right edge, max 5, 2.6 s) | only internally, from the `loot` event |
 | `hud.toggleMap` / `toggleMap` | `(force?)` | opens / closes `.hud-bigmap`, then `cb.onMapOpen(on)` | `controller.js` `bindKeys` (KeyM), minimap tap, map close button / backdrop, `begin`, `show(false)` |
 | `mapOpen` (named only) | `() -> boolean` | is the big map open | `main.js` (lock hint) |
 | `hud.showBoard` / `showBoard` | `(on)` | scoreboard; rebuilt from `G.actors` each time it is called with `true` | `bindKeys`: Tab keydown / keyup |
 | `hud.setMapImage` / `setMapImage` | `(img)` | stores the `renderMapImage` result `{ clean, labelled, bounds, span, size }` | `main.js` at boot |
 | `hud.setDeath` | `(handle or null)` | portal death screen mode of the spectate panel (2.7) | `main.js` bus `elimination` handler, `clearDeath` |
-| `hud.pressRespawn` | `()` | same as clicking the Respawn button: `cb.onRespawn(death)` | `bindKeys`: KeyG while dead |
+| `hud.pressRespawn` | `()` | same as clicking Revive: `cb.onRespawn(death)` | `bindKeys`: KeyG while dead |
+| `hud.spectateStep` / `hud.giveHeart` | `(dir)` / `()` | `cb.onSpectate(dir)` / `cb.onHeart()` | `bindKeys`: Left / Right / H while dead |
 | `hud.interactHeld` | boolean | true while a pointer is down on `.hud-prompt` | read by `controller.js` `updateController` (revive hold) |
 | `hud.touch` | set by `main.js` | the object returned by `installTouch` (`syncAim()`, `syncCrouch(on)`); not created by `hud.js` | `controller.js`, `main.js` |
 
@@ -88,16 +89,18 @@ Internal helpers worth knowing: `set(key, value, fn)` is the write cache (runs `
 | `onReload()` | `.wcard .rl` `pointerdown` | `startReload(G.player)` |
 | `onItem(id)` | `.item` button; ids `emote`, `frostWall`, `frag`, `medkit`, `dash` | `useItem(id)` |
 | `onUlt()` | `.ult` | `useUlt()` |
-| `onLobby()` | `.hud-spectate .lobby` `click` | `leaveMatch()` |
-| `onRevive()` | `.hud-spectate .revive` `click` (button is hidden by CSS) | `sfx.deny()` |
-| `onRespawn(death)` | `.hud-spectate .respawn` `click`, `hud.pressRespawn()` | respawns via `requestRespawn(true)` when `death.respawn()` is true (portal) or `G.time >= p.respawnAt` (no portal); else `sfx.deny()` |
-| `onSpectate(dir)` | `.arrow.prev` / `.arrow.next` | `cycleSpectate(dir)` |
+| `onLobby()` | `.hud-spectate .sp-lobby` `click` | `leaveMatch()` |
+| `onRespawn(death)` | `.hud-spectate .revive` `click`, `hud.pressRespawn()` (G) | respawns via `requestRespawn(true)` when `death.respawn()` is true (portal) or `G.time >= p.respawnAt` (no portal); else `sfx.deny()` |
+| `onSpectate(dir)` | `.arrow.prev` / `.arrow.next`, `hud.spectateStep(dir)` (Left / Right) | `cycleSpectate(dir)` |
+| `onHeart()` | `.hud-spectate .hearts` `pointerdown`, `hud.giveHeart()` (H) | `giveHeart()`: `send('heart', { t })` at most every `SPECTATE.heartGap` |
+| `onReact(id)` | `.picker button[data-r]` | `sendReaction(id)`: `send('react', { t, e })` at most every `SPECTATE.reactGap`, else `sfx.deny()` |
+| `onProfile()` | `.vprof` `click` (after `showProfile` opened the window) | `send('profileOf', { t })` |
 | `onMapOpen(open)` | `toggleMap` | `document.exitPointerLock()` when opening |
 | `onInteract()` | `.hud-prompt` `pointerdown` | `controller.js interactPress()` (opens the supplies in reach; the revive hold uses `hud.interactHeld`) |
 
 ### 2.3 `hud.update(dt, camera, info)`
 
-`info` as passed by `gameFrame`: `{ scoped, spread, onEnemy, prompt, yaw, hearts, touch }`. `scoped`, `spread` (degrees of cone), `onEnemy` and `prompt` (`{ t1, t2, progress }` or `null`) come from `controller.js` `view`; `yaw` is `camera.js` `getYaw()`; `hearts` is always `0`; `touch` is `touchShown()`.
+`info` as passed by `gameFrame`: `{ scoped, spread, onEnemy, prompt, yaw, touch }`. `scoped`, `spread` (degrees of cone), `onEnemy` and `prompt` (`{ t1, t2, progress }` or `null`) come from `controller.js` `view`; `yaw` is `camera.js` `getYaw()`; `touch` is `touchShown()`.
 
 Returns immediately without `G.player`. String keys built from the displayed values go through `set`, so most DOM writes happen only on change. Written every frame regardless: `.wcard .prog i` width, `.hud-zonetint.on`, `.hud-vignette` opacity, the crosshair gap, damage numbers and direction arcs, the prompt progress ring, and both map canvases (`drawMinimap()` always, `drawBigMap()` while open).
 
@@ -130,7 +133,7 @@ All selectors are under `div.hud`. "Built" says when the inner DOM is created: `
 | Pickup toasts | `.hud-toasts` > `.toast` | init, emptied in `begin` | `loot` event for the player (one toast per item, or "Nothing new") | |
 | Kill notice | `.hud-notice` (`.line1`, `.line2`) | init | `knock` / `elimination` by the player ("Knocked X", "Eliminated X" + "+N coins"); 2.2 s | |
 | Knocked overlay | `.hud-knocked` (`.bleed i`) | init | `update`: `.on` while `p.life === 'knocked'`; bar = `downHp / HEALTH.knockedHp` | |
-| Spectate panel | `.hud-spectate` (`.info .l1/.l2`, `.respawn`, `.who`, `.btns .lobby`, plus hidden `.hearts`, `.revive`) | init | `update`: `.on` while dead and `playing`; spectated name from `G.spectating`; "Eliminated by" from `p.lastKilledBy`; "Respawning in Ns" from `p.respawnAt` | see 2.7 |
+| Spectate panel | `.hud-spectate` (`.info .l1/.l2`, `.social` (`.hearts`, `.vprof`, `.emo`, `.picker`, `.floats`), `.card` (`.pf`, `.rk`, `.wp`), `.side` (`.eye`, `.who`, `.btns .sp-lobby / .revive`)); `.hud-profile`; `.hud-reacts` | init | `update`: `.on` while dead and `playing`; the watched player from `G.spectating` (card, hearts, watchers, health bar); "Eliminated by" from `p.lastKilledBy`; the Revive wait | see 2.7 |
 | Scope overlay | `.hud-scope` (`.lens`, `.h`, `.v`, `.ticks`, `.dot`) | init | `update`: `.on` = `info.scoped` | `z-index: -1` inside the HUD's stacking context |
 | Countdown | `.hud-countdown` | init | `hud.countdown(text)` | |
 | Scoreboard | `.hud-board` | init | `showBoard(true)`: two tables (own team first) sorted by eliminations then damage; columns Player, Elims, Ast, Deaths, Damage | a snapshot, not live |
@@ -155,11 +158,16 @@ Both draw from the `mapImg` set with `setMapImage`: the minimap crops `mapImg.cl
 
 ### 2.7 Death, spectate, respawn
 
-- On the player's `elimination`, `main.js` calls `cycleSpectate(1)` and, when `bloxity.hasDeathScreen()`, `hud.setDeath(bloxity.showDeathScreen())`.
-- `setDeath(handle)` stores the handle, toggles `.hud-spectate.portal` (shows the centred `.respawn` button), disables the button and subscribes `handle.onCountdown(n)`: the button shows `n` while `n > 0`, then "RESPAWN (G)" (or "RESPAWN" under `body.touch-ui`) and becomes enabled. `setDeath(null)` unsubscribes and returns to the timer text ("Respawning in Ns" from `p.respawnAt`, which `online.js` sets to `G.time + NET.respawnFallback`).
-- Respawn itself is `main.js`: the button / KeyG path goes through `cb.onRespawn`; without the portal `gameFrame` sends `respawn` automatically when the timer is up. The `spawn` bus event calls `clearDeath()` (`hud.setDeath(null)` + `bloxity.hideDeathScreen()`).
-- While dead `main.js` hides the touch layer (`setTouchActive(false)`) so it cannot cover the Respawn and Lobby buttons.
-- `.hearts` and `.revive` are hidden by CSS in every mode; `info.hearts` is always 0 (leftovers, see 8).
+An eliminated player watches the round until they press **Revive**.
+
+- Who is watched (`main.js`): on the player's `elimination` the camera goes to the killer (`spectateActor(killer)` when the killer is another player who is up), else `cycleSpectate(1)`. `watchable()` = every other remote player in the round who is not dead, teammates first; the arrows (`.arrow.prev/.next`, keys Left / Right) step through it. When the watched player is eliminated the camera follows whoever eliminated them (else the next one); `updateSpectate` (every frame while dead) moves on when the watched player left or is down for good, every `SPECTATE.retarget` s. Every change sends `spectate { t }` (respawn sends `""`), which the server keeps in `watch`.
+- Camera: `camera.update` mode `spectate` with `view: { yaw: facing + PI, pitch }` of the watched actor, eased by `CAMERA.spectateEase`: the view is roughly what that player sees, from behind their shoulder.
+- Panel (`.hud-spectate`, root class `.hud.spect` while it shows: our weapon panel, items, ability, prompt and crosshair hide; the health bar shows the watched player's HP and armour levels, armour wear drawn full because it is not synced): bottom-left the player card (`.card`: portrait + "Level N", rank badge from `rp` via `RANKS`, held weapon picture and name, skull + distance in metres between them and where we fell; orange or blue by their team); above it the hearts card (`.hearts`: their `hearts` this round; tap or H gives one, `cb.onHeart`), "View profile" (`.vprof`, `cb.onProfile`) and the reaction button (`.emo` opens `.picker` with `REACTIONS`, `cb.onReact(id)`); bottom-right the eye counter (`.eye`: actors' `watchers`, players spectating them), the name between the arrows, Lobby (`.sp-lobby`; not `.lobby`, which is the lobby screen's own root class) and Revive (`.revive`). Top centre `.info`: "Eliminated by X" and the wait ("Revive in Ns", then "Back in automatically in Ns" without the portal). With nobody to watch: `.none` + `.hud.spect-none`, only the name line ("Nobody to watch"), Lobby and Revive.
+- Hearts float up from the hearts card (`floatHeart`) on every `heart` for the watched player; the player who gets them sees a toast (at most one per 2 s). Reactions (`react`) float over the target's head (`.hud-reacts .rx`, projected every frame by `updateReactions`, 2.4 s) for everyone who can see them; the target also gets a toast.
+- "View profile" opens `.hud-profile` at once from the actor (name, level, rank, this round) and sends `profileOf`; the server's `playerProfile` fills in the career numbers (matches, wins, eliminations, K/D, best match). Closed by X, a tap outside, switching player or respawning.
+- Revive: `setDeath(handle)` stores the portal handle, toggles `.hud-spectate.portal` and subscribes `handle.onCountdown(n)` into `portalWait`; Revive stays disabled while the wait is above 0 and shows the seconds in its `small`, else "G" (nothing under `body.touch-ui`). Without the portal the wait is `p.respawnAt` (`NET.respawnFallback`, 5 s) and `gameFrame` respawns anyway at `p.autoRespawnAt` (`NET.autoRespawn`, 20 s, so an idle player is not stuck). The button and KeyG go through `cb.onRespawn(death)`. The `spawn` bus event calls `clearDeath()` (`hud.setDeath(null)` + `bloxity.hideDeathScreen()`) and `spectateActor(null)`.
+- While dead `main.js` hides the touch layer (`setTouchActive(false)`) so it cannot cover the panel.
+- Layout: landscape as above; `(max-height: 500px)` puts hearts / View profile / reaction on one line and hides the squad chips (they would sit under it); portrait phones (`orientation: portrait` and `max-width: 700px`) stack, bottom-up: Lobby | Revive side by side, the name row, the watched player's health bar, the card, the social row, then `.info`. The sizes (`--card-h`, `--card-w`, `--side-w`, portrait `--stack`, `--hp-h`) are set on `.hud` because the health bar is placed from them too.
 
 ### 2.8 Reserved areas (`layoutReserved`)
 
@@ -194,13 +202,13 @@ Per-widget variables written from JS: `--s` (`.hud-cross`, crosshair gap), `--k`
 
 Sizing is `clamp(min, N vmin, max)` almost everywhere, so the HUD scales with the smaller screen dimension. Desktop layout: score top-centre, squad top-left under the platform chat, minimap + weapons top-right, items bottom-right, health bottom-centre, feed above the health bar, toasts at the right edge at 52 %.
 
-`body.touch-ui` (set by `touch.js` `setVisible`, i.e. on coarse-pointer devices or after a finger touches the screen; a mouse `pointerdown` removes it) switches to the standard mobile-shooter layout (the "Touch layout" block at the end of `hud.css`, sized from `touch.css`'s `--t-*` variables, see [engine.md](engine.md) touch.js): top: score + zone timer in the centre, the minimap alone in the top-right corner (beside the platform chat in portrait, `--res-mmtop` / `--mm`), the emote button beside it (below it in portrait), the kill feed under it (two newest rows; under the zone timer in portrait); left: squad chips under the chat, the joystick and second FIRE; right: the FIRE cluster, whose outer ring holds the frag, frost wall, medkit and dash buttons (`.hud-items` is `display: contents` and each `.item[data-id]` is placed on the ring); bottom centre: the weapon bar (`.hud-weapons` is `position: fixed`, out of the right column: the ammo card without picture / Reload label, then one button per weapon; fists hidden) over the health bar with the ability diamond at its end (in portrait both sit just above the cluster, `--t-reach`). Transient widgets keep out of each other's way per group (kill: feed, notice, popup, banner; loot: prompt, toasts; zone: announce): the notice and the crate / revive prompt sit between the crosshair and the weapon bar, toasts left of the cluster (portrait: right edge at 40 %), announcements under the zone timer and banner. Key labels (`.item .k`, `.wslot .k`, `.ult .k`) are hidden. Nothing persistent sits in the middle of the view.
+`body.touch-ui` (set by `touch.js` `setVisible`, i.e. on coarse-pointer devices or after a finger touches the screen; a mouse `pointerdown` removes it) switches to the standard mobile-shooter layout (the "Touch layout" block at the end of `hud.css`, sized from `touch.css`'s `--t-*` variables, see [engine.md](engine.md) touch.js): top: score + zone timer in the centre, the minimap alone in the top-right corner (beside the platform chat in portrait, `--res-mmtop` / `--mm`), the emote button beside it (below it in portrait), the kill feed under it (two newest rows; under the zone timer in portrait); left: squad chips under the chat, the joystick and second FIRE; right: the FIRE cluster, whose outer ring holds the frag, frost wall, medkit and dash buttons (`.hud-items` is `display: contents` and each `.item[data-id]` is placed on the ring); bottom centre: the weapon bar (`.hud-weapons` is `position: fixed`, out of the right column: the ammo card without picture / Reload label, then one button per weapon; fists hidden) over the health bar with the ability diamond at its end. Portrait: the shoulder camera puts the character just left of the centre, right above the controls (further left on taller phones), so only the right half is reliably clear: the health bar (armour icons + bar, no label) and the weapons (the ammo card across a row of three slots) stack above the FIRE cluster (`--t-reach`), the ability diamond (`position: fixed`) sits beside the second FIRE, level with its bottom, under the character's feet, and the bottom centre stays open. Transient widgets keep out of each other's way per group (kill: feed, notice, popup, banner; loot: prompt, toasts; zone: announce): the notice and the crate / revive prompt sit between the crosshair and the weapon bar, toasts left of the cluster (portrait: right edge at 40 %), announcements under the zone timer and banner. Key labels (`.item .k`, `.wslot .k`, `.ult .k`) are hidden. Nothing persistent sits in the middle of the view.
 
 Media queries:
 
 | Query | Effect |
 | --- | --- |
-| `(max-height: 500px)` | `.hud-spectate .info` lower (30 %) |
+| `(max-height: 500px)` | spectate: social row on one line, squad chips hidden, `.info` lower (26 %) |
 | `(max-aspect-ratio: 4/3)` | big-map legend moves to the bottom |
 | `(max-width: 560px)` | scoreboard becomes one column |
 | `(max-height: 460px)` | narrower weapons block; only the first 3 squad rows |
@@ -270,8 +278,8 @@ The platform shows only the team's members (`main.js showMates`): players join i
 
 | Element | Content | Behaviour |
 | --- | --- | --- |
-| `.lb-top` | `.chip.profile` (picture + name from `bloxity.getPfp()` / `displayName()`, fallback `portrait(...)`), `.chip.coins`, `.chip.gems` (the Gems balance, `SVG.gem`), `.chip.rank` (shield SVG tinted with the rank colour, name, progress bar; tooltip with RP to the next rank), spacer, `.iconbtn.settings` | profile chip opens Inventory; gear opens Settings; `.compact` hides the profile chip and the rank text |
-| `.lb-menu` | four `.menubtn[data-open]`: `weapons` (gold), `store`, `characters`, `inventory` | `open(kind)` |
+| `.lb-top` | `.chip.profile` (picture + name from `bloxity.getPfp()` / `displayName()`, fallback `portrait(...)`), `.chip.coins`, `.chip.gems` (the Gems balance, `SVG.gem`), `.chip.rank` (shield SVG tinted with the rank colour, name, progress bar; tooltip with RP to the next rank), spacer, `.iconbtn.settings` | profile chip opens Inventory; gear opens Settings; `.compact` hides the profile chip and the rank text (the badge `.rs` keeps its own height and aspect ratio, so it never collapses to an empty chip) |
+| `.lb-menu` | five `.menubtn[data-open]`: `weapons` (gold), `missions` (with a red `.badge`: finished missions waiting for Claim, `save.js claimable()`; hidden at 0), `store`, `characters`, `inventory` | `open(kind)` |
 | `.pt-under` / `.pt-over` | built by `party.js` (section 3.9) | the Players online dock, team banner, name plates; invite cards and toasts |
 | `.lb-play` | `.lb-mode` (team-size badge, name, description from `MATCH_MODES[profile.mode]`), `.playbtn` | mode chip opens the mode window; PLAY see 3.6 |
 | `.lb-stats` | "Matches / Wins / Eliminations / Best" from `profile.stats` | hidden in portrait, short landscape and while queued |
@@ -289,13 +297,14 @@ Every `button` in the root gets a `pointerenter` handler that plays `sfx.hover()
 | --- | --- | --- | --- |
 | `weapons` (tab `weapons`) | `weaponsWindow`: the full-screen Weapons Store (section 3.10), not a `.win` | categories, the category's items, the selected item's picture, stats, TEST and BUY / EQUIP, the pass | see 3.10 |
 | `weapons` (tab `skins`) | `skinsWindow` | pills for the owned guns (`skinWeapon`, default the equipped primary), a card per `SKINS` entry previewed on that gun | `data-buy` -> `buySkin` then `equipSkin(skinWeapon, id)`; `data-equip` -> `equipSkin` + `cb.onLoadout()` |
+| `missions` (tabs `daily`, `weekly`, `ranks`) | `missionsWindow` | daily / weekly: the reset countdown (`missionResets`, refreshed every 30 s while open), a `.ms` row per mission (stat icon `MISSION_ICON`, `missionText`, progress bar, coin + Gem reward, Claim / Claimed / percent); ranks: a row per rank above Bronze with its one-time reward and Paid / Reached / RP to go | `data-claim` -> `claimMission(tab, i)`; the server's `claimed` answer plays `sfx.purchase` + a `party.toast`, or `sfx.deny` |
 | `store` | `storeWindow` | a card per `STORE` entry; icon from `STORE_ICON[item.icon]` (`medkit`, `wall`, `frag`, `armor`, `emote`; fallback coin); upgrades show level pips and "Maxed", owned emotes "Owned" | `data-buy` -> `buyStoreItem` |
 | `characters` | `charactersWindow` | a card per `OPERATIVES` entry: initial on a colour tile (`.opface`), role, ability, description | `data-buy` -> `buyOperative` then `equipOperative`; `data-equip` -> `equipOperative` |
 | `inventory` | `inventoryWindow` | loadout (two guns with skin name, operative; "Change" jumps to the shop via `data-go`), emote pills (`profile.owned.emotes`), supply upgrade levels, career stats (rank, RP, matches, wins, eliminations, damage, best, K/D) | `data-emote` -> `equipEmote` + `cb.onEmote` |
 | `settings` | `settingsWindow` | Sound (range + Mute pill), Graphics (`QUALITY_OPTIONS` pills + note; Auto shows the running tier), Look sensitivity (range), the key list, the phone hint and the save notice (`account.saved`) | see 3.7 |
 | `mode` | `modeWindow` | a card per `MATCH_MODES` entry (team size, description, minutes, score to win) | `data-mode` -> `setMode(id)`, then `close()` |
 
-Tabs exist only in the skins window (Weapons / Skins); `wireTabs` sets `current = { kind: 'weapons', opt: tab }` so `reopen()` returns to the same tab, and the Weapons tab goes back to the Weapons Store.
+Tabs exist in the Missions window (Daily / Weekly / Rank rewards, each re-rendered with `current = { kind: 'missions', opt }`) and the skins window (Weapons / Skins); `wireTabs` sets `current = { kind: 'weapons', opt: tab }` so `reopen()` returns to the same tab, and the Weapons tab goes back to the Weapons Store.
 
 ### 3.10 The Weapons Store (Gems)
 
@@ -368,7 +377,7 @@ Responsive rules:
 
 - Sizes are `clamp(..., vmin, ...)`; window grids are `repeat(auto-fill, minmax(clamp(150px, 26vmin, 220px), 1fr))`; `.win` is `min(96vw, 1040px)` by `max-height: min(92vh, 760px)` with a scrolling body.
 - The vote panel `.mv` is a size container (`container-type: inline-size`): width `min(94vw, 900px, (100dvh - safe insets - 28px) * 1.66)`, and everything inside uses `cqw` with pixel floors (`max(4.2cqw, 17px)` etc.), so it scales like a picture and always fits the height.
-- `(orientation: portrait)`: `.lb-leave` moves into the PLAY column above the mode chip, and so does the connection line `.lb-net` (they never show together: the line is hidden while queued or in a team); the queued net line is hidden; `.summary` is centred; `.lb-menu` is 46vw wide; `.lb-stats` is hidden (the Players online dock stays, narrower).
+- `(orientation: portrait)`: `.lb-leave` moves into the PLAY column above the mode chip, and so does the connection line `.lb-net` (they never show together: the line is hidden while queued or in a team); the queued net line is hidden; `.summary` is centred; `.lb-menu` is 46vw wide (the 3D platform slides right so the player stands beside it, see 5.1); `.lb-stats` is hidden (the Players online dock stays, narrower).
 - `(max-height: 460px)`: the menu becomes a 2 x 2 grid in the bottom-left corner with shorter buttons; `.lb-stats` hidden; `.lb-net` moves under the top bar (it sat on the menu).
 - Touch: buttons use `touch-action: manipulation`; there are no `.touch-ui` rules in this file. All lobby handlers are `click` or `pointerdown`; hover effects (`.menubtn:hover`, `.playbtn:hover`, `.mv-card:hover`, the hover sound) are cosmetic only.
 
@@ -396,6 +405,9 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `loadout.skin` | `{ [weaponId]: skinId }` | both `standard` | read with `skinFor(weaponId)` |
 | `upgrades` | `{ [storeId]: level }` | `{}` | read with `upgradeLevel(id)`; `match.js` uses `walls`, `frags`, `medkits` |
 | `stats` | `{ matches, wins, eliminations, deaths, damage, best }` | zeros | career totals shown in the lobby |
+| `missions` | `{ day, week, daily: [{ id, n, claimed }], weekly: [...] }` | empty | the current mission sets and progress (the server rolls and counts them; gameplay.md 18) |
+| `rankReward` | number | 0 | highest `RANKS` index whose one-time reward was paid |
+| `tutorial` | boolean | false | the first-round tips are done |
 | `mode` | string | `clash` | `MATCH_MODES` id sent with `play` |
 
 ### 4.2 Exports
@@ -415,6 +427,13 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `equipSkin` | `(weaponId, skinId)` | `equip { kind: 'skin', id: skinId, weapon: weaponId }` |
 | `setMode` | `(id)` | `equip { kind: 'mode', id }`; no local validation |
 | `skinFor` | `(weaponId) -> skinId` | defaults to `standard` |
+| `missionList` | `(kind) -> [{ kind, i, def, n, done, claimed }]` | `kind`: `daily` / `weekly`; unknown ids skipped |
+| `missionDef`, `missionText` | `(id) -> def`, `(def) -> string` | from `config.js MISSIONS` |
+| `claimable` | `() -> number` | finished, unclaimed missions |
+| `missionResets` | `(now?) -> { daily, weekly }` | ms to the next UTC midnight / Monday 00:00 UTC |
+| `claimMission` | `(kind, i) -> boolean` | sends `claim { m, i }`; `false` = offline or not loaded |
+| `onClaimed` | `(fn) -> unsubscribe` | `fn(msg)` with the server's `claimed` answer |
+| `finishTutorial` | `()` | sets `profile.tutorial`, sends `tutorialDone` |
 
 ### 4.3 Server messages
 
@@ -427,6 +446,8 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `buy { kind, id }` | out | from `purchase` |
 | `equip { kind, id, weapon? }` | out | from `equip` |
 | `getProfile` | out | resync |
+| `claim { m, i }` / `claimed { m, i, id, coins, gems }` or `{ m, i, error }` | out / in | `claimMission` / `onClaimed` listeners (the profile follows) |
+| `tutorialDone` | out | `finishTutorial` |
 
 Prices used for the local affordability check come from `config.js`; the server decides with its own table, so a mismatch shows up as an optimistic purchase that is rolled back.
 
@@ -442,7 +463,7 @@ Prices used for the local affordability check come from `config.js`; the server 
 - `rebuildSquad(loadout, nextMates = mates)`: disposes the mate actors and creates one `Actor` per mate (`{ outfit, primary, secondary }`, at most as many as there are spots) as a blocky stand-in (`buildCharacter` inside `Actor`) holding its weapons with standard skins; then re-creates the player actor if an avatar is known.
 - `setMateAvatar(i, root)`: swaps a built Bloxity look onto spot `i`, refreshes the held weapon and frees the previous look with `disposeLook`.
 - `setPlayerAvatar(avatar, loadout)`: disposes the previous player `Actor` and creates a new one wearing `avatar` (the avatar itself survives: `Actor.dispose` keeps the player's avatar). `releasePlayer()` drops the actor so the match can use the avatar.
-- `resize(w, h)`: aspect; when `w / h < 1.2` the camera steps back (`z` 11, `y` 2.3, fov 52) so the squad still fits. `update(dt)`: camera sway, shield, ring pulse, `updateModel` for every actor.
+- `resize(w, h)`: aspect; when `w / h < 1.2` the camera steps back (`z` 11, `y` 2.3, fov 52) so the squad still fits; when `w / h < 0.8` (portrait phones) `camera.setViewOffset(w, h, -0.15 w, 0, w, h)` slides the picture right so the player stands clear of the 46vw menu (`anchors()` follows, it projects through the same camera), otherwise `clearViewOffset()`. `update(dt)`: camera sway, shield, ring pulse, `updateModel` for every actor.
 
 `showMates(list)` and `resetMates()` are in `main.js`, not here. `showMates` (called with the roster 4 times a second, only in `lobby` / `queue`) takes the other members of the player's lobby team (`squad`, at most two; solo = nobody), calls `rebuildSquad` only when the set of `id:primary:secondary` changes, then streams each mate's Bloxity look (`streamLook` -> `setMateAvatar`) when its look key changed, and prewarms the looks of everyone else in the room. `resetMates()` clears that bookkeeping after `main.js` has rebuilt the platform (`nextRound`, `backToLobby`) so every spot is dressed again. With `DEV_MODE` the mates stay blocky.
 
@@ -460,6 +481,8 @@ Prices used for the local affordability check come from `config.js`; the server 
 - Stage: `G.island.spawnAreas[winner]`; `topPlayers(winner, 3)` (`match.js`) stand in a line facing the island centre, everyone else gets `hidden = true`; they are set alive at full health with emotes `cheer`, `flex`, `dance`; if the local player is in the lineup its physics body is moved too (`resetPlayer`, `syncYawToPlayer`).
 - Timeline: plates fade in from 0.8 s (0.3 s apart) and follow their actor's projected position; the summary and the Lobby button appear at 4.2 s (`revealSummary`, with `sfx.coins()`); the camera pushes in slowly over 6 s.
 - Buttons: only "Lobby", which hides the screen and calls `done` (`main.js` passes `leaveMatch`, i.e. `send('leave')` and back to the menus). Doing nothing keeps the player in the room: when the server starts the next vote, `nextRound()` hides the results.
+
+The summary also lists `rewards.rankUp` ("Rank up: <name>!" with its coins and Gems) and `rewards.missions` ("Mission(s) complete: ...", claimed in the lobby).
 
 ### 5.3 `mapimage.js`
 
@@ -638,11 +661,9 @@ Functional gaps
 
 Leftovers from single-player / bots
 
-- Hearts and revive in the spectate panel: `.hearts`, `.revive`, `SVG.heart`, `cb.onRevive` (bound to `sfx.deny`), `info.hearts` (always 0) and the "uses 1 heart" texts remain; CSS hides both elements in every mode.
 - `hudCb` duplicates `cb` in `hud.js`.
 - `toolbarBottom` in `lobby.js` is computed and discarded (`void toolbarBottom`); the import of `NET` is unused; the `.lb-mode .mi` template text "6v6" is a placeholder overwritten by `refresh()`.
 - `characters.js` header comment and the `OUTFITS` comment in `config.js` still say "bots"; `paintShirtFront(o, teamColor)` never receives or uses `teamColor`; `void side` in the arm loop.
-- `main.js` listens for a bus event `announce`, but nothing emits it.
 
 Unused exports and styles
 
@@ -655,7 +676,6 @@ Unused exports and styles
 
 Statements the code contradicts
 
-- `CLAUDE.md`, Bloxity integrations: "with the SDK the 10 s timer and hearts are bypassed, without it the old timer works". The fallback timer is `NET.respawnFallback` = 5 s (the same file says 5 s elsewhere), and hearts are never shown.
 - `CLAUDE.md`, same paragraph: "multiplayer/party/rooms/friends/server stats (single player)" is listed as not applicable, while the game is online-only.
 - `CLAUDE.md` says `icons.js` renders weapons, grenades and the medkit to PNG icons; only weapons are rendered in practice, items use the SVG set.
 - `main.js` comment on the FPS readout says "bottom-right corner"; its style places it bottom-left.

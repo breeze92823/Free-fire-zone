@@ -40,6 +40,14 @@ const v2 = new Vector3()
 const ONE = new Vector3(1, 1, 1)
 const e1 = new Euler()
 
+// A stable 0..2PI angle from a crate spot's position, identical on every client.
+function spotYaw(x, z) {
+  let h = Math.imul(Math.round(x * 100) | 0, 73856093) ^ Math.imul(Math.round(z * 100) | 0, 19349663)
+  h = Math.imul(h ^ (h >>> 15), 2246822507)
+  h ^= h >>> 13
+  return ((h >>> 0) / 4294967296) * Math.PI * 2
+}
+
 function stripeTexture() {
   const c = document.createElement('canvas')
   c.width = 128
@@ -125,7 +133,8 @@ export function buildLoot(scene, spots) {
   iconMesh.instanceMatrix.setUsage(DynamicDrawUsage)
   scene.add(iconMesh)
   spots.forEach((s, i) => {
-    const yaw = s.yaw ?? (Math.random() * Math.PI * 2)
+    // The same yaw on every client (the collider turns with it): from the spot's position.
+    const yaw = s.yaw ?? spotYaw(s.x, s.z)
     const c = { i, pos: new Vector3(s.x, s.y, s.z), yaw, open: 0, opened: false, refillAt: 0, phase: Math.random() * 6 }
     crates.push(c)
     solidBox(def.W / 2, H / 2, D / 2, s.x, s.y + H / 2, s.z, yaw)

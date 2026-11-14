@@ -100,7 +100,7 @@ main.js                      boot, phase flow, frame loop, dev hooks
 | `src/avatar/` | Rig loading, looks, animator |
 | `src/audio/` | Web Audio engine and synthesized effects |
 | `src/world/` | Island builder and districts |
-| root engine files | `physics.js`, `player.js`, `camera.js`, `input.js`, `touch.js`, `lighting.js`, `postfx.js`, `perf.js`, `warmup.js` (shader / texture warm-up), `textures.js`, `propkit.js`, `world.js` (sea + clouds). `bake.js` and `modes.js` are imported by nothing (dead) |
+| root engine files | `physics.js`, `player.js`, `camera.js`, `input.js`, `touch.js`, `lighting.js`, `postfx.js`, `perf.js`, `warmup.js` (shader / texture warm-up), `textures.js`, `propkit.js`, `world.js` (sea + clouds). |
 
 ## 4. Boot sequence (`main.js`, top to bottom)
 
@@ -118,7 +118,7 @@ main.js                      boot, phase flow, frame loop, dev hooks
 12. Avatar: a blocky stand-in first; `loadAvatar()` streams the Bloxity look in (`streamLook`).
 13. `bloxity.subscribeAuth`: the first settled auth state calls `net.connect()`; later sign-in changes send `auth`.
 14. Portal hooks: avatar / proportion changes, respawn request, emotes, chat bubbles; `initOnline()`.
-15. Bus listeners (`spawn`, `elimination`, `matchEnd`, `announce`), `body.onFellOut`.
+15. Bus listeners (`spawn`, `elimination`, `matchEnd`), `body.onFellOut`.
 16. "Preparing graphics": the lobby scene's shaders compile in parallel behind the loading screen; the warm kit is built and the game scene's warm-up is scheduled for the lobby frames ([engine.md](engine.md), `warmup.js`).
 17. `G.phase = 'lobby'`, `renderer.setAnimationLoop(frame)`.
 
@@ -195,6 +195,7 @@ Progress (coins, rank, items, loadout, stats) is not stored in the browser: the 
 | Change the island | [world.md](world.md); data in `src/world/layout.js` |
 | Change how characters look or animate | [avatar.md](avatar.md) |
 | Add a sound | [audio.md](audio.md) |
+| Change missions, rank rewards or the first-round tips | [gameplay.md](gameplay.md) section 18; `MISSIONS` / `RANKS` in `config.js` and the backend's `progress.ts` |
 | Use another portal feature | [bloxity.md](bloxity.md); update `BLOXITY_CODE_METADATA.md` |
 | Add a network message | backend `docs/protocol.md`; client: `send(...)`, a handler in `online.js`, the type in `MESSAGES` (`net.js`) |
 | Change a server rule (hit checks, rewards, round length) | backend `docs/server.md` |
@@ -208,9 +209,7 @@ Gameplay and touch:
 
 - Fixed the same day: touch players could not open supply crates (`main.js` now passes `onInteract` to `hud.init`), and the touch pads covered the HUD's item / weapon / reload / ability buttons (the pads now sit in their own layer under the HUD; see [ui.md](ui.md) 7.1). Both checked in a two-player round at 740x360 with synthetic touch events, not on a real phone.
 - The scoreboard is reachable only with Tab. Several touch targets are under 44 px ([engine.md](engine.md), [ui.md](ui.md)).
-- Crates face a different random way on each client, colliders included (`lootSpots` has no yaw). (verified)
-- The local ability effect runs twice because the server broadcasts `ult` to the sender. (verified)
-- Portal emotes are not animated on other players' screens (the clip is registered only locally); emotes always end after 4.5 s ([avatar.md](avatar.md)).
+- Fixed 2026-11-14: crates face the same way on every client (`loot.js spotYaw` hashes the spot's position); the server no longer echoes `ult` to its sender and the client ignores its own id, so the ability effect plays once; other players' catalogue emotes are fetched when first seen (`online.js loadPortalClip`) and an emote lasts its own length (`animator.js emoteLength`); knocks, eliminations, kill streaks and kill rewards have sounds.
 - The results screen's tap-to-skip does nothing (`pointer-events: none`); the HUD squad list is built once per round ([ui.md](ui.md)).
 - `serverError`, `openFail` and `round` have no client handler: a failed profile load or refused crate open shows nothing.
 
@@ -222,7 +221,7 @@ Server validation (details and which ones were reproduced by test: backend `docs
 - A session replaced by a newer one (code 4100) can still write its stale profile after the reconnect window.
 - `heal` is not counted against medkits; `open` has no distance check; no message rate limit is set.
 
-Dead or stale code: `src/bake.js`, `src/modes.js`, `bloxity.js submitMatchScores`, bot leftovers (`BOTS`, pathfinding in `navgrid.js`, hearts in the spectate panel), unused painters and exports listed per page, and the backend's git-ignored `build/` folder, which is compiled output of a different project.
+Dead or stale code removed on 2026-11-14: `src/bake.js`, `src/modes.js`, `bloxity.js submitMatchScores` / `enableParty` / `canCustomize` / `toggleCustomizer`, `BOTS` (now `NAV.cell`), `MODES` / `START_MODE` / `GROUND_Y`, the A* pathfinding in `navgrid.js`, `toggleMuted`, the unused `announce` listener and the bot comments; the backend's `build/` was rebuilt from its own `src/`. Still listed per page: unused painters and smaller exports.
 
 ## 10. Rules that apply to every change
 

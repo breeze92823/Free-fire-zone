@@ -70,7 +70,8 @@ export function fitFov(fov, aspect) {
 export const aimRay = { origin: new Vector3(), dir: new Vector3(0, 0, -1) }
 
 // opts: { mode: 'play'|'scope'|'spectate'|'orbit'|'look', target: {x,y,z} feet,
-//   aim (bool), zoomFov (deg), crouch, knocked, lookAt, from, distance }
+//   aim (bool), zoomFov (deg), crouch, knocked, lookAt, from, distance,
+//   view: { yaw, pitch } (spectate: the watched player's view, eased toward) }
 export function update(camera, dt, opts) {
   const mode = opts.mode || 'play'
   const scoped = mode === 'scope'
@@ -84,6 +85,15 @@ export function update(camera, dt, opts) {
   }
   inputState.look.dx = 0
   inputState.look.dy = 0
+  // Spectating: turn toward the watched player's own view ({ yaw, pitch }, same convention as ours).
+  if (opts.view && mode === 'spectate') {
+    const k = 1 - Math.exp(-CAMERA.spectateEase * dt)
+    let d = (opts.view.yaw - state.yaw) % (Math.PI * 2)
+    if (d > Math.PI) d -= Math.PI * 2
+    if (d < -Math.PI) d += Math.PI * 2
+    state.yaw += d * k
+    state.pitch += (opts.view.pitch - state.pitch) * k
+  }
   // Recoil: applied over a few frames, half of it drifts back.
   if (recoilPending > 0) {
     const step = Math.min(recoilPending, recoilPending * dt * 30 + 0.002)

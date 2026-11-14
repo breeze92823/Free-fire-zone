@@ -15,6 +15,7 @@ import {
   Color,
   DoubleSide,
   FrontSide,
+  Matrix3,
   Matrix4,
   Vector3,
   MeshStandardMaterial,
@@ -22,9 +23,9 @@ import {
   NearestMipmapLinearFilter,
   SRGBColorSpace,
 } from 'three'
-import { MATERIAL_PBR, PLAYER_DIMS, PROPORTIONS, RIG, RIG_HEIGHT, clamp } from '../config.js'
+import { MATERIAL_PBR, PLAYER_DIMS, PROPORTIONS, RIG_HEIGHT, clamp } from '../config.js'
 import { AVATAR_SLOTS, assetUrl, composedSkinUrl, describeItem, isEquipped, itemUrls, partUrl, skinUrl } from './cdn.js'
-import { loadBaseCharacter } from './character.js'
+import { loadBaseCharacter, ownMaterialCopies } from './character.js'
 import { PRIO, loadGLTF, loadOBJ, loadTexture } from './assets.js'
 import { accessorySlots, accessoryUrls, characterAccessoryMatrix } from '../bloxity.js'
 
@@ -194,7 +195,10 @@ async function applyPart(root, slot, id, ctx) {
   if (!skinnedSource && !plainSource) return
 
   if (!skinnedSource) {
-    target.geometry = plainSource.geometry
+    // Without skin weights the geometry would follow whichever bone the GPU defaults to (a torn-off
+    // or vanished limb): only take it if it carries its own weights, else keep the default part.
+    if (plainSource.geometry.getAttribute('skinIndex') && plainSource.geometry.getAttribute('skinWeight')) target.geometry = plainSource.geometry
+    else console.warn('[avatarLoader] body part has no skin weights, keeping the default', url)
     return
   }
 
@@ -242,7 +246,9 @@ async function loadItemObject(mesh, texture, ctx) {
   object.traverse((o) => {
     if (!o.isMesh) return
     o.castShadow = true
-    o.material = new MeshStandardMaterial(map ? { map, ...MATERIAL_PBR.PLAYER } : { color: '#cccccc', ...MATERIAL_PBR.PLAYER })
+    // Like the portal's renderer: alpha cut-outs (hair strands, mask holes) and both faces (OBJ items
+    // are not consistently wound, so one-sided ones lose faces).
+    o.material = new MeshStandardMaterial({ ...(map ? { map } : { color: '#cccccc' }), ...MATERIAL_PBR.PLAYER, transparent: true, alphaTest: 0.5, side: DoubleSide })
   })
   return object
 }
@@ -285,6 +291,13 @@ async function attachSlot(root, slot, id, place, ctx) {
     obj.userData.baseMatrix = obj.matrix.clone()
     obj.userData.bone = bone
     if (slot.inheritScale === false) (root.userData.fixedScaleItems ||= []).push(obj)
+    // Neck / chest / waist items widen with the torso (applyProportions), the back item does not.
+    const torsoRest = ctx.rest?.[boneName]
+    if (torsoRest && !mirrored && slot.inheritScale !== false && slot.field !== 'backId' && (boneName === 'Spine1' || boneName === 'Spine2')) {
+      obj.userData.restInverse = torsoRest
+      obj.userData.rest = torsoRest.clone().invert()
+      ;(root.userData.torsoItems ||= []).push(obj)
+    }
     obj.updateMatrixWorld(true)
     bone.add(obj)
   })
@@ -333,6 +346,7 @@ export async function attachEquippedAccessories(root, equipped, { signal, skinTe
     const restReady = restInverses()
     const skinDone = applySkin(root, equipped, skinTextureUrl, ctx)
     const rest = await restReady
+    ctx.rest = rest
     if (signal?.aborted) return false
     // Body parts and accessories load in parallel; each one swallows its own failure.
     const at = (boneName, mirrored, slot) => {
@@ -370,6 +384,7 @@ export async function loadCharacterRig(character, { prio = PRIO.normal } = {}) {
   if (!gltf) return null
   const root = cloneSkeleton(gltf.scene)
   root.name = 'character'
+  ownMaterialCopies(root) // players wearing the same character must not share fades
   root.nodes = {}
   root.traverse((o) => {
     if (o.isMesh || o.isSkinnedMesh) {
@@ -412,32 +427,124 @@ function prop(proportions, key) {
   return clamp(Number.isFinite(raw) ? raw : spec.def, spec.min, spec.max)
 }
 
-// Rescales an already-built character per SDK.avatar.getProportions(). Safe
-// to call repeatedly (e.g. from onProportionsChanged) since it only mutates
-// existing node transforms, no reload needed. A null `proportions` resets to
-// the defaults.
+// The rig's bind pose, read once per root before any proportion touches it: each bone's local
+// position / scale, its model-space position (rig units) and the inverse of its parent's model-space
+// matrix (to turn a model-space shift into the parent's frame).
+const SPREAD = 0.8 // the portal moves limbs by 80 % of the slider's offset (Bloxity's reference rig)
+function bindOf(root) {
+  if (root.userData.bind) return root.userData.bind
+  // Model-space bind matrices: from the skeleton (exact even if the rig is posed right now), else
+  // (the procedural stand-in has no skin) from the hierarchy with the root's own transform undone.
+  const bindModel = {}
+  let skinned = null
+  root.traverse((o) => {
+    if (!skinned && o.isSkinnedMesh && o.skeleton && !o.userData.platformOutfit) skinned = o
+  })
+  if (skinned) {
+    skinned.skeleton.bones.forEach((b, i) => (bindModel[b.name] = skinned.skeleton.boneInverses[i].clone().invert()))
+  } else {
+    root.updateMatrixWorld(true)
+    const toModel = root.matrixWorld.clone().invert()
+    root.traverse((o) => o.name && (bindModel[o.name] = toModel.clone().multiply(o.matrixWorld)))
+  }
+  const bones = {}
+  for (const [name, node] of Object.entries(root.nodes || {})) {
+    if (!bindModel[name] || !/^(Rig1|Spine|Arm|Leg|Neck)/.test(name)) continue
+    const parent = (node.parent && bindModel[node.parent.name]) || new Matrix4()
+    bones[name] = {
+      node,
+      position: node.position.clone(),
+      scale: node.scale.clone(),
+      model: new Vector3().setFromMatrixPosition(bindModel[name]),
+      toParent: new Matrix3().setFromMatrix4(parent.clone().invert()),
+    }
+  }
+  root.userData.bind = { bones }
+  return root.userData.bind
+}
+
+// Torso width widens the Spine1 / Spine2 skin only (Bloxity scales those two bones' skinning
+// matrices along x): scaling the bones themselves would squash the arms, neck and head with them.
+const widened = new WeakSet()
+function widenTorsoSkin(root) {
+  root.traverse((o) => {
+    const skel = o.isSkinnedMesh ? o.skeleton : null
+    if (!skel || widened.has(skel)) return
+    widened.add(skel)
+    const spine = []
+    skel.bones.forEach((b, i) => (b.name === 'Spine1' || b.name === 'Spine2') && spine.push(i * 16))
+    if (!spine.length) return
+    const update = skel.update.bind(skel)
+    skel.update = function () {
+      update()
+      const w = root.userData.torsoScaleX ?? 1
+      if (w === 1) return
+      const m = this.boneMatrices
+      for (const at of spine) for (let k = 0; k < 4; k++) m[at + k] *= w
+    }
+  })
+}
+
+// Moves a bone by `dx` rig units along the model's x axis (in bind space), from its bind position.
+const tmpV = new Vector3()
+function shiftX(b, dx) {
+  if (!b) return
+  b.node.position.copy(b.position)
+  if (dx) b.node.position.add(tmpV.set(dx, 0, 0).applyMatrix3(b.toParent))
+}
+
+// Rescales an already-built character per SDK.avatar.getProportions(), the way the portal and
+// Bloxity's reference rig draw it (so the body looks the same as on the player's profile). Safe to
+// call repeatedly (e.g. from onProportionsChanged): it always starts from the bind pose. A null
+// `proportions` resets to the defaults. Not for custom characters, nor for a kit-dressed rig (the
+// kit shapes the body from the outfit key itself).
 export function applyProportions(root, proportions) {
   if (!root) return
-  const n = root.nodes || {}
+  const unitScale = PLAYER_DIMS.height / RIG_HEIGHT
+  if (root.userData.customCharacter || root.userData.kitProportions) {
+    root.scale.setScalar(unitScale)
+    return
+  }
   const p = {}
   for (const key of Object.keys(PROPORTIONS)) p[key] = prop(proportions, key)
+  const { bones } = bindOf(root)
 
-  if (n.ArmL_Offset) n.ArmL_Offset.position.x = RIG.armOffsetX * p.shoulderWidth
-  if (n.ArmR_Offset) n.ArmR_Offset.position.x = -RIG.armOffsetX * p.shoulderWidth
-  if (n.ArmL1) n.ArmL1.scale.y = p.armLength
-  if (n.ArmR1) n.ArmR1.scale.y = p.armLength
-  if (n.LegL_Offset) n.LegL_Offset.position.x = RIG.legOffsetX * p.legOffsetX
-  if (n.LegR_Offset) n.LegR_Offset.position.x = -RIG.legOffsetX * p.legOffsetX
-  if (n.Spine1) n.Spine1.scale.x = p.torsoScaleX
-  if (n.Neck_Offset) n.Neck_Offset.position.y = RIG.neckOffsetY * p.neckHeight
-  if (n.Neck1) n.Neck1.scale.setScalar(p.headScale)
+  // Bind pose first, then the sliders.
+  for (const b of Object.values(bones)) {
+    b.node.position.copy(b.position)
+    b.node.scale.copy(b.scale)
+  }
+  // Arm length: every arm bone stretches along its own y (the stretch compounds down the arm).
+  for (const [name, b] of Object.entries(bones)) if (name.startsWith('Arm')) b.node.scale.y = b.scale.y * p.armLength
+  // Height stretches the whole body vertically; the head keeps its shape (Neck1 undoes the stretch).
+  const neck = bones.Neck_Offset
+  if (neck) neck.node.position.y = neck.position.y + (p.height - p.headScale) * neck.position.y + neck.model.y * (p.neckHeight - 1) * SPREAD
+  const head = bones.Neck1
+  if (head) head.node.scale.set(head.scale.x * p.headScale, head.scale.y * (p.headScale / p.height), head.scale.z * p.headScale)
+  // Shoulder width and torso width move the arms out; leg spacing moves the legs.
+  const spineX = bones.Spine1?.model.x ?? 0
+  for (const side of ['L', 'R']) {
+    const arm = bones[`Arm${side}_Offset`]
+    if (arm) shiftX(arm, arm.model.x * (p.shoulderWidth - 1) * SPREAD + (arm.model.x - spineX) * (p.torsoScaleX - 1) * SPREAD)
+    const leg = bones[`Leg${side}_Offset`]
+    if (leg) shiftX(leg, leg.model.x * (p.legOffsetX - 1) * SPREAD)
+  }
+  root.userData.torsoScaleX = p.torsoScaleX
+  widenTorsoSkin(root)
+  widenTorsoItems(root, p.torsoScaleX)
 
-  // Rig units -> metres uniformly (must not distort), then the portal's
-  // height proportion as a vertical stretch only — a taller character isn't
-  // proportionally wider, just taller.
-  const unitScale = PLAYER_DIMS.height / RIG_HEIGHT
+  // Rig units -> metres uniformly, then the height proportion as a vertical stretch only.
   root.scale.set(unitScale, unitScale * p.height, unitScale)
   keepItemSizes(root)
+}
+
+// Items worn on the torso (neck, chest, waist, back) widen with it, like the portal's.
+function widenTorsoItems(root, w) {
+  for (const obj of root.userData.torsoItems || []) {
+    obj.matrix.copy(obj.userData.baseMatrix)
+    if (w !== 1) obj.matrix.premultiply(obj.userData.restInverse.clone().multiply(new Matrix4().makeScale(w, 1, 1)).multiply(obj.userData.rest))
+    obj.matrixWorldNeedsUpdate = true
+  }
 }
 
 // inheritScale false items (hands, shoes): undo the stretch their bone picked up from the

@@ -8,7 +8,7 @@
 // scoreboard (Tab). Event-driven where it can be; per-frame writes are cached.
 import './hud.css'
 import { Vector3 } from 'three'
-import { HEALTH, ITEMS, OPERATIVES, TEAMS, WEAPONS } from '../config.js'
+import { HEALTH, ITEMS, OPERATIVES, RANKS, REACTIONS, TEAMS, WEAPONS } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { G, on } from './state.js'
 import { SVG, svgData, weaponIcon } from './icons.js'
@@ -55,11 +55,30 @@ const BADGE = (n, c, d) => {
   ${dots}</svg>`
 }
 
+// Rank badge for the spectate card / profile: a shield in the rank's colour with stars per tier.
+function rankIndex(rp) {
+  let i = 0
+  for (let r = 0; r < RANKS.length; r++) if (rp >= RANKS[r].rp) i = r
+  return i
+}
+const RANK_BADGE = (i) => {
+  const c = RANKS[i].color
+  const n = Math.min(3, 1 + (i % 3))
+  let stars = ''
+  for (let k = 0; k < n; k++) {
+    const x = 32 + (k - (n - 1) / 2) * 13
+    stars += `<path transform="translate(${x} 33) scale(0.55)" d="M0-10 2.9-3.1 10.5-3.1 4.4 1.6 6.6 9 0 4.6-6.6 9-4.4 1.6-10.5-3.1-2.9-3.1Z" fill="#fff6c8" stroke="#3b2a00" stroke-width="2"/>`
+  }
+  return `<svg viewBox="0 0 64 72" xmlns="http://www.w3.org/2000/svg"><path d="M32 3 59 13v22c0 17-12 28-27 34C17 63 5 52 5 35V13Z" fill="${c}" stroke="#1b1206" stroke-width="4" stroke-linejoin="round"/><path d="M32 10 52 18v17c0 13-9 22-20 27-11-5-20-14-20-27V18Z" fill="#000" opacity=".22"/>${stars}</svg>`
+}
+const reactionGlyph = (id) => REACTIONS.find((r) => r.id === id)?.glyph ?? ''
+
 let root = null
 const el = {}
 let cb = {}
 let death = null // the portal's death handle while the player is eliminated (hud.setDeath)
 let deathOff = null
+let portalWait = 0 // the portal death screen's countdown (s); 0 = Revive may be pressed
 let hudCb = null
 const cache = {}
 let mapImg = null // { clean, labelled, bounds, span, size }
@@ -111,12 +130,27 @@ export function initHud(callbacks) {
     <div class="hud-toasts"></div>
     <div class="hud-notice"><div class="line1 o"></div><div class="line2 o"></div></div>
     <div class="hud-knocked"><div class="box"><div class="big o">KNOCKED DOWN</div><div class="bleed"><i></i></div><div class="o sub">Crawl to your squad &mdash; they can revive you</div></div></div>
+    <div class="hud-reacts"></div>
     <div class="hud-spectate">
-      <div class="info"><div class="l1 o"></div><div class="l2 o"></div><button class="bigbtn yellow respawn" disabled><span class="o">Respawn</span></button></div>
-      <div class="hearts"><img alt=""><span class="o">0</span></div>
-      <div class="who"><button class="arrow prev silent"></button><div class="nm o"></div><button class="arrow next silent"></button></div>
-      <div class="btns"><button class="bigbtn white lobby"><span class="o">Lobby</span></button><button class="bigbtn yellow revive"><span class="o">Revive</span><small class="o"></small></button></div>
+      <div class="info"><div class="l1 o"></div><div class="l2 o"></div></div>
+      <div class="social">
+        <button class="hearts silent" title="Give a heart (H)"><img alt=""><span class="o">0</span></button>
+        <div class="row"><button class="vprof o silent">View profile</button><button class="emo silent" title="React"><img alt=""></button></div>
+        <div class="picker">${REACTIONS.map((r) => `<button class="silent" data-r="${r.id}">${r.glyph}</button>`).join('')}</div>
+        <div class="floats"></div>
+      </div>
+      <div class="card">
+        <div class="pf"><img class="face" alt=""><div class="lv o">Level 1</div></div>
+        <div class="rk"></div>
+        <div class="wp"><img alt=""><div class="wn o"></div><div class="ds o"><img alt=""><span></span></div></div>
+      </div>
+      <div class="side">
+        <div class="eye o" title="Players watching"><img alt=""><span>0</span></div>
+        <div class="who"><button class="arrow prev silent" title="Previous player"></button><div class="nm o"></div><button class="arrow next silent" title="Next player"></button></div>
+        <div class="btns"><button class="bigbtn white sp-lobby"><span class="o">Lobby</span></button><button class="bigbtn yellow revive" disabled><span class="o">Revive</span><small class="o"></small></button></div>
+      </div>
     </div>
+    <div class="hud-profile"><div class="box"><button class="close silent">&times;</button><div class="head"><img class="face" alt=""><div class="id"><div class="nm o"></div><div class="sub"></div></div><div class="rk"></div></div><div class="grid"></div><div class="rnd"></div></div></div>
     <div class="hud-scope"><div class="lens"></div><div class="h"></div><div class="v"></div><div class="ticks"></div><div class="dot"></div></div>
     <div class="hud-countdown o"></div>
     <div class="hud-bigmap"><div class="frame"><div class="title o">Coral Key</div><canvas width="900" height="900"></canvas><button class="close">&times;</button></div>
@@ -161,6 +195,13 @@ export function initHud(callbacks) {
     knocked: q('.hud-knocked'),
     bleed: q('.hud-knocked .bleed i'),
     spectate: q('.hud-spectate'),
+    revive: q('.hud-spectate .revive'),
+    hearts: q('.hud-spectate .hearts'),
+    picker: q('.hud-spectate .picker'),
+    floats: q('.hud-spectate .floats'),
+    card: q('.hud-spectate .card'),
+    reacts: q('.hud-reacts'),
+    profile: q('.hud-profile'),
     scope: q('.hud-scope'),
     countdown: q('.hud-countdown'),
     bigmap: q('.hud-bigmap'),
@@ -169,6 +210,9 @@ export function initHud(callbacks) {
   })
   el.ult.querySelector('.ico').src = svgData(SVG.bolt)
   el.spectate.querySelector('.hearts img').src = svgData(SVG.heart)
+  el.spectate.querySelector('.emo img').src = svgData(SVG.emote)
+  el.spectate.querySelector('.eye img').src = svgData(SVG.eye)
+  el.spectate.querySelector('.ds img').src = svgData(SVG.skull)
 
   // Platform toolbar + chat live in the top-left: keep clear of them.
   bloxity.onReservedAreas((areas) => {
@@ -204,12 +248,32 @@ export function initHud(callbacks) {
   el.bigmap.addEventListener('pointerdown', (e) => {
     if (e.target === el.bigmap) toggleMap(false)
   })
-  q('.hud-spectate .lobby').addEventListener('click', () => cb.onLobby?.())
-  q('.hud-spectate .revive').addEventListener('click', () => cb.onRevive?.())
+  q('.hud-spectate .sp-lobby').addEventListener('click', () => cb.onLobby?.())
   hudCb = cb
-  q('.hud-spectate .respawn').addEventListener('click', () => cb.onRespawn?.(death))
+  // Revive = back into the round (gated by the portal's countdown, or NET.respawnFallback).
+  el.revive.addEventListener('click', () => cb.onRespawn?.(death))
   q('.hud-spectate .prev').addEventListener('pointerdown', () => cb.onSpectate?.(-1))
   q('.hud-spectate .next').addEventListener('pointerdown', () => cb.onSpectate?.(1))
+  el.hearts.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    cb.onHeart?.()
+  })
+  q('.hud-spectate .emo').addEventListener('click', () => el.picker.classList.toggle('on'))
+  el.picker.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-r]')
+    if (!b) return
+    el.picker.classList.remove('on')
+    cb.onReact?.(b.dataset.r)
+  })
+  q('.hud-spectate .vprof').addEventListener('click', () => {
+    if (!G.spectating) return
+    showProfile({ actor: G.spectating })
+    cb.onProfile?.()
+  })
+  q('.hud-profile .close').addEventListener('click', () => showProfile(null))
+  el.profile.addEventListener('pointerdown', (e) => {
+    if (e.target === el.profile) showProfile(null)
+  })
   // Interact prompt doubles as a touch button (hold for revive).
   el.prompt.addEventListener('pointerdown', (e) => {
     e.preventDefault()
@@ -488,6 +552,77 @@ function hurtFrom(pos) {
   d.from.copy(pos)
 }
 
+// --- Spectator hearts, reactions and the public profile -------------------------------------------
+let heartToastAt = 0
+function floatHeart(mine) {
+  const f = h('img', `fh${mine ? ' mine' : ''}`)
+  f.src = svgData(SVG.heart)
+  f.style.setProperty('--x', `${Math.round((Math.random() - 0.5) * 60)}px`)
+  el.floats.appendChild(f)
+  while (el.floats.children.length > 12) el.floats.firstChild.remove()
+  setTimeout(() => f.remove(), 1500)
+  el.hearts.classList.remove('pop')
+  void el.hearts.offsetWidth
+  el.hearts.classList.add('pop')
+}
+
+// Reactions float over the target's head (projected every frame in update).
+const reacts = []
+function addReaction(actor, glyph, from) {
+  const e = h('div', 'rx', `<b>${esc(glyph)}</b>${from ? `<span class="o">${esc(from)}</span>` : ''}`)
+  el.reacts.appendChild(e)
+  reacts.push({ actor, el: e, t: 2.4 })
+  while (reacts.length > 8) reacts.shift().el.remove()
+}
+function updateReactions(dt, camera) {
+  for (let i = reacts.length - 1; i >= 0; i--) {
+    const r = reacts[i]
+    r.t -= dt
+    if (r.t <= 0 || !G.actors.includes(r.actor)) {
+      r.el.remove()
+      reacts.splice(i, 1)
+      continue
+    }
+    tmpV.set(r.actor.pos.x, r.actor.pos.y + 2.5 + (2.4 - r.t) * 0.35, r.actor.pos.z).project(camera)
+    if (tmpV.z > 1) {
+      r.el.style.opacity = 0
+      continue
+    }
+    const x = (tmpV.x * 0.5 + 0.5) * window.innerWidth
+    const y = (-tmpV.y * 0.5 + 0.5) * window.innerHeight
+    r.el.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px) translate(-50%, -100%)`
+    r.el.style.opacity = Math.min(1, r.t * 2).toFixed(2)
+  }
+}
+
+// The watched player's public profile: shown at once from what the room state knows, then filled
+// with the career stats from the server's `playerProfile` answer. null closes it.
+let profileFor = null
+function showProfile(data) {
+  if (!data?.actor) {
+    profileFor = null
+    el.profile.classList.remove('on')
+    return
+  }
+  const a = data.actor
+  profileFor = a
+  const rp = data.rp ?? a.rp ?? 0
+  const ri = rankIndex(rp)
+  const box = el.profile
+  box.querySelector('.face').src = a.portrait || portrait(a.outfit)
+  box.querySelector('.nm').textContent = data.name ?? a.name
+  box.querySelector('.sub').textContent = `Level ${data.level ?? a.level ?? 1} \u00b7 ${RANKS[ri].name} \u00b7 ${rp} RP`
+  box.querySelector('.rk').innerHTML = RANK_BADGE(ri)
+  const st = data.stats
+  const cell = (v, l) => `<div><b class="o">${v}</b><span>${l}</span></div>`
+  box.querySelector('.grid').innerHTML = st
+    ? cell(st.matches, 'Matches') + cell(st.wins, 'Wins') + cell(st.eliminations, 'Eliminations') + cell(st.deaths ? (st.eliminations / st.deaths).toFixed(2) : st.eliminations, 'K/D') + cell(st.best, 'Best match')
+    : '<div class="wait">Loading\u2026</div>'
+  const r = data.round
+  box.querySelector('.rnd').innerHTML = `This round: <b>${r?.kills ?? a.stats.eliminations}</b> elims \u00b7 <b>${r?.knocks ?? a.stats.knocks}</b> knocks \u00b7 <b>${r?.damage ?? Math.round(a.stats.damage)}</b> damage \u00b7 <b>${r?.hearts ?? a.hearts}</b> \u2764`
+  box.classList.add('on')
+}
+
 function wireEvents() {
   on('damage', ({ target, attacker, amount, head, point, zone }) => {
     if (!G.player) return
@@ -513,6 +648,25 @@ function wireEvents() {
     if (!G.player) return
     rewardPopup(r)
     if (r.kind === 'elim' && r.streak >= 2) streakBanner(r.streak, r.bonus)
+  })
+  // Spectators: hearts float up from the hearts card of whoever watches that player; the player
+  // who got them hears about it (at most one toast every 2 s).
+  on('heart', ({ from, target }) => {
+    if (!G.player) return
+    if (target === G.spectating && G.player.life === 'dead') floatHeart(from === G.player)
+    if (target === G.player && performance.now() - heartToastAt > 2000) {
+      heartToastAt = performance.now()
+      toast(`\u2764 ${from?.name ?? 'A spectator'} liked your play`)
+    }
+  })
+  on('react', ({ from, target, reaction }) => {
+    const glyph = reactionGlyph(reaction)
+    if (!glyph || !G.player) return
+    addReaction(target, glyph, from?.name ?? '')
+    if (target === G.player) toast(`${from?.name ?? 'A spectator'} reacted ${glyph}`)
+  })
+  on('playerProfile', (msg) => {
+    if (el.profile.classList.contains('on') && profileFor === msg.actor) showProfile(msg)
   })
   // A medic weapon healed someone: green numbers for the healer.
   on('heal', ({ target, by, amount }) => {
@@ -721,6 +875,13 @@ const hud = {
   pressRespawn() {
     hudCb.onRespawn?.(death)
   },
+  // Spectate shortcuts (controller.js: arrows, H).
+  spectateStep(dir) {
+    hudCb.onSpectate?.(dir)
+  },
+  giveHeart() {
+    hudCb.onHeart?.()
+  },
   begin,
   announce,
   toast,
@@ -734,18 +895,18 @@ const hud = {
     deathOff = null
     death = handle || null
     el.spectate.classList.toggle('portal', !!death)
-    const btn = el.spectate.querySelector('.respawn')
-    btn.disabled = true
-    btn.querySelector('span').textContent = 'Respawn'
+    portalWait = death ? 1 : 0
+    cache.spinfo = null
     if (!death) return
     try {
       const off = death.onCountdown?.((n) => {
-        btn.disabled = n > 0
-        btn.querySelector('span').textContent = n > 0 ? String(n) : document.body.classList.contains('touch-ui') ? 'RESPAWN' : 'RESPAWN (G)'
+        portalWait = n > 0 ? n : 0
+        cache.spinfo = null
       })
       if (typeof off === 'function') deathOff = off
+      else portalWait = 0
     } catch {
-      btn.disabled = false
+      portalWait = 0
     }
   },
   // The offline Weapon Test range: no score, zone or minimap (testRange.js draws its own card).
@@ -816,24 +977,27 @@ const hud = {
       })
     })
 
-    // Health + armour
-    const hpK = p.life === 'knocked' ? p.downHp / HEALTH.knockedHp : p.hp / p.maxHp
-    set('hp', Math.round(hpK * 400), () => {
+    // Health + armour (while spectating: the watched player's; their armour wear is not sent, so full)
+    const ha = p.life === 'dead' && G.phase === 'playing' && G.spectating ? G.spectating : p
+    const hpK = ha.life === 'knocked' ? ha.downHp / HEALTH.knockedHp : ha.life === 'dead' ? 0 : ha.hp / ha.maxHp
+    set('hp', `${Math.round(hpK * 400)}|${ha.id}|${ha.life}`, () => {
       el.hpfill.style.width = `${hpK * 100}%`
       el.hplag.style.width = `${hpK * 100}%`
-      el.hpbar.classList.toggle('low', hpK < 0.3 || p.life === 'knocked')
-      el.hpv.textContent = p.life === 'knocked' ? `${Math.ceil(p.downHp)}` : `${Math.ceil(p.hp)}/${p.maxHp}`
+      el.hpbar.classList.toggle('low', hpK < 0.3 || ha.life === 'knocked')
+      el.hpv.textContent = ha.life === 'knocked' ? `${Math.ceil(ha.downHp)}` : `${Math.ceil(Math.max(0, ha.hp))}/${ha.maxHp}`
     })
-    set('armor', `${p.helmet}|${p.vest}|${Math.round(p.helmetDur / 10)}|${Math.round(p.vestDur / 10)}`, () => {
+    const hDur = ha.remote ? HEALTH.armorDurability[ha.helmet] : ha.helmetDur
+    const vDur = ha.remote ? HEALTH.armorDurability[ha.vest] : ha.vestDur
+    set('armor', `${ha.id}|${ha.helmet}|${ha.vest}|${Math.round(hDur / 10)}|${Math.round(vDur / 10)}`, () => {
       const hEl = el.armor.querySelector('.helm')
       const vEl = el.armor.querySelector('.vest')
-      hEl.classList.toggle('off', !p.helmet)
-      vEl.classList.toggle('off', !p.vest)
-      hEl.querySelector('b').textContent = p.helmet
-      vEl.querySelector('b').textContent = p.vest
-      hEl.querySelector('.dur i').style.width = p.helmet ? `${(p.helmetDur / HEALTH.armorDurability[p.helmet]) * 100}%` : '0%'
-      vEl.querySelector('.dur i').style.width = p.vest ? `${(p.vestDur / HEALTH.armorDurability[p.vest]) * 100}%` : '0%'
-      el.hpshield.style.width = `${(p.vest / 3) * 100}%`
+      hEl.classList.toggle('off', !ha.helmet)
+      vEl.classList.toggle('off', !ha.vest)
+      hEl.querySelector('b').textContent = ha.helmet
+      vEl.querySelector('b').textContent = ha.vest
+      hEl.querySelector('.dur i').style.width = ha.helmet ? `${(hDur / HEALTH.armorDurability[ha.helmet]) * 100}%` : '0%'
+      vEl.querySelector('.dur i').style.width = ha.vest ? `${(vDur / HEALTH.armorDurability[ha.vest]) * 100}%` : '0%'
+      el.hpshield.style.width = `${(ha.vest / 3) * 100}%`
     })
     const op = p.operativeDef
     const ultK = Math.min(1, p.ult / op.charge)
@@ -945,26 +1109,54 @@ const hud = {
     el.knocked.classList.toggle('on', p.life === 'knocked')
     if (p.life === 'knocked') el.bleed.style.width = `${(p.downHp / HEALTH.knockedHp) * 100}%`
 
-    // Spectate panel
+    // Spectate panel (eliminated): the watched player's card, hearts / reactions / profile, the
+    // arrows to switch players, Lobby and Revive.
     const spect = p.life === 'dead' && G.phase === 'playing'
     el.spectate.classList.toggle('on', spect)
-    if (spect) {
+    root.classList.toggle('spect', spect)
+    if (!spect) {
+      root.classList.remove('spect-none')
+      if (el.profile.classList.contains('on')) showProfile(null)
+      el.picker.classList.remove('on')
+    } else {
       const s = G.spectating
+      el.spectate.classList.toggle('none', !s)
+      root.classList.toggle('spect-none', !s)
       set('spect', s ? s.id : 0, () => {
-        el.spectate.querySelector('.who .nm').textContent = s ? s.name : '—'
+        el.spectate.querySelector('.who .nm').textContent = s ? s.name : 'Nobody to watch'
+        if (s) el.card.querySelector('.face').src = s.portrait || portrait(s.outfit)
+        el.card.classList.toggle('blue', s?.team === 'blue')
+        el.picker.classList.remove('on')
+        if (el.profile.classList.contains('on') && profileFor !== s) showProfile(null)
       })
-      // With the portal's death screen the Respawn button carries the countdown (setDeath).
-      const wait = death ? 0 : Math.max(0, Math.ceil(p.respawnAt - G.time))
-      const hearts = info.hearts ?? 0
-      set('spinfo', `${wait}|${hearts}|${p.lastKilledBy?.name ?? ''}|${death ? 1 : 0}`, () => {
+      if (s) {
+        set('spcard', `${s.level}|${rankIndex(s.rp)}`, () => {
+          el.card.querySelector('.lv').textContent = `Level ${s.level}`
+          el.card.querySelector('.rk').innerHTML = RANK_BADGE(rankIndex(s.rp))
+          el.card.querySelector('.rk').title = RANKS[rankIndex(s.rp)].name
+        })
+        const sw = s.weapon
+        set('spweap', `${sw.id}|${sw.skin}`, () => {
+          el.card.querySelector('.wp > img').src = weaponIcon(sw.id, sw.skin)
+          el.card.querySelector('.wn').textContent = sw.def.name
+        })
+        // How far the watched player is from where we went down.
+        set('spdist', Math.round(s.pos.distanceTo(p.pos)), (d) => (el.card.querySelector('.ds span').textContent = `${d}m`))
+        set('sphearts', s.hearts, (n) => (el.hearts.querySelector('span').textContent = n))
+        set('speye', s.watchers, (n) => (el.spectate.querySelector('.eye span').textContent = n))
+      }
+      // Revive: the portal's countdown (setDeath), else NET.respawnFallback (p.respawnAt).
+      const wait = death ? portalWait : Math.max(0, Math.ceil(p.respawnAt - G.time))
+      const auto = death ? 0 : Math.max(0, Math.ceil((p.autoRespawnAt || 0) - G.time))
+      const touchUi = document.body.classList.contains('touch-ui') // the touch layer is hidden while dead
+      set('spinfo', `${wait}|${auto}|${p.lastKilledBy?.name ?? ''}|${touchUi ? 1 : 0}`, () => {
         el.spectate.querySelector('.info .l1').textContent = p.lastKilledBy ? `Eliminated by ${p.lastKilledBy.name}` : 'Eliminated'
-        el.spectate.querySelector('.info .l2').textContent = death ? '' : wait > 0 ? `Respawning in ${wait}s` : 'Respawning…'
-        el.spectate.querySelector('.hearts span').textContent = hearts
-        const rv = el.spectate.querySelector('.revive')
-        rv.disabled = hearts <= 0
-        rv.querySelector('small').textContent = hearts > 0 ? 'uses 1 heart' : 'no hearts left'
+        el.spectate.querySelector('.info .l2').textContent = wait > 0 ? `Revive in ${wait}s` : auto > 0 ? `Back in automatically in ${auto}s` : ''
+        el.revive.disabled = wait > 0
+        el.revive.querySelector('small').textContent = wait > 0 ? `${wait}s` : touchUi ? '' : 'G'
       })
     }
+    updateReactions(dt, camera)
 
     if (mapOpen()) drawBigMap()
     drawMinimap()

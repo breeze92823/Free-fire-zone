@@ -9,15 +9,9 @@ export const GAME_TITLE = 'Free Fire Zone'
 export const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
 
 // --- World (metres: +X east, +Z south, +Y up) -------------------------------
-export const GROUND_Y = 0
 export const WATER = { level: -0.6, size: 1400, color: '#12a9e6', shallow: '#7ff0ff' }
 export const SPAWN = { x: 0, y: 0.05, z: 8 }
 export const SPAWN_FACING = Math.PI // yaw the character faces on spawn (PI = toward -Z)
-
-// --- Player modes (modes.js) -------------------------------------------------
-// The shooter always plays over the shoulder; 'player' (first person) is only the scope view.
-export const MODES = ['character', 'player']
-export const START_MODE = 'character'
 
 // --- Physics (physics.js, player.js, actors) ----------------------------------
 export const PHYSICS = {
@@ -221,6 +215,7 @@ export const CAMERA = {
   clearEase: 8, // 1/s the boom eases back out once a wall stops blocking it
   shakeDecay: 7, // 1/s camera shake fades
   spectateDistance: 5.2,
+  spectateEase: 7, // 1/s: how fast the spectate camera turns to the watched player's view
   results: { distance: 7.5, height: 1.6 },
 }
 
@@ -248,9 +243,9 @@ export const SETTINGS = {
   master_volume: { def: '80', type: 'number', min: 0, max: 100 },
 }
 
-// Leaderboards (bloxity.js defineLeaderboards / submitMatchScores). Ids are permanent once the
-// portal has created a board; later edits here are ignored (the dashboard owns them). `sum` boards
-// receive only what a match added. Up to 10 boards.
+// Leaderboards (declared by bloxity.js initLeaderboards; the server's reporters.ts submits the
+// scores). Ids are permanent once the portal has created a board; later edits here are ignored
+// (the dashboard owns them). `sum` boards receive only what a match added. Up to 10 boards.
 export const LEADERBOARDS = [
   { id: 'eliminations', label: 'Total eliminations', order: 'desc', mode: 'sum', format: 'compact', reset: 'none' },
   { id: 'wins', label: 'Match wins', order: 'desc', mode: 'sum', format: 'number', reset: 'none' },
@@ -271,7 +266,8 @@ export const NET = {
   poseHz: 20, // pose messages per second
   interpDelay: 0.1, // s other players are drawn behind their newest pose
   connectTimeout: 60, // s of retrying before giving up (cold start can take ~45 s)
-  respawnFallback: 5, // s before respawning when there is no portal death screen
+  respawnFallback: 5, // s before the Revive button works when there is no portal death screen
+  autoRespawn: 20, // s after an elimination without the portal: respawn even if Revive was not pressed (AFK)
   missedSpawnGrace: 0.7, // s the server may show us alive before a lost 'spawn' message is assumed and we respawn locally
 }
 
@@ -378,6 +374,7 @@ export const ANIM = {
     flex: { duration: 2.6 },
     cheer: { duration: 2.6 },
   },
+  emoteLoopMax: 8, // s a looping catalogue emote (or one whose clip has not loaded) plays; see emoteLength in animator.js
   transitions: { toLocomotion: 0.14, toAirborne: 0.12, toLanding: 0.06 },
 }
 
@@ -482,7 +479,7 @@ export const HEALTH = {
 
 // --- Match modes ---------------------------------------------------------------------
 export const MATCH_MODES = {
-  // Online: up to NET.teamMax per side, real players only. The round's mode is voted by the players.
+  // Online: up to NET.teamMax per side, real players only. Picked in the lobby's mode window (play { mode }).
   clash: { name: 'Team Clash', desc: 'Up to 3 v 3 · respawns · most eliminations wins', teamSize: 3, duration: 240, scoreToWin: 45, respawn: true },
   squad: { name: 'Squad Showdown', desc: 'Up to 3 v 3 · respawns · first to 25', teamSize: 3, duration: 180, scoreToWin: 25, respawn: true },
 }
@@ -525,27 +522,12 @@ export const LOOT = {
   airdropFall: 9, // s from the sky to the ground
 }
 
-// --- Navigation grid (navgrid.js: spawn points); the rest is unused since bots were removed ---
-export const BOTS = {
-  viewRange: 90, // m
-  sniperRange: 160,
-  fov: 220, // degrees of awareness cone
-  hearRange: 70, // m within which a shot reveals the shooter
-  reaction: [0.2, 0.45], // s before opening fire on a new target
-  // aim error (degrees) at first sight; it shrinks while they keep tracking a target
-  aimError: { start: 5, settle: 1.3, settleTime: 1.5 },
-  burst: [3, 8], // shots per burst for automatic weapons
-  burstPause: [0.25, 0.7],
-  thinkInterval: 0.22, // s between perception passes
-  repathInterval: 2.2,
-  reviveRange: 30,
-  medkitBelow: 0.55,
-  wallBelow: 0.4, // HP share under which a bot in a fight may raise a frost wall
-  grenadeChance: 0.18,
-  navCell: 1.25, // m per nav grid cell
+// --- Navigation grid (navgrid.js: walkable cells for spawn points) ---
+export const NAV = {
+  cell: 1.25, // m per grid cell
 }
 
-// Bot outfits (characters.js): mixed at random.
+// Stand-in outfits (characters.js, worn until a Bloxity look loads): mixed at random.
 export const OUTFITS = {
   skins: ['#f2c79a', '#e0ac7e', '#c68b5e', '#8d5a3b', '#ffd9b3', '#f7e07a'],
   shirts: ['#1d1f26', '#2a3f6b', '#7a1f2a', '#2f5d3a', '#e5e5e5', '#b85c1e', '#3b2a5c', '#14636b', '#c9a227', '#4b4f58'],
@@ -586,15 +568,53 @@ export const GEMS = {
   loss: 15,
   mvp: 25,
 }
+// coins / gems: paid once, the first time the player's rank points reach that rank (the server's
+// progress.ts RANKS decides and pays; keep the numbers equal).
 export const RANKS = [
-  { name: 'Bronze', rp: 0, color: '#cd7f32' },
-  { name: 'Silver', rp: 250, color: '#c0c7d1' },
-  { name: 'Gold', rp: 650, color: '#ffc83d' },
-  { name: 'Platinum', rp: 1200, color: '#4fe0d0' },
-  { name: 'Diamond', rp: 2000, color: '#6fb6ff' },
-  { name: 'Heroic', rp: 3200, color: '#ff5a7a' },
-  { name: 'Grandmaster', rp: 5000, color: '#ffdf5a' },
+  { name: 'Bronze', rp: 0, color: '#cd7f32', coins: 0, gems: 0 },
+  { name: 'Silver', rp: 250, color: '#c0c7d1', coins: 300, gems: 30 },
+  { name: 'Gold', rp: 650, color: '#ffc83d', coins: 500, gems: 50 },
+  { name: 'Platinum', rp: 1200, color: '#4fe0d0', coins: 800, gems: 80 },
+  { name: 'Diamond', rp: 2000, color: '#6fb6ff', coins: 1200, gems: 120 },
+  { name: 'Heroic', rp: 3200, color: '#ff5a7a', coins: 1800, gems: 180 },
+  { name: 'Grandmaster', rp: 5000, color: '#ffdf5a', coins: 3000, gems: 300 },
 ]
+
+// Daily / weekly missions (the lobby's Missions window). The server (backend progress.ts MISSIONS)
+// picks 3 of each list per UTC day / week (from Monday 00:00 UTC), counts progress from the rounds
+// and pays the claim; this copy only names and shows them, so keep ids, goals and rewards equal.
+// Gems from missions are earned by playing, like every other Gem.
+export const MISSIONS = {
+  daily: [
+    { id: 'd_play', stat: 'play', goal: 3, coins: 120, gems: 15 },
+    { id: 'd_win', stat: 'win', goal: 2, coins: 150, gems: 20 },
+    { id: 'd_elims', stat: 'elims', goal: 10, coins: 150, gems: 20 },
+    { id: 'd_knocks', stat: 'knocks', goal: 8, coins: 120, gems: 15 },
+    { id: 'd_damage', stat: 'damage', goal: 2500, coins: 150, gems: 20 },
+    { id: 'd_heads', stat: 'headshots', goal: 15, coins: 130, gems: 15 },
+    { id: 'd_assists', stat: 'assists', goal: 5, coins: 120, gems: 15 },
+    { id: 'd_revives', stat: 'revives', goal: 2, coins: 120, gems: 15 },
+  ],
+  weekly: [
+    { id: 'w_play', stat: 'play', goal: 20, coins: 600, gems: 80 },
+    { id: 'w_win', stat: 'win', goal: 10, coins: 800, gems: 100 },
+    { id: 'w_elims', stat: 'elims', goal: 60, coins: 800, gems: 100 },
+    { id: 'w_damage', stat: 'damage', goal: 15000, coins: 700, gems: 90 },
+    { id: 'w_heads', stat: 'headshots', goal: 80, coins: 700, gems: 90 },
+    { id: 'w_revives', stat: 'revives', goal: 10, coins: 600, gems: 80 },
+  ],
+  // How each stat reads in the window ({n} = the goal). "play" / "win" count rounds played to the end.
+  text: {
+    play: 'Finish {n} rounds',
+    win: 'Win {n} rounds',
+    elims: 'Eliminate {n} enemies',
+    knocks: 'Knock down {n} enemies',
+    damage: 'Deal {n} damage',
+    headshots: 'Land {n} headshots',
+    assists: 'Get {n} assists',
+    revives: 'Revive {n} teammates',
+  },
+}
 export const START_PROFILE = {
   coins: 600,
   gems: 0, // earned by eliminations; never bought
@@ -604,6 +624,9 @@ export const START_PROFILE = {
   upgrades: {}, // id -> level
   stats: { matches: 0, wins: 0, eliminations: 0, deaths: 0, damage: 0, best: 0 },
   mode: 'clash',
+  missions: { day: '', week: '', daily: [], weekly: [] }, // slots { id, n, claimed }: the server's
+  rankReward: 0, // highest RANKS index whose reward was paid
+  tutorial: false, // the first-round tips are done
 }
 // Store: permanent upgrades and emotes, all priced in coins. The server (backend catalog.ts) holds
 // the same prices and decides every purchase; keep the two in step.
@@ -632,3 +655,19 @@ export function coerceSetting(key, raw) {
   const n = Number(value)
   return clamp(Number.isFinite(n) ? n : Number(spec.def), spec.min, spec.max)
 }
+
+// Spectating after an elimination: the camera starts on the killer and looks where they look.
+// Spectators give hearts and reactions to the player they watch (server: constants.ts HEART_GAP_MS,
+// HEARTS_PER_TARGET, REACT_GAP_MS; rules.ts REACTIONS = these ids).
+export const SPECTATE = {
+  retarget: 0.4, // s between checks for a new player to watch when the current one is gone
+  heartGap: 0.4, // s between hearts from this spectator (server HEART_GAP_MS)
+  reactGap: 1.2, // s between reactions (server REACT_GAP_MS)
+}
+export const REACTIONS = [
+  { id: 'laugh', glyph: '\u{1F602}' },
+  { id: 'fire', glyph: '\u{1F525}' },
+  { id: 'clap', glyph: '\u{1F44F}' },
+  { id: 'wow', glyph: '\u{1F62E}' },
+  { id: 'gg', glyph: 'GG' },
+]

@@ -218,7 +218,7 @@ export function fire(actor, origin, dir, speed = 0) {
   }
   if (!localHits) send('shot', { w: w.id, o: pt(muzzle), e: ends.slice(0, 12) })
 
-  // Flash, shell, sound, noise for the bots.
+  // Flash, shell and sound.
   tmpU.set(0, 1, 0)
   tmpR.set(Math.cos(actor.facing), 0, -Math.sin(actor.facing))
   fx.muzzleFlash(muzzle, dir, def.kind === 'shotgun' || def.kind === 'sniper' || def.kind === 'lmg', actor.isPlayer || Math.random() < 0.35)

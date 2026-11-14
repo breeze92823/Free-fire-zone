@@ -22,7 +22,6 @@ Tunables live in `config.js` `AUDIO`: `volume` 0.8, `storageKey` `'free-fire-zon
 | `updateAmbience(dt, level, shore)` | `index.js` | Drives the ambience layers. | `main.js` (`gameFrame`; with `level` 0 in lobby / queue) |
 | `setVolume(v)` | `core.js` | Master volume 0..1. | `main.js` (`master_volume / 100`, saved `ffz.volume` at boot), `lobby.js` slider |
 | `setMuted(on)`, `isMuted()` | `core.js` | Player mute, persisted. | `lobby.js` Settings window |
-| `toggleMuted()` | `core.js` | `setMuted(!muted)`. | no caller |
 | `setBreakMuted(on)` | `core.js` | Silence during a portal ad break. | `main.js` via `bloxity.onAdBreak` |
 | `setDucked(on)` | `core.js` | Lower the world bus while a menu window is open. | `main.js` (`onWindow`, `enterRound`) |
 
@@ -122,8 +121,8 @@ Columns: `voice(seconds, priority)`, rate limit, trigger (caller found by Grep).
 | Function | Sound | Voice / limit | Triggered by |
 | --- | --- | --- | --- |
 | `hitmarker(head = false)` | Dry tick; bell ping for headshots | (0.3, 3), 35 ms | `combat.js` when the player's shot or melee hit lands |
-| `knock()` | Low drop + bell | (0.6, 3) | no caller |
-| `elimination(streak = 1)` | Two bells (pitch rises with streak, capped) + sub drop; vibrates | (1.2, 4) | no caller |
+| `knock()` | Low drop + bell | (0.6, 3) | `online.js`, the player knocked someone |
+| `elimination(streak = 1)` | Two bells (pitch rises with streak, capped) + sub drop; vibrates | (1.2, 4) | `online.js`, the player eliminated someone (`streak` from `elim.s`); `testRange.js` |
 | `hurt(heavy = false)` | Body thump + low tone; vibrates when heavy | (0.4, 3), 90 ms | `controller.js` on `damage` to the player (`amount > 40` = heavy); `online.js` when the player is knocked |
 | `impact(material = 'stone', { dist, pan })` | Short noise tick (`wood`, `stone`) or metal ping (`metal`); nothing beyond 30 m | (0.2, 1), 25 ms | `combat.js` bullet hitting the world (always `'stone'`) |
 | `whiz(pan = 0)` | Falling bandpassed hiss | (0.2, 2), 60 ms | `online.js`, an enemy's shot passing within 1.6 m of the player's eye |
@@ -156,7 +155,7 @@ Columns: `voice(seconds, priority)`, rate limit, trigger (caller found by Grep).
 | Function | Sound | Voice / limit | Triggered by |
 | --- | --- | --- | --- |
 | `crateOpen()` | Wooden knock + creak + three coin chimes | (1, 2) | `loot.js`, crate opened by the player or within 25 m |
-| `pickup()` | Two coin chimes | (0.3, 2), 60 ms | no caller |
+| `pickup()` | Two coin chimes | (0.3, 2), 60 ms | `online.js`, a `reward` (Gems for a knock / elimination) |
 | `airdrop()` | Two-note triangle signal | (2, 3) | `loot.js` when a drop is created |
 
 ### Match flow and UI
@@ -166,10 +165,10 @@ Columns: `voice(seconds, priority)`, rate limit, trigger (caller found by Grep).
 | `click(pan = 0)` | ui | Plastic button click | (0.1, 2), 30 ms | `index.js onPress` (any button press); `lobby.js` once |
 | `hover()` | ui | Faint blip | (0.05, 0.5), 50 ms | `lobby.js` `pointerenter` on lobby buttons |
 | `purchase()` | ui | Coin shower + bell | (1, 3) | `lobby.js bought(true)` |
-| `deny()` | ui | Two low square buzzes | (0.3, 2), 150 ms | `lobby.js bought(false)`; `controller.js` when an item / dash / ability cannot be used; `main.js` (Respawn pressed too early, `onRevive`) |
+| `deny()` | ui | Two low square buzzes | (0.3, 2), 150 ms | `lobby.js bought(false)`; `controller.js` when an item / dash / ability cannot be used; `main.js` (Revive pressed too early, a reaction sent too soon) |
 | `equip()` | ui | Two metal clicks | (0.3, 2) | `lobby.js` equip / select actions |
 | `countdown(final = false)` | ui | Tick; a chord with a sub drop for the final one | (1, 4) | `main.js gameFrame` during `countdown` (final on "FIGHT!") |
-| `streak(level = 2)` | ui | Whoosh + rising arpeggio | (1.4, 4) | no caller |
+| `streak(level = 2)` | ui | Whoosh + rising arpeggio | (1.4, 4) | `online.js`, the player's eliminations from a streak of 2 on |
 | `victory()` | ui | Major fanfare + bell | (3, 5) | `results.js` |
 | `defeat()` | ui | Descending notes + low drone | (2.5, 5) | `results.js` |
 | `zoneWarning()` | ui | Two square beeps | (1, 2), 900 ms | `main.js` when a zone phase starts shrinking |
@@ -229,9 +228,8 @@ There is no `PannerNode` or `AudioListener`. Positioning is computed in JS:
 
 ## Observations
 
-- **`sfx` functions with no caller:** `knock`, `elimination`, `pickup`, `streak`. Knocks and eliminations currently produce no dedicated sound (only `hurt(true)` when the local player is knocked).
 - **`A.engine` bus is unused** (created and gained, nothing connects); the graph comment and `setDucked` comment still mention an engine. The header comments ("the cliffs and stalls", "a stack of rewards", "beach") come from the game this engine was ported from.
-- **Unused exports:** `toggleMuted` (`core.js`, re-exported by `index.js`); `pick`, `bubble`, `bubbles`, `saturation` in `synth.js` (`route` and `env` are exported but only used inside `synth.js`).
+- **Unused exports:** `pick`, `bubble`, `bubbles`, `saturation` in `synth.js` (`route` and `env` are exported but only used inside `synth.js`).
 - **`footstep` surfaces are never used:** the only own-step call passes `surface: 'grass'`, and other players' steps pass none. `impact` is always called with `'stone'`.
 - **`spatial`** fills a module-level `out` object and then returns a fresh object anyway; `out` is redundant.
 - **The `index.js` header** lists the import as `{ sfx, installAudio, updateAmbience, spatial }`; `setListener` must also be called every frame or every positional sound is computed from the origin.

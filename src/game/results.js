@@ -8,7 +8,7 @@ import { resetPlayer } from '../player.js'
 import { syncYawToPlayer } from '../camera.js'
 import { sfx } from '../audio/index.js'
 import { SVG, svgData } from './icons.js'
-import { rankOf } from './save.js'
+import { missionDef, missionText, rankOf } from './save.js'
 
 const h = (tag, cls = '', html = '') => {
   const e = document.createElement(tag)
@@ -47,6 +47,8 @@ export function showResults(winner, reward, done) {
       <div>Coins earned: <span class="plus">+${reward.coins}</span> <img alt="" src="${svgData(SVG.coin)}" style="height:0.9em;vertical-align:-0.1em"></div>
       ${reward.gems > 0 ? `<div>Gems earned: <span class="plus gem">+${reward.gems}</span> <img alt="" src="${svgData(SVG.gem)}" style="height:0.9em;vertical-align:-0.1em"></div>` : ''}
       <div>Rank points: <span class="plus">${reward.rp >= 0 ? '+' : ''}${reward.rp}</span> <span class="small">(${rankOf().name})</span></div>
+      ${(reward.rankUp || []).map((r) => `<div class="rankup">Rank up: <b>${esc(r.name)}</b>! <span class="plus">+${r.coins}</span> <img alt="" src="${svgData(SVG.coin)}" style="height:0.9em;vertical-align:-0.1em"> <span class="plus gem">+${r.gems}</span> <img alt="" src="${svgData(SVG.gem)}" style="height:0.9em;vertical-align:-0.1em"></div>`).join('')}
+      ${missionsLine(reward.missions)}
       <div class="small">Knocks ${reward.knocks} · Assists ${reward.assists} · Headshots ${reward.headshots} · Times eliminated ${reward.deaths}</div>
       <div class="small">Final score: Blue ${reward.score.blue} — Orange ${reward.score.orange}${reward.mvp ? ' · <b style="color:#ffd34d">MATCH MVP</b>' : ''}</div>
     </div></div>
@@ -100,6 +102,13 @@ export function showResults(winner, reward, done) {
   // Camera in front of the line, looking back at them.
   camFrom.set(center.x + Math.sin(toMid) * 7.4, center.y + 1.9, center.z + Math.cos(toMid) * 7.4)
   camAt.set(center.x, center.y + 1.25, center.z)
+}
+
+// Missions this round finished (ids from the server): named, with a nudge to claim them.
+function missionsLine(ids) {
+  const names = (Array.isArray(ids) ? ids : []).map((id) => missionDef(id)).filter(Boolean).map((d) => esc(missionText(d)))
+  if (!names.length) return ''
+  return `<div class="missionsdone">Mission${names.length > 1 ? 's' : ''} complete: ${names.join(' · ')} <span class="small">(claim in the lobby)</span></div>`
 }
 
 function revealSummary() {

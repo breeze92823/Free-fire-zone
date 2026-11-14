@@ -5,8 +5,8 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
 import { BLOOM } from './config.js'
 
-// Optional bloom, so the neon lane rails, the waterfall, the VIP gate and the
-// particles glow like the reference. The scene renders into a half-float
+// Optional bloom, so neon signs, mast lights, muzzle flashes and the
+// particles glow. The scene renders into a half-float
 // target (HDR, before tone mapping); the bloom pass only picks up what is
 // brighter than BLOOM.threshold, which ordinary sunlit surfaces stay under,
 // so materials opt in by going HDR (emissive or a colour scaled above 1).

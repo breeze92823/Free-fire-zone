@@ -128,6 +128,21 @@ export function buildDefaultCharacter() {
   return root
 }
 
+// A clone shares its materials with every other clone of the same GLB, so fading or flashing one
+// character (cloak, results lineup) would hit them all. Each clone gets its own copies (textures stay
+// shared); meshes that shared a material keep sharing one copy.
+export function ownMaterialCopies(root) {
+  const copies = new Map()
+  const own = (m) => {
+    if (!m) return m
+    if (!copies.has(m)) copies.set(m, m.clone())
+    return copies.get(m)
+  }
+  root.traverse((o) => {
+    if (o.isMesh) o.material = Array.isArray(o.material) ? o.material.map(own) : own(o.material)
+  })
+}
+
 // The shared Bloxity default character, bundled in public/avatars/player.glb
 // so it never depends on the CDN. Same return shape as buildDefaultCharacter().
 // Falls back to the procedural character if the file fails to load.
@@ -137,6 +152,7 @@ export async function loadBaseCharacter() {
     const gltf = await loadGLTF(`${import.meta.env.BASE_URL}avatars/player.glb`, { prio: PRIO.local, tries: 3, timeout: 15000 })
     const root = cloneSkeleton(gltf.scene)
     root.name = 'character'
+    ownMaterialCopies(root)
     root.traverse((o) => {
       if (o.isMesh || o.isSkinnedMesh) {
         o.castShadow = true

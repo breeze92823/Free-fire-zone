@@ -391,6 +391,11 @@ export function createLobbyScene() {
       squad.forEach((a, i) => a.pos.set(spots[i][0] * spread, 0.32, spots[i][1]))
       camera.position.set(0, narrow ? 2.3 : 1.95, narrow ? 11 : 6.6)
       camera.fov = narrow ? 52 : 46
+      // Portrait phones: the menu fills the left side, so the scene slides right and the player
+      // stands beside it instead of behind it (the name plates follow through project()).
+      const shift = w / h < 0.8 ? Math.round(w * 0.15) : 0
+      if (shift) camera.setViewOffset(w, h, -shift, 0, w, h)
+      else camera.clearViewOffset()
       camera.updateProjectionMatrix()
     },
     update(dt) {

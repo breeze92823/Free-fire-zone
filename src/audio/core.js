@@ -65,7 +65,6 @@ export function setMuted(on) {
   }
   applyLevel()
 }
-export const toggleMuted = () => setMuted(!muted)
 
 // --- Noise -------------------------------------------------------------------------
 function makeNoise(ctx, seconds, kind, channels = 1) {

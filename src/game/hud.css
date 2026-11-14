@@ -1108,6 +1108,14 @@
   height: 100%;
   background: #ff3b3b;
 }
+/* Spectate panel (eliminated): the watched player's card bottom-left, hearts / View profile /
+   reactions above it, the eye counter + name with arrows + Lobby / Revive bottom-right. */
+.hud {
+  /* spectate panel sizes (on the root: the health bar is placed from them too) */
+  --card-h: clamp(92px, 18vmin, 176px);
+  --card-w: calc(var(--card-h) * 2.75);
+  --side-w: clamp(170px, 30vmin, 300px);
+}
 .hud-spectate {
   position: absolute;
   inset: 0;
@@ -1116,21 +1124,306 @@
 .hud-spectate.on {
   display: block;
 }
-.hud-spectate .who {
+.hud-spectate.none .card,
+.hud-spectate.none .social,
+.hud-spectate.none .eye {
+  display: none;
+}
+/* While spectating: our own weapons, items and ability are not ours to use. */
+.hud.spect .hud-weapons,
+.hud.spect .hud-items,
+.hud.spect .ult,
+.hud.spect .hud-prompt,
+.hud.spect .hud-cross {
+  display: none !important;
+}
+.hud.spect .hud-health {
+  left: 50%;
+  right: auto;
+  top: auto;
+  transform: translateX(-50%);
+  bottom: calc(var(--safe-b) + clamp(10px, 2.2vmin, 22px));
+  width: min(400px, calc(100vw - 2 * (var(--card-w) + 3 * var(--pad))));
+  grid-template-columns: auto 1fr;
+}
+.hud.spect-none .hud-health {
+  display: none;
+}
+.hud.spect .hpwrap .lbl span:first-child {
+  display: inline;
+}
+.hud.spect .hpwrap .lbl {
+  justify-content: space-between;
+}
+
+.hud-spectate .info {
+  position: absolute;
+  left: 50%;
+  top: 20%;
+  transform: translateX(-50%);
+  text-align: center;
+  white-space: nowrap;
+}
+.hud-spectate .info .l1 {
+  font-size: clamp(15px, 3vmin, 26px);
+  font-weight: 700;
+}
+.hud-spectate .info .l2 {
+  font-size: clamp(12px, 2.1vmin, 17px);
+  opacity: 0.9;
+}
+
+/* Player card: portrait + level | rank badge | held weapon, name, distance. */
+.hud-spectate .card {
+  position: absolute;
+  left: calc(var(--safe-l) + var(--pad));
+  bottom: calc(var(--safe-b) + var(--pad));
+  width: var(--card-w);
+  height: var(--card-h);
+  display: grid;
+  grid-template-columns: 1fr 0.8fr 2.2fr;
+  align-items: center;
+  border: 3px solid #ff8a1f;
+  border-radius: 10px;
+  overflow: hidden;
+  background: linear-gradient(110deg, #ff9a2e 0 46%, #2a2f38 46% 100%);
+  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.45);
+}
+.hud-spectate .card.blue {
+  border-color: #2f9bff;
+  background: linear-gradient(110deg, #43a6ff 0 46%, #2a2f38 46% 100%);
+}
+.hud-spectate .card .pf {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.hud-spectate .card .pf .face {
+  width: 82%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.hud-spectate .card .lv {
+  font-size: clamp(11px, 2.3vmin, 22px);
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+.hud-spectate .card .rk {
+  height: 62%;
+  display: flex;
+  justify-content: center;
+}
+.hud-spectate .card .rk svg {
+  height: 100%;
+  width: auto;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.4));
+}
+.hud-spectate .card .wp {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 4px 8px 4px 4px;
+  min-width: 0;
+}
+.hud-spectate .card .wp > img {
+  width: 100%;
+  height: 52%;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
+}
+.hud-spectate .card .wn {
+  font-size: clamp(12px, 2.5vmin, 24px);
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hud-spectate .card .ds {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: clamp(12px, 2.5vmin, 24px);
+  font-weight: 700;
+  color: #7dff6a;
+}
+.hud-spectate .card .ds img {
+  width: 1em;
+  height: 1em;
+}
+
+/* Hearts, View profile, reactions. */
+.hud-spectate .social {
+  position: absolute;
+  left: calc(var(--safe-l) + var(--pad));
+  bottom: calc(var(--safe-b) + var(--pad) + var(--card-h) + 12px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.hud-spectate .hearts {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: calc(var(--card-w) * 0.5);
+  min-height: 44px;
+  padding: 2px 20px;
+  background: linear-gradient(180deg, #ffb347, #f06a00);
+  border: 3px solid #3a1d00;
+  border-radius: 10px;
+  box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.16), 0 4px 0 rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: clamp(22px, 4.4vmin, 42px);
+  font-weight: 700;
+}
+.hud-spectate .hearts img {
+  width: 1.05em;
+  height: 1.05em;
+}
+.hud-spectate .hearts:active,
+.hud-spectate .hearts.pop img {
+  animation: heartPop 0.35s ease-out;
+}
+@keyframes heartPop {
+  40% {
+    transform: scale(1.3);
+  }
+}
+.hud-spectate .row {
+  display: flex;
+  gap: 8px;
+}
+.hud-spectate .vprof,
+.hud-spectate .emo {
+  min-height: 44px;
+  background: linear-gradient(180deg, #ffb347, #f06a00);
+  border: 3px solid #3a1d00;
+  border-radius: 10px;
+  box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.16), 0 4px 0 rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: clamp(15px, 3.2vmin, 30px);
+  font-weight: 700;
+  padding: 0 clamp(10px, 2vmin, 18px);
+}
+.hud-spectate .emo {
+  width: clamp(44px, 7.4vmin, 64px);
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.hud-spectate .emo img {
+  width: 70%;
+}
+.hud-spectate .picker {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  display: none;
+  gap: 6px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--panel-b);
+  border-radius: 12px;
+  backdrop-filter: blur(6px);
+}
+.hud-spectate .picker.on {
+  display: flex;
+}
+.hud-spectate .picker button {
+  width: 48px;
+  height: 48px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
+  font-size: 26px;
+  font-weight: 700;
+  color: #fff;
+}
+.hud-spectate .picker button:active {
+  background: rgba(255, 255, 255, 0.3);
+}
+.hud-spectate .floats {
+  position: absolute;
+  left: 24px;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.hud-spectate .fh {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 30px;
+  height: 30px;
+  animation: heartFloat 1.5s ease-out forwards;
+}
+.hud-spectate .fh.mine {
+  width: 38px;
+  height: 38px;
+}
+@keyframes heartFloat {
+  0% {
+    transform: translate(0, 0) scale(0.6);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--x), -140px) scale(1.15);
+    opacity: 0;
+  }
+}
+
+/* Right column: watchers, the watched player's name between the arrows, Lobby and Revive. */
+.hud-spectate .side {
   position: absolute;
   right: calc(var(--safe-r) + var(--pad));
-  bottom: calc(var(--safe-b) + clamp(150px, 27vmin, 250px));
+  bottom: calc(var(--safe-b) + var(--pad));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.hud-spectate .eye {
   display: flex;
   align-items: center;
   gap: 6px;
+  font-size: clamp(16px, 3vmin, 26px);
+  font-weight: 700;
+}
+.hud-spectate .eye img {
+  width: 1.5em;
+  height: 1.5em;
+}
+.hud-spectate .who {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100vw - var(--card-w) - 4 * var(--pad));
 }
 .hud-spectate .who .nm {
   font-size: clamp(20px, 4.4vmin, 40px);
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .arrow {
-  width: clamp(34px, 6vmin, 52px);
-  height: clamp(34px, 6vmin, 52px);
+  flex: none;
+  width: clamp(44px, 6vmin, 56px);
+  height: clamp(44px, 6vmin, 56px);
   border: 0;
   background: linear-gradient(180deg, #ffb347, #f06a00);
   clip-path: polygon(0 50%, 100% 0, 75% 50%, 100% 100%);
@@ -1140,13 +1433,10 @@
   transform: scaleX(-1);
 }
 .hud-spectate .btns {
-  position: absolute;
-  right: calc(var(--safe-r) + var(--pad));
-  bottom: calc(var(--safe-b) + var(--pad));
   display: flex;
   flex-direction: column;
   gap: 10px;
-  width: clamp(170px, 30vmin, 300px);
+  width: var(--side-w);
 }
 .bigbtn {
   height: clamp(48px, 9vmin, 84px);
@@ -1157,12 +1447,13 @@
   color: #fff;
   box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.18), 0 4px 0 #000;
   pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35em;
 }
 .bigbtn.white {
   background: linear-gradient(180deg, #ffffff, #d9dde4);
-}
-.bigbtn.white span {
-  color: #fff;
 }
 .bigbtn.yellow {
   background: linear-gradient(180deg, #ffe94d, #ffc400);
@@ -1172,65 +1463,238 @@
 }
 .bigbtn:disabled {
   filter: grayscale(0.8) brightness(0.8);
+  cursor: default;
 }
 .bigbtn small {
-  display: block;
-  font-size: 0.4em;
-  font-weight: 600;
-  margin-top: -4px;
-}
-.hud-spectate .info {
-  position: absolute;
-  left: 50%;
-  top: 22%;
-  transform: translateX(-50%);
-  text-align: center;
-}
-.hud-spectate .info .l1 {
-  font-size: clamp(18px, 3.6vmin, 30px);
+  font-size: 0.45em;
   font-weight: 700;
-}
-.hud-spectate .info .l2 {
-  font-size: clamp(12px, 2.2vmin, 18px);
   opacity: 0.9;
 }
+.bigbtn small:empty {
+  display: none;
+}
+
+/* Reactions over players' heads (projected each frame). */
+.hud-reacts {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.hud-reacts .rx {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  will-change: transform;
+}
+.hud-reacts .rx b {
+  font-size: clamp(30px, 6vmin, 48px);
+  line-height: 1;
+  font-weight: 700;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.6));
+}
+.hud-reacts .rx span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* The watched player's public profile (View profile). */
+.hud-profile {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  z-index: 3;
+}
+.hud-profile.on {
+  display: grid;
+}
+.hud-profile .box {
+  position: relative;
+  width: min(92vw, 460px);
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: clamp(12px, 2.4vmin, 20px);
+  background: rgba(16, 22, 34, 0.94);
+  border: 3px solid #ff8a1f;
+  border-radius: 14px;
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.4);
+}
+.hud-profile .close {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: #fff;
+  font-size: 30px;
+  line-height: 1;
+}
+.hud-profile .head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding-right: 40px;
+}
+.hud-profile .head .face {
+  width: clamp(54px, 11vmin, 76px);
+  height: clamp(54px, 11vmin, 76px);
+  border-radius: 10px;
+  background: #ff9a2e;
+  object-fit: cover;
+}
+.hud-profile .id {
+  min-width: 0;
+}
+.hud-profile .nm {
+  font-size: clamp(18px, 3.6vmin, 26px);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-profile .sub {
+  font-size: 14px;
+  opacity: 0.85;
+}
+.hud-profile .head .rk svg {
+  width: clamp(36px, 7vmin, 50px);
+  height: auto;
+}
+.hud-profile .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  gap: 8px;
+  margin: 14px 0 10px;
+}
+.hud-profile .grid > div {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+}
+.hud-profile .grid b {
+  font-size: clamp(18px, 3.6vmin, 24px);
+}
+.hud-profile .grid span {
+  font-size: 12px;
+  opacity: 0.8;
+}
+.hud-profile .grid .wait {
+  grid-column: 1 / -1;
+  background: none;
+  opacity: 0.8;
+}
+.hud-profile .rnd {
+  font-size: 14px;
+  opacity: 0.9;
+  text-align: center;
+}
+
+/* Short landscape (phones): hearts, View profile and the reaction button on one line. */
 @media (max-height: 500px) {
+  /* The squad chips would sit under the social row: the watched player's health bar says enough. */
+  .hud.spect .hud-squad {
+    display: none;
+  }
+  .hud-spectate .social {
+    flex-direction: row;
+    align-items: stretch;
+  }
+  .hud-spectate .hearts {
+    min-width: 0;
+    padding: 0 14px;
+  }
+  .hud-spectate .side {
+    gap: 6px;
+  }
+  .hud-spectate .btns {
+    gap: 6px;
+  }
   .hud-spectate .info {
-    top: 30%;
+    top: 26%;
   }
 }
-/* Portal death screen: a centred Respawn button replaces the timer + hearts (ad slots sit at the sides). */
-.hud-spectate .respawn {
-  display: none;
-  margin: 12px auto 0;
-  width: clamp(170px, 30vmin, 300px);
+/* Portrait phones: Lobby | Revive side by side along the bottom, the name above them, the card
+   and the social buttons stacked above that on the left. */
+@media (orientation: portrait) and (max-width: 700px) {
+  .hud {
+    --card-h: clamp(84px, 24vw, 120px);
+    --card-w: min(calc(100vw - 2 * var(--pad) - var(--safe-l) - var(--safe-r)), calc(var(--card-h) * 2.75));
+    --btn-h: clamp(48px, 13vw, 60px);
+    --who-h: 48px;
+    --stack: calc(var(--btn-h) + var(--who-h) + 22px); /* buttons + name row */
+    --hp-h: 44px; /* the watched player's health bar, between the name row and the card */
+  }
+  .hud-spectate .side {
+    left: calc(var(--safe-l) + var(--pad));
+    align-items: stretch;
+  }
+  .hud-spectate .btns {
+    flex-direction: row;
+    width: auto;
+  }
+  .hud-spectate .btns .bigbtn {
+    flex: 1;
+    height: var(--btn-h);
+    font-size: clamp(20px, 6vw, 30px);
+  }
+  .hud-spectate .who {
+    justify-content: space-between;
+    max-width: none;
+    height: var(--who-h);
+  }
+  .hud-spectate .who .nm {
+    text-align: center;
+    flex: 1;
+  }
+  .hud-spectate .eye {
+    position: absolute;
+    right: 0;
+    bottom: calc(var(--stack) + var(--hp-h) + var(--card-h) + 12px);
+  }
+  .hud-spectate .card {
+    bottom: calc(var(--safe-b) + var(--pad) + var(--stack) + var(--hp-h));
+  }
+  .hud-spectate .social {
+    bottom: calc(var(--safe-b) + var(--pad) + var(--stack) + var(--hp-h) + var(--card-h) + 12px);
+    flex-direction: row;
+    align-items: stretch;
+  }
+  .hud-spectate .hearts {
+    min-width: 0;
+    padding: 0 14px;
+    font-size: 26px;
+  }
+  .hud-spectate .vprof {
+    font-size: 17px;
+  }
+  .hud.spect .hud-health {
+    width: min(calc(100vw - 2 * var(--pad)), 340px);
+    bottom: calc(var(--safe-b) + var(--pad) + var(--stack));
+  }
+  .hud-spectate .info {
+    /* just above the social row: the top of a portrait screen holds the score, feed and banners */
+    top: auto;
+    bottom: calc(var(--safe-b) + var(--pad) + var(--stack) + var(--hp-h) + var(--card-h) + 12px + 56px);
+    white-space: normal;
+    width: 90vw;
+  }
 }
-.hud-spectate.portal .respawn {
-  display: block;
-}
-.hud-spectate.portal .revive,
-.hud-spectate.portal .hearts,
-.hud-spectate .revive,
-.hud-spectate .hearts {
-  /* Online: no revive hearts; the portal's death screen (or a short timer) respawns. */
-  display: none;
-}
-.hud-spectate .hearts {
-  position: absolute;
-  left: calc(var(--safe-l) + var(--pad));
-  bottom: calc(var(--safe-b) + clamp(80px, 14vmin, 120px));
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: linear-gradient(180deg, #ffb347, #f06a00);
-  border: 3px solid #3a1d00;
-  border-radius: 10px;
-  padding: 4px 18px;
-  font-size: clamp(22px, 4.4vmin, 40px);
-  font-weight: 700;
-}
-.hud-spectate .hearts img {
-  width: 1.1em;
+@media (prefers-reduced-motion: reduce) {
+  .hud-spectate .fh {
+    animation-duration: 0.01s;
+  }
 }
 .hud-countdown {
   position: absolute;
@@ -1801,13 +2265,59 @@
   top: max(26%, calc(var(--safe-t) + var(--res-top) + clamp(48px, 7.6vmin, 68px) + 66px));
 }
 
+/* Portrait: the shoulder camera puts the character just left of the centre, right above the
+   controls (further left the taller the phone), so only the right half is reliably clear: the
+   health bar and the weapons stack above the FIRE cluster, and the ability button goes beside
+   the second FIRE, under the character's feet. */
 @media (orientation: portrait) {
   .touch-ui .hud-health {
-    width: min(72vw, 320px);
-    bottom: calc(var(--t-reach) + clamp(40px, 9vmin, 54px) + 18px);
+    --ww: calc(3 * clamp(44px, 12vmin, 60px) + 8px);
+    left: auto;
+    right: calc(var(--safe-r) + var(--t-pad));
+    transform: none;
+    width: var(--ww);
+    bottom: calc(var(--t-reach) + 8px + clamp(28px, 7.5vmin, 36px) + 4px + clamp(40px, 10.5vmin, 50px) + 6px);
+    grid-template-columns: auto 1fr;
+    align-items: end;
+    gap: 6px;
+  }
+  .touch-ui .hud-health .armor .pc {
+    width: clamp(20px, 5vmin, 26px);
+    height: clamp(20px, 5vmin, 26px);
+  }
+  .touch-ui .hpwrap .lbl span:first-child {
+    display: none;
+  }
+  .touch-ui .hpwrap .lbl {
+    justify-content: flex-end;
+  }
+  .touch-ui .hud-health .ult {
+    --us: clamp(44px, 11vmin, 52px);
+    position: fixed;
+    width: var(--us);
+    height: var(--us);
+    margin: 0;
+    left: calc(var(--safe-l) + var(--t-pad) + var(--t-joy) / 2 + clamp(56px, 15vmin, 76px) / 2 + 8px);
+    bottom: calc(var(--safe-b) + var(--t-pad) + var(--t-joy) + 18px);
   }
   .touch-ui .hud-weapons {
-    bottom: calc(var(--t-reach) + 10px);
+    --wh: clamp(40px, 10.5vmin, 50px);
+    left: auto;
+    right: calc(var(--safe-r) + var(--t-pad));
+    transform: none;
+    bottom: calc(var(--t-reach) + 8px);
+    grid-auto-flow: row;
+    grid-template-columns: repeat(3, clamp(44px, 12vmin, 60px));
+  }
+  .touch-ui .wcard {
+    grid-column: 1 / -1;
+    height: clamp(28px, 7.5vmin, 36px);
+  }
+  .touch-ui .wcard .ammo {
+    font-size: clamp(15px, 4.2vmin, 22px);
+  }
+  .touch-ui .wcard .rtime {
+    font-size: clamp(15px, 4.2vmin, 22px);
   }
   /* Under the minimap; the score bar is lower, under the chat. */
   .touch-ui .item[data-id='emote'] {
@@ -1847,12 +2357,12 @@
     top: calc(var(--res-bottom) + 172px);
     left: calc(var(--safe-l) + var(--pad) + min(60px, 16vw));
   }
-  /* Under the crosshair: the kill notice, then the crate / revive prompt above the health bar. */
+  /* Under the crosshair: the kill notice, then the crate / revive prompt above the weapon block. */
   .touch-ui .hud-notice {
     top: calc(50% + 30px);
   }
   .touch-ui .hud-prompt {
-    bottom: calc(var(--t-reach) + 2 * clamp(40px, 9vmin, 54px) + 32px);
+    bottom: calc(var(--t-reach) + clamp(28px, 7.5vmin, 36px) + clamp(40px, 10.5vmin, 50px) + 74px);
   }
   /* Under the kill feed's two rows. */
   .touch-ui .hud-announce {

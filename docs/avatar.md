@@ -55,7 +55,7 @@ A look is `{ equipped, proportions, outfitKey, skinTextureUrl? }`; any field may
 | # | Kind | Condition | Steps | `complete` |
 | --- | --- | --- | --- | --- |
 | 1 | `character` | `isEquipped(equipped.characterId)` | `bloxity.getCharacterFor(equipped)` (12 s) -> `loadCharacterRig` -> `attachCharacterAccessories` | false when an accessory failed |
-| 2 | `kit` | `bloxity.characterKit()` exists, a key exists (`look.outfitKey` or `getOutfitKeyFor(equipped)`), `kit.canDress(key)` is true | `loadBaseCharacter()` -> `kit.dress({ THREE, GLTFLoader, root, outfitKey, proportions: 'game' })` (12 s) -> `applyProportions` -> `root.userData.lookHandle = handle` | always true |
+| 2 | `kit` | `bloxity.characterKit()` exists, a key exists (`look.outfitKey` or `getOutfitKeyFor(equipped)`), `kit.canDress(key)` is true | `loadBaseCharacter()` -> `kit.dress({ THREE, GLTFLoader, root, outfitKey })` (12 s; default `proportions: 'kit'`: the kit shapes the body from the proportions in the key, exactly like the portal) -> `root.userData.kitProportions = true`, `applyProportions` (unit scale only) -> `root.userData.lookHandle = handle` | always true |
 | 3 | `manual` | otherwise, or 1 / 2 failed | `loadBaseCharacter()` -> `attachEquippedAccessories` (when `equipped`) -> `applyProportions` | false when a skin / part / accessory failed |
 
 Each step falls through to the next on failure. `buildLook` resolves `{ root, kind, handle, complete }`, or `null` only if something outside the per-step guards threw. `buildLook` runs through `buildGate` (`makeGate(3)`: three looks assembled at once, ordered by `prio`).
@@ -65,8 +65,8 @@ Each step falls through to the next on failure. `buildLook` resolves `{ root, ki
 2. `withForcedHead`: if the hat / hair / mask catalogue item has `forceHeadId`, `headId` is overridden.
 3. In parallel: `applySkin`, `applyPart` per equipped body-part slot, `applyItems`.
    - **Skin**: candidates are the composed skin (`skinTextureUrl` argument, else `composedSkinUrl(equipped)`), then the plain skin (catalogue `assetPaths.texture`, else `skinUrl(id)`, id 0 when none is equipped). The texture is set as `map` on every `SkinnedMesh`. Counts as failed when no texture loaded or when the plain one had to stand in for a composed one.
-   - **Parts** (`AVATAR_SLOTS` in `cdn.js`): URL from the catalogue (`assetPaths.mesh` / `meshL` / `meshR`), else `partUrl`. The geometry of the matching `default_*` mesh is replaced; `skinIndex` is remapped by bone name into the base skeleton's order; the part's own material is dropped.
-   - **Items** (`itemSlots()`): `HAT_BACK_SLOTS` plus the SDK's `getAccessorySlots()` list, or `FALLBACK_SLOTS` when the SDK has none. URLs: catalogue `assetPaths` -> SDK `accessoryUrls(field, id)` -> pattern `itemUrls({ type: slot.dir }, id)`. The OBJ is cloned, given a `MeshStandardMaterial` (grey when its texture failed) and attached to `slot.bone` with a fixed local matrix `restInverse(bone) x translate(origin)`; `mirrorBone` gets a second copy with `x MIRROR_X` and double-sided materials.
+   - **Parts** (`AVATAR_SLOTS` in `cdn.js`): URL from the catalogue (`assetPaths.mesh` / `meshL` / `meshR`), else `partUrl`. The geometry of the matching `default_*` mesh is replaced; `skinIndex` is remapped by bone name into the base skeleton's order; the part's own material is dropped. A part file without a skinned mesh is used only if its geometry has `skinIndex` / `skinWeight`, otherwise the default part stays (unweighted geometry follows a random bone).
+   - **Items** (`itemSlots()`): `HAT_BACK_SLOTS` plus the SDK's `getAccessorySlots()` list, or `FALLBACK_SLOTS` when the SDK has none. URLs: catalogue `assetPaths` -> SDK `accessoryUrls(field, id)` -> pattern `itemUrls({ type: slot.dir }, id)`. The OBJ is cloned, given a `MeshStandardMaterial` like the portal's (`transparent`, `alphaTest: 0.5`, `DoubleSide`; grey when its texture failed) and attached to `slot.bone` with a fixed local matrix `restInverse(bone) x translate(origin)`; `mirrorBone` gets a second copy with `x MIRROR_X`. Un-mirrored items on `Spine1` / `Spine2` other than the back item are listed in `root.userData.torsoItems` and widen with the torso.
 
 Built-in slots (origins in rig units, model space of `player.glb`):
 
@@ -87,19 +87,21 @@ Built-in slots (origins in rig units, model space of `player.glb`):
 `loadCharacterRig(character, { prio })` loads `character.glbUrl` (3 tries, 15 s), clones it, requires `Rig1` or `Neck1`, sets `root.userData.customCharacter = character.id || true` and the standard scale. Its texture is embedded: no skin, no body parts, no proportions. `attachCharacterAccessories` places items with `bloxity.characterAccessoryMatrix(character, bone) x translate(origin)` for un-mirrored `Neck1` / `Spine1` / `Spine2`, otherwise `scale(character.rig.anchors[bone]) x restInverse(bone) [x MIRROR_X] x translate(origin)` (`anchorScale` accepts a number, `[x, y, z]` or `{ x, y, z }`).
 
 ### Proportions (`loader.js applyProportions(root, proportions)`)
-Clamped per `PROPORTIONS` in `config.js`; `null` resets to defaults; safe to call repeatedly.
+Clamped per `PROPORTIONS` in `config.js`; `null` resets to defaults; safe to call repeatedly. The formulas are the ones of Bloxity's reference rig (`bloxity.io/test-game.html`) and the SDK's character kit, so a body looks the same as on the player's profile. On a custom character or a kit-dressed rig (`userData.kitProportions`) it only sets the unit scale.
+
+`bindOf(root)` captures once (in `root.userData.bind`) each bone's bind local position / scale, its model-space bind position (from `skeleton.boneInverses`, or the hierarchy for the stand-in) and its parent's inverse bind matrix. Every call starts from that bind pose, then (`p` = clamped values, `SPREAD` = 0.8):
 
 | Key | Applied to |
 | --- | --- |
-| `shoulderWidth` | `ArmL_Offset` / `ArmR_Offset` `.position.x` = +/- `RIG.armOffsetX` x value |
-| `armLength` | `ArmL1` / `ArmR1` `.scale.y` |
-| `legOffsetX` | `LegL_Offset` / `LegR_Offset` `.position.x` = +/- `RIG.legOffsetX` x value |
-| `torsoScaleX` | `Spine1.scale.x` |
-| `neckHeight` | `Neck_Offset.position.y` = `RIG.neckOffsetY` x value |
-| `headScale` | `Neck1.scale` (uniform) |
+| `armLength` | `.scale.y` of every bone whose name starts with `Arm` (compounds down the arm, like the portal) |
 | `height` | `root.scale.y` (x and z stay at the unit scale) |
+| `headScale` | `Neck1.scale` = (`hs`, `hs / height`, `hs`): the head keeps its shape on a tall body |
+| `neckHeight` | `Neck_Offset.position.y` = bind y + (`height` - `headScale`) x bind y + model y x (`neckHeight` - 1) x `SPREAD` |
+| `shoulderWidth` | `ArmL_Offset` / `ArmR_Offset` moved along model x by model x x (value - 1) x `SPREAD` |
+| `torsoScaleX` | the arm offsets also move by (model x - `Spine1` x) x (value - 1) x `SPREAD`; the `Spine1` / `Spine2` skinning matrices are scaled along x (`widenTorsoSkin` patches each skeleton's `update`, reading `root.userData.torsoScaleX`), so arms, neck and head are not squashed; `torsoItems` get `restInverse x scale(value, 1, 1) x rest` in front of their base matrix |
+| `legOffsetX` | `LegL_Offset` / `LegR_Offset` moved along model x by model x x (value - 1) x `SPREAD` |
 
-It always overwrites `root.scale`, then `keepItemSizes` counter-scales every item in `root.userData.fixedScaleItems` (hands, shoes) from its `userData.baseMatrix`.
+Finally `keepItemSizes` counter-scales every item in `root.userData.fixedScaleItems` (hands, shoes) from its `userData.baseMatrix`. The local player's slider changes (`main.js onProportionsChanged`) call it again, or `lookHandle.update(getOutfitKey())` on a kit-dressed avatar (a refused update rebuilds the look).
 
 ### Replication
 - Out: `lookToJson({ equipped, proportions, outfitKey })` -> a JSON string of ids only, cut to 4000 characters; `''` when there is neither `equipped` nor `outfitKey`. `main.js` sends it in the join options (`avatar`, `outfitKey`) and in the `avatar` message (`sendAvatar`, on every avatar or proportions change).
@@ -194,7 +196,7 @@ Weapon hold variants:
 ### Portal emote clips
 - `registerEmoteClip(id, clip)` stores a catalogue clip under `portal:<id>` (ignored unless `clip.tracks` is an object); `hasEmoteClip(id)`. `main.js playPortalEmote` fetches the clip with `bloxity.getEmoteClip`, registers it and calls `playEmote('portal:<id>')`.
 - `writeClip(clip, t)`: clip is `{ len, loop, tracks: { bone: [[sec, xDeg, yDeg, zDeg], ...] } }`. Time is `t % len` when looping, else clamped to `len` (`len <= 0` counts as 1). Track names `ArmR_Offset`, `ArmL_Offset`, `LegR_Offset`, `LegL_Offset` drive `ArmR1`, `ArmL1`, `LegR1`, `LegL1` (`CLIP_BONES`); tracks for bones outside `BONE_INDEX`, and `Rig1`, are skipped. Between two keys the value is smoothstepped; before the first / after the last key it is clamped. The result **replaces** that bone's rotation in `output` (degrees converted to radians, same character-space axes).
-- Emote time is owned by the caller: `actor.emoteT` is advanced in `match.js` (which also clears any emote after 4.5 s) and `results.js`.
+- Emote time is owned by the caller: `actor.emoteT` is advanced in `match.js` (which ends the player's emote after `emoteLength(name)`: `ANIM.emotes[name].duration`, a catalogue clip's length + 0.2 s, or `ANIM.emoteLoopMax` 8 s for a looping or missing clip) and `results.js`. Other players' catalogue clips are fetched the first time their emote is seen (`online.js loadPortalClip` -> `registerEmoteClip`).
 
 ### Held weapons (in `actor.js`, not in the animator)
 `Actor.setAvatar(root)` creates the animator and finds the hand: `root.nodes.ArmR2_leaf`, or a generated `ArmR2_leaf_gen` under `ArmR2` (y -1.15) or under `ArmR1` when there is no elbow (y -2.3), which it also registers as `root.nodes.ArmR2_leaf`. The held model is not parented to the bone: it lives in the scene and `updateModel` places it every frame at the hand's world position, pointing along the aim direction (blended by `ready`; a fixed chest-carry direction when lowered; the forearm for melee), with a roll during reload. It is shown only while `life === 'alive'`, with no emote, no throw in progress and `actor.hidden` false (and not when the actor's opacity drops to 0.2 or less). The other gun rides in `backModel` under `actor.group`. After swapping an avatar, callers must call `actor.refreshHeld()`.
@@ -205,7 +207,7 @@ Weapon hold variants:
 | --- | --- |
 | `rig.js` | `BONE_NAMES`, `BONE_INDEX`, `PoseBuffer`, `PlayerRig` |
 | `animator.js` | `makeAnimator(root)`, `disposeAnimator(animator)`, `registerEmoteClip(id, clip)`, `hasEmoteClip(id)` |
-| `character.js` | `buildDefaultCharacter()`, `loadBaseCharacter()` (async, never rejects) |
+| `character.js` | `buildDefaultCharacter()`, `loadBaseCharacter()` (async, never rejects), `ownMaterialCopies(root)` |
 | `assets.js` | `PRIO`, `sleep`, `withTimeout`, `makeGate`, `retrying`, `loadGLTF`, `loadOBJ`, `loadTexture`, `loadJSON` |
 | `cdn.js` | `isEquipped`, `AVATAR_SLOTS`, `partUrl`, `itemUrls`, `skinUrl`, `composedSkinUrl`, `describeItem`, `assetUrl`, `hatObjUrl`, `hatTextureUrl`, `backObjUrl`, `backTextureUrl` |
 | `loader.js` | `attachEquippedAccessories(root, equipped, { signal, skinTextureUrl, prio })` -> `Promise<boolean>`, `loadCharacterRig(character, { prio })`, `attachCharacterAccessories(root, character, equipped, { prio })` -> `Promise<boolean>`, `applyProportions(root, proportions)` |
@@ -242,17 +244,17 @@ Weapon hold variants:
 - `complete: false` is not an error: the look is shown and retried. The kit path reports `complete: true` unconditionally.
 - When `kit.dress` times out, the manual path builds on a fresh base; the timed-out call may still finish on the dropped root.
 - `withTimeout` frees the gate slot without aborting the request, so more than 6 connections can be open after timeouts.
-- `applyProportions` resets `root.scale`; anything else scaling the root must reapply afterwards. It is not applied to custom characters.
+- `applyProportions` resets `root.scale` and the arm / neck / leg bones' positions and scales; anything else scaling the root must reapply afterwards. It is not applied to custom characters or kit-dressed rigs.
+- Every clone of `player.glb` or of a custom character gets its own material copies (`character.js ownMaterialCopies`): a fade (`characters.js setOpacity`: cloak, spawn shimmer, the results screen hiding players outside the lineup) must never reach another player. `setOpacity` remembers each material's own `transparent` / `opacity` / `depthWrite` (and each mesh's `castShadow`) and restores them at 1; it records the fade in `root.userData.opacity`, and `Actor.setAvatar` resets a still-faded root to 1. The local player's root is reused by the lobby and every round: without that reset a player hidden at the results stayed invisible in the lobby.
 - Items are attached with `matrixAutoUpdate = false`; move them through `obj.matrix`, not `position`.
 - The stand-in has no elbows, knees or skinned meshes; code touching `ArmR2`, `*_leaf` or `default_*` must tolerate their absence.
 
 ## Observations
 
-- **Portal emotes do not play on other clients.** `playEmote('portal:<id>')` sends the name and the server relays it (`MatchRoom.ts` accepts `portal:<id>` into `p.emote`), but `registerEmoteClip` is only called in `main.js playPortalEmote` for the local player. A remote client that has not played the same emote has no clip for it: `writeEmote` does nothing while `actor.js` still hides the held weapon.
-- **Emote length is fixed at 4.5 s** in `match.js`, regardless of `clip.len` / `clip.loop`; `ANIM.emotes.*.duration` in `config.js` is not read anywhere.
+- Fixed 2026-11-14: other players' portal emotes now play (their clip is fetched on first sight) and an emote's length comes from `emoteLength`.
 - **Bank is inert**: `actor.js` always passes `turn: 0`.
 - **The throw layer needs a `hold`**: `applyLayers` returns before it when `hold` is falsy.
-- **Unused exports**: `cdn.js` `hatObjUrl`, `hatTextureUrl`, `backObjUrl`, `backTextureUrl`; `look.js` `lookKey` is only used inside the file; `main.js` imports `isBloxityRig` without using it. `attachEquippedAccessories`' `signal` option is never passed. `root.animations` is set but never read.
+- **Unused exports**: `cdn.js` `hatObjUrl`, `hatTextureUrl`, `backObjUrl`, `backTextureUrl`; `look.js` `lookKey` is only used inside the file. `attachEquippedAccessories`' `signal` option is never passed. `root.animations` is set but never read.
 - **Stale comments**: `animator.js` and `actor.js` still say "player and bots" (`CLAUDE.md`: no bots); `character.js` says "blue outfit, brown hair" (`CHARACTER_COLORS.suit` is `#2b2f3a`) and that the animator "falls back" from `root.animations`; `cdn.js` says `loader.js` is its sole consumer (`look.js` imports `isEquipped`) and describes only hat / back items; `loader.js` mentions React.
 - **`CLAUDE.md` says accessories are placed via `rig.anchors`**: that is the SDK character's `rig.anchors` field, not something in `rig.js`. Its description of the gate (6 at once, local first, prewarm last, 12 s SDK timeout, `complete`, `streamLook`, `prewarmLook`) matches the code.
 - `loadJSON`'s comment says failures are never cached; an HTTP 404 is cached as `null` for the session by design.

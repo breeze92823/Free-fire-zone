@@ -3,9 +3,9 @@
 // last copy the server sent and asks it for every purchase and equip. Purchases are applied here
 // at once (so the shop feels instant) and replaced by the server's answer; a refused one resyncs.
 // Everything is bought with coins earned by playing; there is no premium currency. Gems (`gems`)
-// are the game's own currency, earned only by eliminations (the server's `reward` message) and
-// never bought with real money or Bloxity Gems.
-import { GRENADES, OPERATIVES, PASSES, RANKS, SKINS, START_PROFILE, STORE, WEAPONS, passWeapons } from '../config.js'
+// are the game's own currency, earned only by playing (knocks / eliminations: the server's `reward`
+// message; round results, missions and rank rewards) and never bought with real money or Bloxity Gems.
+import { GRENADES, MISSIONS, OPERATIVES, PASSES, RANKS, SKINS, START_PROFILE, STORE, WEAPONS, passWeapons } from '../config.js'
 import { onNet, online, send } from '../net.js'
 
 const clone = (o) => JSON.parse(JSON.stringify(o))
@@ -44,6 +44,55 @@ onNet('reward', (msg) => {
   profile.gems = Number.isFinite(msg.total) ? msg.total : (profile.gems || 0) + msg.gems
   notify()
 })
+
+// --- Missions (backend progress.ts) -------------------------------------------------------------
+const MISSION_DEFS = new Map([...MISSIONS.daily, ...MISSIONS.weekly].map((m) => [m.id, m]))
+export const missionDef = (id) => MISSION_DEFS.get(id)
+export const missionText = (def) => MISSIONS.text[def.stat].replace('{n}', def.goal.toLocaleString('en-US'))
+
+// The current sets as [{ kind, i, def, n, done, claimed }] (unknown ids skipped).
+export function missionList(kind) {
+  return (profile.missions?.[kind] || [])
+    .map((s, i) => {
+      const def = MISSION_DEFS.get(s.id)
+      return def && { kind, i, def, n: Math.min(def.goal, s.n | 0), done: (s.n | 0) >= def.goal, claimed: !!s.claimed }
+    })
+    .filter(Boolean)
+}
+// How many finished missions wait for their Claim (the lobby's badge).
+export const claimable = () => [...missionList('daily'), ...missionList('weekly')].filter((m) => m.done && !m.claimed).length
+
+// Ms until the daily set (next UTC midnight) and the weekly set (next Monday 00:00 UTC) roll over.
+export function missionResets(now = Date.now()) {
+  const d = new Date(now)
+  const midnight = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
+  const toMonday = (8 - d.getUTCDay()) % 7 || 7
+  const monday = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + toMonday)
+  return { daily: midnight - now, weekly: monday - now }
+}
+
+// Asks the server for a finished mission's reward; its answer (`claimed`) goes to onClaimed listeners.
+export function claimMission(kind, i) {
+  if (!online() || !account.loaded) return false
+  send('claim', { m: kind, i })
+  return true
+}
+const claimListeners = new Set()
+export function onClaimed(fn) {
+  claimListeners.add(fn)
+  return () => claimListeners.delete(fn)
+}
+onNet('claimed', (msg) => {
+  if (!msg) return
+  for (const fn of claimListeners) fn(msg)
+})
+
+// The first-round tips are finished or skipped: remembered on the account.
+export function finishTutorial() {
+  if (profile.tutorial) return
+  profile.tutorial = true
+  send('tutorialDone')
+}
 
 export function rankOf(rp = profile.rp) {
   let i = 0
