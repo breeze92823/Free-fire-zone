@@ -13,7 +13,7 @@ import { G, on } from './state.js'
 import { castWorld, currentSpread, fire, resolveMelee, selectSlot, startReload } from './combat.js'
 import { dash, deployWall, startHeal, startThrow, useUltimate } from './items.js'
 import { crateNear, openCrate } from './loot.js'
-import { driveInput, enterVehicle, exitVehicle, vehicleNear } from './vehicles.js'
+import { driveInput, requestEnter, requestExit, vehicleNear } from './vehicles.js'
 import * as fx from './fx.js'
 import { profile } from './save.js'
 import { send } from '../net.js'
@@ -29,7 +29,7 @@ export const view = { aimDir, aimPoint, scoped: false, spread: 0, onEnemy: false
 
 function canAct() {
   const p = G.player
-  return p && p.life === 'alive' && G.phase === 'playing' && !p.seat // seated in a vehicle: driving only
+  return p && p.life === 'alive' && G.phase === 'playing' && !p.seat?.drive // the driver only drives; passengers shoot
 }
 
 export function bindKeys(hud) {
@@ -72,7 +72,7 @@ export function bindKeys(hud) {
 
 export function useItem(id) {
   const p = G.player
-  if (!canAct()) return
+  if (!canAct() || p.seat) return // no items or dashes from a vehicle seat
   if (id === 'frostWall') {
     if (!deployWall(p)) sfx.deny()
   } else if (id === 'frag') {
@@ -105,7 +105,7 @@ export function playEmote(name) {
 }
 
 export function useUlt() {
-  if (!canAct()) return
+  if (!canAct() || G.player.seat) return
   if (!useUltimate(G.player)) sfx.deny()
 }
 
@@ -114,13 +114,13 @@ export function useUlt() {
 export function interactPress() {
   const p = G.player
   if (p?.seat && p.life === 'alive' && G.phase === 'playing') {
-    exitVehicle()
+    requestExit()
     return
   }
   if (!canAct()) return
   const nv = vehicleNear(p)
   if (nv) {
-    enterVehicle(nv.v, nv.seat)
+    requestEnter(nv.v, nv.seat) // online the server seats us (vehicleNet.js follows its answer)
     return
   }
   const c = crateNear(p)
@@ -137,8 +137,9 @@ export function updateController(dt, hud) {
   const isGun = !!def.mag
   view.prompt = null
 
-  // In a vehicle: the input drives it (vehicles.js); no weapons, items or other prompts.
-  if (p.seat) {
+  // Driving: the input drives the vehicle (vehicles.js); no weapons, items or other prompts.
+  // A passenger falls through to the shooting below (no movement, items or prompts but Get out).
+  if (p.seat?.drive) {
     inputState.wheel = 0
     p.aiming = false
     p.crouch = false
@@ -172,7 +173,7 @@ export function updateController(dt, hud) {
     send('emote', { emote: '' })
   }
   p.aiming = alive && playing && inputState.aim && isGun && p.reloadT < 0 && p.healT < 0
-  p.crouch = alive && inputState.crouch && !p.emote
+  p.crouch = alive && inputState.crouch && !p.emote && !p.seat
   const sprint = alive && inputState.sprint && inputState.move.z > 0.3 && !p.aiming && !inputState.fire && !p.crouch && p.healT < 0
   let speed = PHYSICS.walkSpeed
   if (p.life === 'knocked') speed = PHYSICS.crawlSpeed
@@ -204,7 +205,8 @@ export function updateController(dt, hud) {
   // Boolean: guns without a scope have def.scope undefined, and an undefined here made the
   // HUD's classList.toggle flip the scope overlay on every other frame while aiming.
   view.scoped = !!(p.aiming && def.scope && alive && def.zoom <= SCOPE_FOV + 6)
-  const hspeed = Math.hypot(body.velocity.x, body.velocity.z)
+  // A passenger's spread counts as a steady walk at most, not the vehicle's speed.
+  const hspeed = p.seat ? Math.min(3, Math.hypot(body.velocity.x, body.velocity.z)) : Math.hypot(body.velocity.x, body.velocity.z)
   view.spread = isGun ? currentSpread(p, hspeed) : 0
 
   // Pitch for the arms: from the aim direction (+ = down).
@@ -235,9 +237,11 @@ export function updateController(dt, hud) {
   // Auto-reload an empty gun.
   if (alive && isGun && p.weapon.ammo === 0 && p.reloadT < 0 && p.weapon.reserve > 0 && !inputState.fire) startReload(p)
 
-  // Interact: supplies or reviving a teammate (hold).
+  // Interact: supplies or reviving a teammate (hold); a passenger can only get out.
   reviveTarget = null
-  if (alive && playing) {
+  if (alive && playing && p.seat) {
+    view.prompt = { t1: p.seat.v.def.name, t2: 'Get out', progress: 0 }
+  } else if (alive && playing) {
     let best = null
     let bd = 2.2
     for (const a of G.actors) {
@@ -277,7 +281,7 @@ export function updateController(dt, hud) {
   }
 
   // Footsteps / landing
-  if (alive && body.grounded && hspeed > 1.5) {
+  if (alive && body.grounded && hspeed > 1.5 && !p.seat) {
     stepAcc += hspeed * dt
     const stride = sprint ? 2.1 : 1.7
     if (stepAcc > stride) {

@@ -396,7 +396,7 @@ Recipe, add a mission: append `{ id, stat, goal, coins, gems }` to the list in b
 
 ## 19. Vehicles and the Test Drive (`vehicles.js`, `vehicleModels.js`, `driveTest.js`)
 
-Milestone 2 of the vehicle plan: driving works offline in the **Test Drive** (the lobby's TEST DRIVE button). Nothing about vehicles is sent to the server yet (online seats are the next milestone).
+Driving works offline in the **Test Drive** (the lobby's TEST DRIVE button) and online in Dustline Ridge rounds (`vehicleNet.js`, below): a Jeep and a Dune Buggy wait in each camp's vehicle bay, the server owns the seats, the driver's client simulates the vehicle, passengers ride and shoot. Vehicle damage, cover, ramming and the driver's own gun are the next milestone.
 
 ### Tuning: `config.js` `VEHICLES` and `DRIVE`
 
@@ -424,6 +424,8 @@ Milestone 2 of the vehicle plan: driving works offline in the **Test Drive** (th
 | `spawnVehicle(type, x, z, yaw)` | A dynamic Rapier chassis (cuboid with `setMassProperties`, gravity scale, damping), a `DynamicRayCastVehicleController` (`indexUpAxis` 1, forward axis 2, four wheels: front left, front right, back left, back right), the model bound with `physics.js bindMesh` (interpolated). Placed with its wheels on `G.island.groundHeight` |
 | `removeVehicle(v)`, `clearVehicles()` | Gets the player out first if seated, unbinds and frees everything |
 | `vehicleNear(actor)` | The nearest vehicle with a free seat within `DRIVE.enterRange` of its chassis box (so the long sides count): `{ v, seat }` (the driver's seat when free) |
+| `requestEnter(v, seat)`, `requestExit()` | What E / the prompt call. Offline they act at once; online `requestEnter` sends `enter { v: id, s }` (at most every 0.4 s) and the seat follows the server's answer, `requestExit` exits locally first (it needs a clear spot), then sends `exit` and one last `vpose`, and ignores the server's stale "still seated" for 1.5 s (`recentlyExited`) |
+| `setAuthority(v, 'local' / 'remote', vel)`, `snapVehicle(v, x, y, z, q, vel)`, `vehicleById(id)`, `seatFeet(v, seat, out)`, `sendVehiclePose(v, rest)` | Online plumbing: a 'local' vehicle is a dynamic body simulated here; a 'remote' one is a kinematic body (only its wheels run the suspension rays, its steering comes from the network); `seatFeet` = a seat's feet origin from the drawn pose (other seated players) |
 | `enterVehicle(v, seat)` | Seats `G.player`: `actor.seat = { v, index, drive }`, `player.js setRide(seatPose)` (the capsule's collider goes off and the body follows the seat right after every physics tick), `body.driving` class, a sound |
 | `exitVehicle(force)` | Finds a clear spot (`exits`: a down ray for the floor, a capsule overlap test), `setRide(null)`, `resetPlayer` there with half the vehicle's speed; refuses (deny sound) when nowhere is clear unless `force` |
 | `driveInput()` | Per frame from `controller.js`: throttle = `move.z`, steering = `-move.x`, handbrake = Space held or `inputState.brake` (touch BRAKE) |
@@ -434,6 +436,14 @@ Milestone 2 of the vehicle plan: driving works offline in the **Test Drive** (th
 Physics tick (`onTick`, before `world.step`): per vehicle, the forces from its controls: throttle forward = engine (tapered by speed) or brakes when moving backwards; throttle back = brakes when moving forwards, else reverse (65 % force, up to `reverseSpeed`); no input = `roll` drag; no driver = parked on the handbrake. Steering lock shrinks with speed and eases at `steerRate`. Then `ctrl.updateVehicle(dt, flags, groups, predicate)` (its own chassis and kinematic bodies such as the player's capsule are excluded from the suspension rays).
 
 Seated player: `controller.js updateController` skips weapons, items, crates and revives (`canAct()` is false in a seat), shows the prompt "<vehicle> · Get out" and calls `driveInput()`; E or the prompt button (`interactPress`) gets in and out. `actor.js updateModel` copies the vehicle's quaternion onto the character and passes `sit`, `drive`, `steer` to the animator (the 'sit' layer, avatar.md). The held gun is hidden while driving. `main.js` uses the chase camera (`camera.js opts.drive`).
+
+### Online (`vehicleNet.js`; backend `vehicles.ts`, protocol.md)
+
+Each frame of a round (`main.js gameFrame`): `syncVehicles()` after the server state (vehicles appear and disappear with `state.vehicles`; authority from `owner`: this player or nobody = 'local', another player = 'remote', drawn `NET.interpDelay` behind its samples with the quaternion nlerped; a parked vehicle snaps to someone's last pose; this player's seat follows `veh` / `seat`; other players get `actor.seat`), `sendVehicles(dt)` after the player's own pose (the owner's poses at `NET.poseHz` while driving or moving, then one `r: 1` "at rest" after 0.8 s still), and `placeSeated()` after physics (other seated players on their vehicle's drawn seat). `closeMatch` clears the vehicles before the actors go.
+
+Passengers: `setRide(seat, look = true)` faces the body with the camera, so they aim freely; `controller.js` lets them fire, reload and switch weapons (no movement, items, abilities or crates; the prompt is Get out); their spread counts at most a walk (3 m/s); no footsteps. The driver keeps the chase camera; passengers keep the shooter camera on their seat. `body.riding` marks a passenger (`body.driving` only the driver: the weapon HUD hides and BRAKE shows only for the driver).
+
+Known limits: the player's capsule ignores kinematic bodies (`player.js`), so a vehicle someone else is driving can be walked through (parked ones are local and solid); bullets ignore vehicles (`combat.js` casts against static colliders only).
 
 ### `vehicleModels.js`
 

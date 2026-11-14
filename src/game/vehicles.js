@@ -9,13 +9,17 @@
 // input drives: W / S or the stick's forward axis = throttle / brake / reverse, A / D or its side axis
 // = steering, Space or the touch BRAKE button = handbrake.
 //
-// Offline only for now (the Test Drive, driveTest.js); nothing here talks to the server yet.
+// Offline (the Test Drive, driveTest.js) every vehicle is simulated here. Online (vehicleNet.js) the
+// server decides the seats: requestEnter / requestExit ask it, and each vehicle has an authority:
+// 'local' (a dynamic body simulated here: driven or last driven by this player, or parked with nobody
+// simulating it) or 'remote' (a kinematic body following the poses of the player who drives it).
 import { Quaternion, Vector3 } from 'three'
 import { DRIVE, PHYSICS, VEHICLES } from '../config.js'
 import { RAPIER, bindMesh, onTick, unbindMesh, world } from '../physics.js'
 import { inputState, isHeld } from '../input.js'
 import { player as body, resetPlayer, setRide } from '../player.js'
 import { sfx, setEngine } from '../audio/index.js'
+import { send } from '../net.js'
 import { G } from './state.js'
 import { buildVehicleModel } from './vehicleModels.js'
 import './vehicles.css'
@@ -39,8 +43,8 @@ const yawOf = (q) => {
 }
 
 // Spawns a parked vehicle of `type` with its wheels on the ground at (x, z), facing `yaw`
-// (0 = +z, PI/2 = +x).
-export function spawnVehicle(type, x, z, yaw = 0) {
+// (0 = +z, PI/2 = +x). `id`: the server's vehicle id (online).
+export function spawnVehicle(type, x, z, yaw = 0, id = null) {
   const def = VEHICLES[type]
   const w = def.wheels
   const ground = G.island?.groundHeight(x, z) ?? 0
@@ -88,6 +92,10 @@ export function spawnVehicle(type, x, z, yaw = 0) {
   G.scene.add(model.root)
   bindMesh(rb, model.root)
   const v = {
+    id,
+    auth: 'local', // 'local' (dynamic, simulated here) | 'remote' (kinematic, follows the network)
+    snaps: [], // remote: pose samples { t, x, y, z, qx, qy, qz, qw, st }
+    netSteer: 0,
     type,
     def,
     body: rb,
@@ -130,17 +138,108 @@ export function clearVehicles() {
 }
 
 export const myVehicle = () => mine
+export const mySeatIndex = () => mySeat
 export const driving = () => !!mine && mySeat === 0
+export const vehicleById = (id) => vehicles.find((v) => v.id === id) ?? null
+
+// Switches who simulates a vehicle: 'local' (dynamic body, this client) or 'remote' (kinematic body
+// moved to the network poses). `vel`: the velocity to carry on with when it becomes local.
+export function setAuthority(v, auth, vel = null) {
+  if (v.auth === auth) return
+  v.auth = auth
+  v.snaps.length = 0
+  if (auth === 'remote') {
+    v.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true)
+  } else {
+    v.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true)
+    if (vel) v.body.setLinvel(vel, true)
+    v.body.wakeUp()
+  }
+}
+
+// Puts a vehicle at a pose at once (joining, or someone's last pose of a parked vehicle).
+export function snapVehicle(v, x, y, z, q, vel = null) {
+  v.body.setTranslation({ x, y, z }, true)
+  v.body.setRotation(q, true)
+  if (v.auth === 'remote') {
+    v.body.setNextKinematicTranslation({ x, y, z })
+    v.body.setNextKinematicRotation(q)
+  } else {
+    v.body.setLinvel(vel ?? { x: 0, y: 0, z: 0 }, true)
+    v.body.setAngvel({ x: 0, y: 0, z: 0 }, true)
+  }
+  v.model.position.set(x, y, z)
+  v.model.quaternion.set(q.x, q.y, q.z, q.w)
+}
+
+// Online, the server seats players: these ask it (the local seat follows its answer, vehicleNet.js).
+// Offline (the Test Drive) they act at once.
+const online = () => !G.test && !!G.match
+let askedAt = 0
+export function requestEnter(v, seat) {
+  if (!online()) return enterVehicle(v, seat)
+  if (!v.id || performance.now() - askedAt < 400) return false
+  askedAt = performance.now()
+  send('enter', { v: v.id, s: seat })
+  return true
+}
+let exitedAt = -1e9
+export const recentlyExited = () => performance.now() - exitedAt < 1500
+export function requestExit() {
+  const v = mine
+  if (!exitVehicle()) return false
+  if (online()) {
+    exitedAt = performance.now()
+    send('exit')
+    if (v?.auth === 'local') sendVehiclePose(v, false) // where it was left, at once
+  }
+  return true
+}
+
+// The owner's pose of a vehicle for the server (vehicleNet.js decides when). rest: at rest, let go.
+const r2 = (n) => Math.round(n * 100) / 100
+const r4 = (n) => Math.round(n * 10000) / 10000
+export function sendVehiclePose(v, rest) {
+  const t = v.body.translation()
+  const q = v.body.rotation()
+  const lv = v.body.linvel()
+  send('vpose', { v: v.id, x: r2(t.x), y: r2(t.y), z: r2(t.z), qx: r4(q.x), qy: r4(q.y), qz: r4(q.z), qw: r4(q.w), vx: r2(lv.x), vy: r2(lv.y), vz: r2(lv.z), st: r2(v.steerShown), r: rest ? 1 : 0 })
+}
+
+// The feet origin of a seat from the vehicle's drawn (interpolated) pose: other players in seats.
+export function seatFeet(v, index, out) {
+  const s = v.def.seats[index]
+  if (!s) return out.copy(v.model.position)
+  tmpW.set(s.x, s.y - DRIVE.hipHeight, s.z).applyQuaternion(v.model.quaternion)
+  return out.copy(v.model.position).add(tmpW)
+}
 
 // --- Physics tick: controls -> wheel forces, then the raycast vehicle update --------------------------
 function tickVehicle(v, dt) {
   const def = v.def
+  if (v.auth === 'remote') {
+    // Kinematic, moved by vehicleNet.js: only the wheels need the suspension rays (and the steering).
+    const lv = v.body.linvel()
+    const rot = v.body.rotation()
+    tmpQ.set(rot.x, rot.y, rot.z, rot.w)
+    fwd.set(0, 0, 1).applyQuaternion(tmpQ)
+    v.speed = lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z
+    v.steer = v.netSteer * def.steer
+    v.steerShown = v.netSteer
+    for (let i = 0; i < 4; i++) {
+      v.ctrl.setWheelEngineForce(i, 0)
+      v.ctrl.setWheelBrake(i, 0)
+      v.ctrl.setWheelSteering(i, i < 2 ? v.steer : 0)
+    }
+    v.ctrl.updateVehicle(dt, FLAGS(), undefined, (c) => c.handle !== v.collider.handle)
+    return
+  }
   const lv = v.body.linvel()
   const rot = v.body.rotation()
   tmpQ.set(rot.x, rot.y, rot.z, rot.w)
   fwd.set(0, 0, 1).applyQuaternion(tmpQ)
   v.speed = lv.x * fwd.x + lv.y * fwd.y + lv.z * fwd.z
-  const driven = !!v.seats[0]
+  const driven = !!v.seats[0] && v.seats[0] === G.player // a local sim is driven from here, or parked
   const s = v.speed
   let engine = 0
   let brake = 0
@@ -233,8 +332,9 @@ export function enterVehicle(v, index = 0) {
   p.reloadT = -1
   inputState.crouch = false
   inputState.aim = false
-  setRide((out) => seatPose(v, index, out))
-  document.body.classList.add('driving')
+  setRide((out) => seatPose(v, index, out), index !== 0) // passengers look (and aim) freely
+  document.body.classList.toggle('driving', index === 0)
+  document.body.classList.toggle('riding', index !== 0)
   v.body.wakeUp()
   sfx.equip()
   return true
@@ -245,7 +345,18 @@ export function enterVehicle(v, index = 0) {
 export function exitVehicle(force = false) {
   const v = mine
   const p = G.player
-  if (!v || !p) return false
+  if (!v) return false
+  if (!p) {
+    // the round is being torn down: just let go
+    v.seats[mySeat] = null
+    mine = null
+    mySeat = -1
+    setRide(null)
+    document.body.classList.remove('driving', 'riding')
+    setEngine(null)
+    paintHud()
+    return true
+  }
   const spot = exitSpot(v)
   if (!spot && !force) {
     sfx.deny()
@@ -262,7 +373,7 @@ export function exitVehicle(force = false) {
   const lv = v.body.linvel()
   body.velocity.x = lv.x * 0.5
   body.velocity.z = lv.z * 0.5
-  document.body.classList.remove('driving')
+  document.body.classList.remove('driving', 'riding')
   inputState.brake = false
   setEngine(null)
   paintHud()
@@ -375,7 +486,7 @@ let hud = null
 let shownKmh = -1
 let shownName = ''
 function paintHud() {
-  if (!mine) {
+  if (!mine || mySeat !== 0) {
     if (hud) hud.style.display = 'none'
     shownKmh = -1
     return

@@ -60,10 +60,13 @@ export function createPlayerBody() {
 // Seated in a vehicle: `seat(out)` fills out = { x, y, z (feet), vx, vy, vz, yaw } from the vehicle's
 // pose right after each physics tick, so the player renders exactly with it (same interpolation).
 // The capsule's collider is switched off meanwhile. null gets out (then resetPlayer places the body).
+// look: a passenger seat, where the player faces (and aims) with the camera rather than the vehicle.
 let seat = null
+let seatLook = false
 const seatOut = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, yaw: 0 }
-export function setRide(fn) {
+export function setRide(fn, look = false) {
   seat = fn
+  seatLook = !!fn && look
   player.riding = !!fn
   collider?.setEnabled(!fn)
   jumpQueued = 0
@@ -83,7 +86,7 @@ function followSeat() {
   player.velocity.x = seatOut.vx
   player.velocity.y = seatOut.vy
   player.velocity.z = seatOut.vz
-  player.facing = seatOut.yaw
+  player.facing = seatLook ? getYaw() + Math.PI : seatOut.yaw
   player.grounded = true
   body.setNextKinematicTranslation({ x: seatOut.x, y: seatOut.y + HALF, z: seatOut.z })
 }

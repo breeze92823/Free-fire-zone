@@ -81,6 +81,7 @@ main.js                      boot, phase flow, frame loop, dev hooks
   game/match.js  controller.js  online.js                the round on this client
   game/testRange.js                                      the offline Weapon Test range (store's TEST)
   game/driveTest.js  vehicles.js  vehicleModels.js       the offline Test Drive; vehicles (lobby's TEST DRIVE)
+  game/vehicleNet.js                                     vehicles in an online round (seats, authority, poses)
   game/combat.js items.js loot.js zone.js fx.js          gameplay systems
   game/projectiles.js areas.js                           flying rounds; fire / smoke / stun effects
   game/actor.js  characters.js weaponModels.js merge.js icons.js mapimage.js   models

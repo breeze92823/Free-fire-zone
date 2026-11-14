@@ -33,7 +33,8 @@ import { buildNav, buildNavAsync } from './game/navgrid.js'
 import { createMatch, initMatchSystems, spawnActor, teardownMatch, updateMatch } from './game/match.js'
 import { endTest, startTest, testStartPose, updateTest } from './game/testRange.js'
 import { endDrive, startDrive, startPose as driveStartPose, updateDriveTest } from './game/driveTest.js'
-import { driveCamera, updateVehicles, vehicleFocus, vehicles } from './game/vehicles.js'
+import { clearVehicles, driveCamera, updateVehicles, vehicleFocus, vehicles } from './game/vehicles.js'
+import { placeSeated, sendVehicles, syncVehicles } from './game/vehicleNet.js'
 import { bindKeys, interactPress, playEmote, updateController, useItem, useUlt, view } from './game/controller.js'
 import * as combat from './game/combat.js'
 import { selectSlot, startReload } from './game/combat.js'
@@ -909,6 +910,7 @@ function closeMatch() {
   hideResults()
   hud.show(false)
   stopTutorial()
+  clearVehicles() // a round's vehicles (online; the Test Drive clears its own), before the actors go
   if (G.match) teardownMatch()
   // A graphics switch held back during the round (pendingGraphics) is NOT applied here: it recompiles
   // shaders and re-uploads textures (seconds on a weak GPU) and the lobby is not drawn meanwhile, which
@@ -1218,6 +1220,7 @@ function gameFrame(dt) {
     reconcile()
     applyState(dt)
     syncClock(dt)
+    syncVehicles() // Dustline Ridge rounds: vehicles, their authority, seats (vehicleNet.js)
   }
   spanEnd('net', t)
 
@@ -1237,9 +1240,15 @@ function gameFrame(dt) {
     p.grounded = body.grounded
     if (p.life !== 'dead' && G.phase !== 'results') p.facing = body.facing
   }
-  if (p && G.phase !== 'results' && !G.test) sendPose(dt)
+  if (p && G.phase !== 'results' && !G.test) {
+    sendPose(dt)
+    sendVehicles(dt)
+  }
   if (G.test) updateTest(gdt, camera)
-  if (vehicles.length) updateVehicles(gdt)
+  if (vehicles.length) {
+    updateVehicles(gdt)
+    if (!G.test) placeSeated() // other players in seats sit on their vehicle's drawn seat
+  }
   if (G.drive) updateDriveTest(gdt, camera)
   t = span()
   if (G.phase === 'playing' || G.phase === 'ending') updateMatch(gdt)
@@ -1292,8 +1301,8 @@ function gameFrame(dt) {
   } else if (G.phase === 'results') {
     const pose = updateResults(dt, camera)
     updateCamera(camera, dt, { mode: 'look', from: pose.from, lookAt: pose.lookAt })
-  } else if (p?.seat && p.life !== 'dead') {
-    // In a vehicle: the chase camera on the vehicle (camera.js opts.drive).
+  } else if (p?.seat?.drive && p.life !== 'dead') {
+    // Driving: the chase camera on the vehicle (camera.js opts.drive). Passengers keep the shooter camera.
     updateCamera(camera, dt, { mode: 'play', target: vehicleFocus(), drive: driveCamera() })
   } else if (p) {
     const scoped = view.scoped && G.phase === 'playing'
