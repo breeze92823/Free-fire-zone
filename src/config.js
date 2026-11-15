@@ -373,8 +373,8 @@ export const LEADERBOARDS = [
 // Keep roomSize / teamMax / minPlayers / respawn in step with its src/constants.ts.
 export const NET = {
   room: 'match',
-  roomSize: 6, // connections per room (the lobby) = a round's seats (2 x teamMax): nobody queues, the matchmaker opens another room
-  teamMax: 3, // players per side in a round (a round has 6)
+  roomSize: 10, // connections per room (the lobby) = a round's seats (2 x teamMax): nobody queues, the matchmaker opens another room
+  teamMax: 5, // players per side in a round (a round has 10)
   minPlayers: 2, // a round starts once this many have pressed Play
   // Local development without the Bloxity SDK: the backend's `npm start`.
   devServer: import.meta.env.VITE_SERVER_URL || '',
@@ -654,8 +654,8 @@ export const HEALTH = {
 // --- Match modes ---------------------------------------------------------------------
 export const MATCH_MODES = {
   // Online: up to NET.teamMax per side, real players only. Picked in the lobby's mode window (play { mode }).
-  clash: { name: 'Team Clash', desc: 'Up to 3 v 3 · respawns · most eliminations wins', teamSize: 3, duration: 240, scoreToWin: 45, respawn: true },
-  squad: { name: 'Squad Showdown', desc: 'Up to 3 v 3 · respawns · first to 25', teamSize: 3, duration: 180, scoreToWin: 25, respawn: true },
+  clash: { name: 'Team Clash', desc: 'Up to 5 v 5 · respawns · most eliminations wins', teamSize: 5, duration: 240, scoreToWin: 45, respawn: true },
+  squad: { name: 'Squad Showdown', desc: 'Up to 5 v 5 · respawns · first to 25', teamSize: 5, duration: 180, scoreToWin: 25, respawn: true },
 }
 export const MATCH = {
   countdown: 4, // s frozen at the start (3, 2, 1, FIGHT)

@@ -299,20 +299,22 @@ export function createLobbyScene() {
   star.position.set(0, 0.05, 0.12)
   shield.add(star)
 
-  // Squad: the player in the middle, up to three teammates (the lobby team; players who joined the team).
+  // Squad: the player in the middle, up to four teammates (the lobby team, NET.teamMax - 1).
   const squad = []
-  // The first teammate stands on the right (clear of the left menu), the second on the left.
+  // The first teammate stands on the right (clear of the left menu), the second on the left, the
+  // third and fourth behind them.
   const spots = [
     [2.1, -0.8, -0.3],
     [-2.1, -0.8, 0.3],
     [3.7, -2.5, -0.45],
+    [-3.7, -2.5, 0.45],
   ]
   let spread = 1 // < 1 on narrow screens: teammates stand closer so the player list on the right does not hide them
   let playerAvatar = null
   const playerGroup = new Group()
   scene.add(playerGroup)
   let playerActor = null
-  // mates: [{ outfit, primary, secondary }] for the other players shown (at most 3).
+  // mates: [{ outfit, primary, secondary }] for the other players shown (at most 4).
   let mates = []
   function rebuildSquad(loadout, nextMates = mates) {
     mates = nextMates || []

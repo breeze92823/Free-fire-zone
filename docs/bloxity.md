@@ -57,7 +57,7 @@ Columns: wrapped SDK call, result without the SDK, callers (found by Grep in `sr
 4. `avatar.onAvatarChanged` and `avatar.onProportionsChanged` when they exist.
 5. `player.onEvent((event, data) => ...)`: `respawn_request` -> respawn listeners; `play_emote` with a string -> emote listeners with the id; `stop_emote` -> emote listeners with `null`.
 6. `initAds(SDK)`, `initLeaderboards(SDK)`.
-7. `party.enable({ maxPartySize: NET.teamMax })` (3).
+7. `party.enable({ maxPartySize: NET.teamMax })` (5).
 8. `game.registerFeature('emotes')`.
 9. `game.loadingStep('Building the island')`.
 

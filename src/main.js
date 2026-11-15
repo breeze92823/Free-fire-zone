@@ -1034,7 +1034,7 @@ function showMates(list) {
   // is just prewarmed.
   const mySquad = list.find((m) => m.me)?.squad || ''
   const others = list.filter((m) => !m.me && !(mySquad && m.squad === mySquad))
-  const shown = mySquad ? list.filter((m) => !m.me && m.squad === mySquad).slice(0, 2) : []
+  const shown = mySquad ? list.filter((m) => !m.me && m.squad === mySquad).slice(0, NET.teamMax - 1) : []
   const struct = shown.map((m) => `${m.id}:${m.primary}:${m.secondary}`).join(',')
   if (struct !== matesStruct) {
     matesStruct = struct
