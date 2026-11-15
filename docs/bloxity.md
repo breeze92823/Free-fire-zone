@@ -171,8 +171,8 @@ The portal draws the chat UI; the game only floats bubbles. `THREE` is passed in
 | `partyLaunch()` | `party.getLaunch()` (`net.js` reads `.roomKey`) | `null` | `net.js joinOnce` |
 | `partyJoined(roomId)` | `party.joined(roomId)` | no-op | `net.js connect` |
 | `partyFailed(reason)` | `party.failed(reason)` | no-op | `net.js joinOnce` (`'room-full'` when the join error matches `full|locked`) |
-| `playerJoined(name)` | `game.playerJoined(name)` | no-op | `online.js trackRoster` (a new session id with a name) |
-| `playerInRoom(name)` | `game.playerInRoom(name)` | no-op | `online.js trackRoster` (first roster seen after joining) |
+| `playerJoined(name)` | `game.playerJoined(name)` | no-op | `online.js trackRoster` (a player who arrived after us, reported once, as soon as they have a name) |
+| `playerInRoom(name)` | `game.playerInRoom(name)` | no-op | `online.js trackRoster` (players already in the room when we joined, once each when named; the portal's Esc menu "In this lobby" list is built from these; tracking restarts in every room) |
 
 How `net.js` strings these together (`joinOnce`): `partyLaunch()` -> join options (`token`, `devUser`, `party: roomKey`, plus `main.js` `setJoinOptions`: `name`, `pfp`, `avatar`, `outfitKey`) -> launch room via `locateRoom` + `joinById` -> else `resolve()` -> a new Colyseus `Client(endpoint)` -> `create(..., { private: true })` when `wantsPrivateRoom()` (first time only) or `joinOrCreate`. After `attach`: `reportRoom()`, `registerFeature('play_with_friends')`; `partyJoined` when a party launch was present.
 

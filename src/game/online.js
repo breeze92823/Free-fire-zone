@@ -620,22 +620,36 @@ export function syncLoot() {
   if (net.state) syncCrates(net.state.crates)
 }
 
-// --- Roster notifications (friend joins) -----------------------------------------------------------
-let known = null
+// --- Roster notifications (the portal's Esc menu list + friend joins) ------------------------------
+// Tells Bloxity who shares our room: playerInRoom = already here when we joined, playerJoined =
+// arrived after us. Each player is reported exactly once, as soon as they have a name (the same rule
+// as Fly-over-slime's remotePlayers.js), and the bookkeeping restarts in every room we join.
+let rosterRoom = null // the Colyseus room the entries below belong to
+let reported = null // sessionId -> { late, done } for the players seen in that room
 export function trackRoster() {
   const st = net.state
-  if (!st?.players) {
-    known = null
+  if (!st?.players || !net.room) {
+    rosterRoom = null
+    reported = null
     return
   }
-  const now = new Set()
+  const first = net.room !== rosterRoom // the first read of a room only lists who was already here
+  if (first) {
+    rosterRoom = net.room
+    reported = new Map()
+  }
+  const here = new Set()
   st.players.forEach((p, sid) => {
     if (sid === net.sessionId) return
-    now.add(sid)
-    if (!known) bloxity.playerInRoom(p.name)
-    else if (!known.has(sid) && p.name) bloxity.playerJoined(p.name)
+    here.add(sid)
+    let r = reported.get(sid)
+    if (!r) reported.set(sid, (r = { late: !first, done: false }))
+    if (r.done || !p.name) return
+    r.done = true
+    if (r.late) bloxity.playerJoined(p.name)
+    else bloxity.playerInRoom(p.name)
   })
-  known = now
+  for (const sid of reported.keys()) if (!here.has(sid)) reported.delete(sid)
 }
 
 // Everyone in the room right now (lobby "Players online" + team): [{ id, name, pfp, inMatch, team, squad, squadLead, ... }].
