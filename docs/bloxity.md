@@ -165,7 +165,7 @@ The portal draws the chat UI; the game only floats bubbles. `THREE` is passed in
 | `resolveServerEndpoint(userId)` (async) | `net.resolveEndpoint(GAME_SLUG, { userId }?)` -> `{ endpoint, roomId, cold }`; returns `{ endpoint, relayRoomId: roomId }`; logs when `cold` | rejects (TypeError) | `net.js resolve()`, only when `canResolveServer() && !NET.devServer` |
 | `launchRoomId()` | `?roomId=` of the page URL | `''` when absent | `net.js joinOnce` (first connect only) |
 | `locateRoom(id)` (async) | `environment().playUrl`. `"<relay>~<room>"` -> `{ endpoint: ws(s)://.../v1/ws/<relay>, roomId, relayRoomId }`. Bare id -> `GET <playUrl>/v1/dir/<slug>/list`, the entry with that `colyseusRoomId`, not `locked`, `players < maxPlayers` -> `{ endpoint: joinUrl, roomId, relayRoomId }` | `null` | `net.js joinOnce` (in a `try`; failure falls back to matchmaking) |
-| `updateRoom(roomId, partyId)` | `game.updateRoom(roomId[, partyId])`; `''` = not in a joinable room | no-op | `net.js reportRoom` (`"<relay>~<roomId>"`, team as `partyId`) |
+| `updateRoom(roomId, partyId)` | `game.updateRoom(roomId[, partyId])`; `''` = not in a joinable room | no-op | `net.js reportRoom` (the plain Colyseus `roomId`, the id Bloxity's room directory lists; team as `partyId`) |
 | `wantsPrivateRoom()` | `?instantMultiplayer=true` | `false` when absent | `net.js joinOnce` |
 | `registerFeature(name)` | `game.registerFeature(name)`, once per name | marks the name done without calling anything | `net.js attach` (`'play_with_friends'`, after each join) |
 | `partyLaunch()` | `party.getLaunch()` (`net.js` reads `.roomKey`) | `null` | `net.js joinOnce` |

@@ -206,11 +206,14 @@ function attach(room, relayRoomId) {
   bloxity.registerFeature('play_with_friends')
 }
 
-// Invites and Open Rooms land in this room: "<relay>~<roomId>" through the matchmaker relay.
+// Invites, Open Rooms and the portal's Esc menu "In this server" list use this room. It must be the
+// plain Colyseus room id: the one Bloxity's room directory lists (api.bloxity.io/v1/games/<slug>/rooms)
+// and puts in ?roomId= links (the "<relay>~<roomId>" form is only for CrazyGames invites, and does not
+// match the directory, which left the Esc menu list empty). `locateRoom` finds the room by this id.
 // `team` is passed as the game's own team id.
 export function reportRoom(team = '') {
   if (!net.room) return bloxity.updateRoom('')
-  bloxity.updateRoom(net.relayRoomId ? `${net.relayRoomId}~${net.room.roomId}` : net.room.roomId, team)
+  bloxity.updateRoom(net.room.roomId, team)
 }
 
 export function disconnect() {

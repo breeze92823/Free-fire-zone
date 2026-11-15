@@ -31,7 +31,7 @@ Docs: https://docs.bloxity.io/#html5. All SDK calls go through `src/bloxity.js` 
 | Multiplayer: `net.resolveEndpoint` per connect, new Client each time, backoff up to 60 s, token in join options | `net.js` |
 | Server identity: token verified with `/v1/auth/game-token/verify`, only `user._id` used, guest ids server-made, `carriedFrom` | backend `auth.ts`, `db.ts` |
 | Open Rooms: room reporter; `?roomId=` joins that room (falls back to matchmaking) | backend `reporters.ts`, `net.js`, `bloxity.js locateRoom` |
-| Friends: `updateRoom(relay~roomId, team)`, `playerJoined` / `playerInRoom` | `net.js reportRoom`, `game/online.js trackRoster` |
+| Friends: `updateRoom(roomId, team)` (plain Colyseus room id), `playerJoined` / `playerInRoom` | `net.js reportRoom`, `game/online.js trackRoster` |
 | Party play: `party.enable`, launch roomKey in join options (same team), `party.joined` / `party.failed('room-full')` | `bloxity.js`, `net.js`, backend `pickTeam` |
 | Play with friends: `?instantMultiplayer=true` creates a private room; `registerFeature('play_with_friends')` after a join | `net.js`, backend `onCreate` |
 | Server stats + server-side leaderboard reports (verified `legion_` ids, batched) | backend `reporters.ts` |
