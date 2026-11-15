@@ -59,7 +59,7 @@ export const online = () => net.status === 'online' && !!net.room
 export const me = () => (net.state?.players && net.sessionId ? net.state.players.get(net.sessionId) ?? null : null)
 
 // Every server message the client handles (server MatchRoom): forwarded to onNet listeners.
-const MESSAGES = ['profile', 'shop', 'rewards', 'reward', 'healed', 'serverError', 'round', 'spawn', 'dmg', 'knock', 'elim', 'revive', 'shot', 'throw', 'boom', 'blast', 'wall', 'ult', 'opened', 'openFail', 'matchEnd', 'invite', 'inviteEnd', 'squadNote', 'heart', 'react', 'playerProfile', 'claimed', 'vboom', 'ram']
+const MESSAGES = ['profile', 'inviteOffer', 'shop', 'rewards', 'reward', 'healed', 'serverError', 'round', 'spawn', 'dmg', 'knock', 'elim', 'revive', 'shot', 'throw', 'boom', 'blast', 'wall', 'ult', 'opened', 'openFail', 'matchEnd', 'invite', 'inviteEnd', 'squadNote', 'heart', 'react', 'playerProfile', 'claimed', 'vboom', 'ram']
 
 function setStatus(status, error = '') {
   net.status = status
@@ -96,6 +96,7 @@ function joinOptions(party) {
     token: bloxity.getToken() || undefined,
     devUser: devUser(),
     party: party?.roomKey || undefined,
+    inv: bloxity.inviterId() || undefined, // the friend whose invite link opened this page
     ...joinExtras(),
   }
 }

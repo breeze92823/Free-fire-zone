@@ -2150,3 +2150,243 @@
     width: 46px;
   }
 }
+
+/* --- Friend invite offer (lobby.js offerWindow / paintOffer, config.js FRIEND_OFFER) -------------- */
+.chip.offer {
+  gap: 8px;
+  padding: 0 16px 0 6px;
+  border-color: rgba(255, 207, 61, 0.85);
+  background: linear-gradient(180deg, rgba(120, 62, 12, 0.95), rgba(52, 24, 6, 0.95));
+  color: #fff;
+  cursor: pointer;
+  animation: ofPulse 2.2s ease-in-out infinite;
+}
+.chip.offer[hidden] {
+  display: none;
+}
+.chip.offer.near {
+  border-color: #ff5a4a;
+}
+.chip.offer .gi {
+  display: flex;
+  height: 78%;
+  aspect-ratio: 1;
+}
+.chip.offer .gi svg {
+  width: 100%;
+  height: 100%;
+}
+.chip.offer .ot {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.12;
+  text-align: left;
+}
+.chip.offer .ot b {
+  font-size: clamp(9px, 1.7vmin, 13px);
+  letter-spacing: 0.06em;
+  color: #ffd54a;
+}
+.chip.offer .ot > span {
+  display: flex;
+  gap: 6px;
+  font-size: clamp(11px, 2.2vmin, 17px);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.chip.offer .ot i {
+  font-style: normal;
+}
+.chip.offer .ot .oc {
+  color: #7dffb0;
+}
+@keyframes ofPulse {
+  50% {
+    filter: brightness(1.22);
+  }
+}
+.lb-top.compact .chip.offer .ot b {
+  display: none;
+}
+.win.offerwin .win-h {
+  background: linear-gradient(180deg, #ffb52e, #d9741a);
+}
+.of {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.of-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: linear-gradient(100deg, rgba(255, 190, 60, 0.32), rgba(26, 32, 52, 0.4) 70%);
+  border: 2px solid rgba(255, 207, 61, 0.5);
+}
+.of-pic {
+  position: relative;
+  flex: none;
+  width: clamp(110px, 24vmin, 200px);
+  padding: 6px;
+  border-radius: 10px;
+  background: radial-gradient(circle at 50% 40%, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.3));
+}
+.of-pic img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.of-pic.dim img {
+  filter: grayscale(1) brightness(0.7);
+}
+.of-free {
+  position: absolute;
+  left: -6px;
+  top: -8px;
+  padding: 2px 10px;
+  border-radius: 6px;
+  font-size: clamp(12px, 2.2vmin, 17px);
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(180deg, #ff6a3d, #d9261c);
+  border: 2px solid #11141b;
+  transform: rotate(-8deg);
+}
+.of-t {
+  font-size: clamp(16px, 3vmin, 24px);
+  font-weight: 700;
+  line-height: 1.15;
+}
+.of-s {
+  font-size: clamp(12px, 2vmin, 14px);
+  opacity: 0.85;
+  margin-top: 4px;
+  line-height: 1.35;
+}
+.of-prog {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.28);
+}
+.of-slots {
+  display: flex;
+  gap: 8px;
+}
+.of-slot {
+  display: grid;
+  place-items: center;
+  width: clamp(40px, 7vmin, 54px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 3px dashed rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.25);
+}
+.of-slot svg {
+  width: 60%;
+  height: 60%;
+}
+.of-slot.on {
+  border: 3px solid #7dffb0;
+  background: rgba(60, 200, 120, 0.3);
+  color: #7dffb0;
+}
+.of-count {
+  font-size: clamp(14px, 2.6vmin, 20px);
+}
+.of-count b {
+  font-size: 1.3em;
+  color: #7dffb0;
+}
+.of-clock {
+  margin-left: auto;
+  font-size: clamp(12px, 2.2vmin, 16px);
+  opacity: 0.95;
+}
+.of-time {
+  font-size: clamp(16px, 3vmin, 24px);
+  color: #ffd54a;
+  font-variant-numeric: tabular-nums;
+}
+.of-link {
+  display: flex;
+  gap: 8px;
+}
+.of-link input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+.of-act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.of-btn {
+  flex: 1 1 140px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 3px solid #0a0d14;
+  line-height: 1.1;
+  border-radius: 10px;
+  font-size: clamp(14px, 2.4vmin, 18px);
+  font-weight: 700;
+  color: #fff;
+}
+.of-btn.go {
+  background: linear-gradient(180deg, #ffd54a, #e8a200);
+  color: #fff; /* white + the .o outline, like the game's other buttons: dark text vanishes in the outline */
+}
+.of-btn.ok {
+  background: linear-gradient(180deg, #4a5468, #2a3142);
+}
+.of-btn:disabled {
+  opacity: 0.6;
+}
+.of-link .of-btn {
+  flex: none;
+}
+.of-fine {
+  font-size: 12px;
+  opacity: 0.65;
+  line-height: 1.35;
+}
+@media (max-width: 560px) {
+  .of-hero {
+    flex-direction: column;
+    text-align: center;
+  }
+  .of-clock {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+@media (max-height: 500px) {
+  .of-hero {
+    padding: 6px 10px;
+  }
+  .of-pic {
+    width: clamp(90px, 22vh, 130px);
+  }
+  .of-fine {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip.offer {
+    animation: none;
+  }
+}

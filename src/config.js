@@ -835,7 +835,12 @@ export const START_PROFILE = {
   rankReward: 0, // highest RANKS index whose reward was paid
   tutorial: false, // the first-round tips are done
   newsSeen: 0, // the newest NEWS id the player has closed (saved on the account)
+  offer: { start: 0, seen: false, claimed: false, by: '', at: 0 }, // the friend invite offer (FRIEND_OFFER), kept by the server
 }
+// Friend invite offer (lobby.js offerWindow, backend rules.ts FRIEND_OFFER): every account gets `hours` from
+// the first time the server sees it; when `need` NEW players join through its invite link in that time,
+// `weapon` is unlocked for free (the server grants it). Nothing here is ever bought.
+export const FRIEND_OFFER = { weapon: 'bulldog', need: 2, hours: 48 }
 // Store: permanent upgrades and emotes, all priced in coins. The server (backend catalog.ts) holds
 // the same prices and decides every purchase; keep the two in step.
 export const STORE = [

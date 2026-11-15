@@ -5,7 +5,7 @@
 // Everything is bought with coins earned by playing; there is no premium currency. Gems (`gems`)
 // are the game's own currency, earned only by playing (knocks / eliminations: the server's `reward`
 // message; round results, missions and rank rewards) and never bought with real money or Bloxity Gems.
-import { GRENADES, MISSIONS, OPERATIVES, PASSES, RANKS, SKINS, START_PROFILE, STORE, WEAPONS, passWeapons } from '../config.js'
+import { FRIEND_OFFER, GRENADES, MISSIONS, OPERATIVES, PASSES, RANKS, SKINS, START_PROFILE, STORE, WEAPONS, passWeapons } from '../config.js'
 import { onNet, online, send } from '../net.js'
 
 const clone = (o) => JSON.parse(JSON.stringify(o))
@@ -112,6 +112,42 @@ export function markNewsSeen(id) {
   } catch {
     // Storage blocked: the server copy is enough for signed-in players.
   }
+}
+
+// --- Friend invite offer (backend MatchRoom `syncOffer`, config.js FRIEND_OFFER) ------------------------
+// The server counts the new players that joined through this player's invite link and grants the weapon
+// itself; `inviteOffer` carries the progress. `skew` = server clock - this clock, so the countdown does
+// not depend on the device's clock being right.
+export const offer = { loaded: false, me: '', joined: 0, need: FRIEND_OFFER.need, weapon: FRIEND_OFFER.weapon, start: 0, end: 0, skew: 0, seen: false, claimed: false }
+const offerListeners = new Set()
+export function onOffer(fn) {
+  offerListeners.add(fn)
+  return () => offerListeners.delete(fn)
+}
+onNet('inviteOffer', (m) => {
+  if (!m) return
+  const prevJoined = offer.joined
+  Object.assign(offer, { loaded: true, me: m.me || '', joined: m.joined | 0, need: m.need | 0 || FRIEND_OFFER.need, weapon: m.weapon || FRIEND_OFFER.weapon, start: m.start || 0, end: m.end || 0, skew: (m.now || Date.now()) - Date.now(), seen: !!m.seen, claimed: !!m.claimed })
+  for (const fn of offerListeners) fn({ granted: !!m.granted, newFriend: offer.joined > prevJoined })
+})
+// ms of the offer left (0 = over).
+export const offerLeft = () => Math.max(0, offer.end - (Date.now() + offer.skew))
+// 'hidden' (no account, or the weapon was already bought), 'active', 'won' (granted) or 'ended'.
+export function offerState() {
+  if (!offer.loaded || !offer.me) return 'hidden'
+  if (offer.claimed) return 'won'
+  if (profile.owned?.weapons?.includes(offer.weapon)) return 'hidden'
+  return offerLeft() > 0 ? 'active' : 'ended'
+}
+// Asks the server for fresh progress (it answers at most every few seconds).
+export function pollOffer() {
+  if (online() && account.loaded) send('offerPoll')
+}
+// The popup was closed: not shown again on this account.
+export function markOfferSeen() {
+  if (offer.seen) return
+  offer.seen = true
+  send('offerSeen')
 }
 
 // The first-round tips are finished or skipped: remembered on the account.

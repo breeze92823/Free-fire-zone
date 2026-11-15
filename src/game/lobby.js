@@ -6,13 +6,17 @@
 // Also the waiting / map-vote panel after PLAY (the room's server runs the
 // rounds: real players only) and the loading screen.
 import './lobby.css'
-import { GRENADES, MATCH_MODES, NEWS, OPERATIVES, PASSES, RANKS, SKINS, STORE, WEAPONS, WEAPON_CATS, GAME_TITLE, QUALITY_OPTIONS } from '../config.js'
+import { FRIEND_OFFER, GRENADES, MATCH_MODES, NEWS, OPERATIVES, PASSES, RANKS, SKINS, STORE, WEAPONS, WEAPON_CATS, GAME_TITLE, QUALITY_OPTIONS } from '../config.js'
 import * as bloxity from '../bloxity.js'
 import { sfx, setVolume, isMuted, setMuted } from '../audio/index.js'
 import { SVG, itemIcon, svgData, weaponIcon } from './icons.js'
 import { portrait, randomOutfit } from './characters.js'
 import party, { initParty } from './party.js'
-import { account, buyGrenade, buyOperative, buyPass, buySkin, buyStoreItem, buyWeapon, claimable, claimMission, equipEmote, equipGrenade, equipOperative, equipSkin, equipWeapon, markNewsSeen, missionList, missionResets, missionText, newsSeen, onClaimed, onProfile, owns, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
+import { account, buyGrenade, buyOperative, buyPass, buySkin, buyStoreItem, buyWeapon, claimable, claimMission, equipEmote, equipGrenade, equipOperative, equipSkin, equipWeapon, markNewsSeen, markOfferSeen, missionList, missionResets, missionText, newsSeen, offer, offerLeft, offerState, onClaimed, onOffer, onProfile, owns, pollOffer, profile, rankOf, setMode, skinFor, upgradeLevel } from './save.js'
+
+// The friend invite offer's gift (top-bar chip) and a friend slot.
+const GIFT_SVG = '<svg viewBox="0 0 32 32" aria-hidden="true"><rect x="4" y="13" width="24" height="16" rx="2" fill="#e53935" stroke="#11141b" stroke-width="2"/><rect x="2" y="9" width="28" height="6" rx="2" fill="#ff6f61" stroke="#11141b" stroke-width="2"/><rect x="14" y="9" width="4" height="20" fill="#ffd54a" stroke="#11141b" stroke-width="1.5"/><path d="M16 9c-3-6-9-5-8-1.5C8.6 10 14 9 16 9zM16 9c3-6 9-5 8-1.5C23.4 10 18 9 16 9z" fill="#ffd54a" stroke="#11141b" stroke-width="1.8" stroke-linejoin="round"/></svg>'
+const PERSON_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4.2" fill="currentColor"/><path d="M3.5 21c.7-5 4.2-7.2 8.5-7.2s7.8 2.2 8.5 7.2z" fill="currentColor"/></svg>'
 
 // The TEST DRIVE button's picture: a little olive jeep.
 const DRIVE_SVG = '<svg viewBox="0 0 48 32" aria-hidden="true"><path d="M5 18h38v6H5z" fill="#5f6b3a" stroke="#11141b" stroke-width="2" stroke-linejoin="round"/><path d="M10 18l4-8h13l2 8" fill="none" stroke="#11141b" stroke-width="2.4" stroke-linejoin="round"/><path d="M29 18V12h8l4 6" fill="#7d8a50" stroke="#11141b" stroke-width="2" stroke-linejoin="round"/><circle cx="13" cy="25" r="5" fill="#1c1d20" stroke="#ffd54a" stroke-width="2"/><circle cx="36" cy="25" r="5" fill="#1c1d20" stroke="#ffd54a" stroke-width="2"/><rect x="41" y="19" width="4" height="3" fill="#fff6d8"/></svg>'
@@ -45,6 +49,7 @@ export function initLobby(callbacks) {
       <div class="chip coins" title="Coins: earned by playing matches">${coinImg()}<span class="v o">0</span></div>
       <div class="chip gems" title="Gems: earned by eliminating and knocking enemies (never sold)"><img alt="" src="${svgData(SVG.gem)}"><span class="v o">0</span></div>
       <div class="chip rank"><span class="rs"></span><div class="rk"><b class="o rn"></b><span class="rbar"><i></i></span></div></div>
+      <button class="chip offer" hidden title="Invite friends: get the Bulldog Drum free"><span class="gi">${GIFT_SVG}</span><span class="ot"><b class="o">FREE BULLDOG</b><span class="o"><i class="oc">0/${FRIEND_OFFER.need}</i><i class="otm">--:--:--</i></span></span></button>
       <div class="lb-spacer"></div>
       <button class="iconbtn settings" title="Settings">${SVG.gear}</button>
     </div>
@@ -69,6 +74,7 @@ export function initLobby(callbacks) {
   modal = root.querySelector('.lb-modal')
   root.querySelectorAll('[data-open]').forEach((b) => b.addEventListener('click', () => open(b.dataset.open)))
   root.querySelector('.settings').addEventListener('click', () => open('settings'))
+  root.querySelector('.chip.offer').addEventListener('click', () => open('offer'))
   root.querySelector('.lb-mode').addEventListener('click', () => open('mode'))
   root.querySelector('.lb-drive').addEventListener('click', () => cb.onTestDrive?.())
   initParty(root)
@@ -115,6 +121,21 @@ export function initLobby(callbacks) {
     root.style.setProperty('--res-tool', `${room < 230 ? toolbarBottom : 0}px`)
   })
   onProfile(refresh)
+  onOffer(({ granted, newFriend }) => {
+    if (granted) rewardPending = true
+    if (newFriend && offer.joined > 0 && !granted) {
+      party.toast(`A friend joined through your invite: ${offer.joined}/${offer.need}`)
+      sfx.purchase?.()
+    }
+    paintOffer()
+    if (modal.classList.contains('on') && current?.kind === 'offer') reopen()
+    else maybeOffer()
+  })
+  // The countdown and a fresh friend count while the lobby is up.
+  setInterval(tickOffer, 1000)
+  setInterval(() => {
+    if (root.classList.contains('on') && offerState() === 'active') pollOffer()
+  }, OFFER_POLL_MS)
   refresh()
   return lobby
 }
@@ -187,6 +208,8 @@ function refresh() {
   badge.textContent = ready
   if (modal.classList.contains('on') && current && current.kind !== 'queue') reopen()
   maybeNews()
+  maybeOffer()
+  paintOffer()
 }
 
 let fixedOutfit = null
@@ -208,6 +231,9 @@ function frame(title, bodyHtml, tabs = null, activeTab = null) {
 export function close() {
   // The announcement counts as seen however it is closed (X, the backdrop, a button).
   if (current?.kind === 'news') markNewsSeen(NEWS.id)
+  // So is the invite offer; whatever waited behind a window (the offer, the reward) comes next.
+  if (current?.kind === 'offer') markOfferSeen()
+  if (current && (current.kind === 'news' || current.kind === 'offer')) setTimeout(maybeOffer, 500)
   // Closing any window while queued keeps the vote panel shut until the next vote (or the
   // "Map voting..." button).
   if (root?.classList.contains('queued')) queueHidden = true
@@ -230,6 +256,7 @@ function open(kind, opt) {
   if (kind === 'settings') return settingsWindow()
   if (kind === 'mode') return modeWindow()
   if (kind === 'news') return newsWindow()
+  if (kind === 'offer') return offerWindow()
 }
 function reopen() {
   if (current) open(current.kind, current.opt)
@@ -450,6 +477,128 @@ function newsWindow() {
   })
   win.querySelector('[data-go]').addEventListener('click', () => toStore(null))
   win.querySelectorAll('.nw-card').forEach((b) => b.addEventListener('click', () => toStore({ type: b.dataset.type, id: b.dataset.id })))
+}
+
+// --- Friend invite offer ------------------------------------------------------------------------------
+// Invite FRIEND_OFFER.need new players with your link inside FRIEND_OFFER.hours and the server unlocks
+// the Bulldog Drum for good (backend MatchRoom syncOffer). A top-bar chip shows friends joined + the
+// countdown; this window pops up once for a player who has not seen it (profile.offer.seen, saved by
+// the server) and again when the reward lands. Never bought: it is earned by playing with friends.
+const OFFER_POLL_MS = 20000
+let offerShown = false // the popup was opened this visit
+let rewardPending = false // the weapon was just granted: show the reward window when the lobby is free
+const fmtOfferClock = (ms) => {
+  const t = Math.max(0, Math.ceil(ms / 1000))
+  const p = (n) => String(n).padStart(2, '0')
+  return `${p(Math.floor(t / 3600))}:${p(Math.floor((t % 3600) / 60))}:${p(t % 60)}`
+}
+function paintOffer() {
+  if (!root) return
+  const chip = root.querySelector('.chip.offer')
+  const on = offerState() === 'active'
+  chip.hidden = !on
+  if (!on) return
+  chip.querySelector('.oc').textContent = `${offer.joined}/${offer.need}`
+  chip.querySelector('.otm').textContent = fmtOfferClock(offerLeft())
+  chip.classList.toggle('near', offerLeft() < 6 * 3600e3)
+}
+function tickOffer() {
+  if (!root) return
+  paintOffer()
+  const clock = modal.querySelector('.of-time')
+  if (clock) clock.textContent = fmtOfferClock(offerLeft())
+  // The time ran out under an open window: show it as ended.
+  if (offer.loaded && !offer.claimed && offerLeft() <= 0 && current?.kind === 'offer' && modal.classList.contains('on') && !modal.querySelector('.of.ended')) reopen()
+}
+function maybeOffer() {
+  if (offerShown && !rewardPending) return
+  if (!root || !account.loaded || !offer.loaded) return
+  const st = offerState()
+  if (rewardPending ? st !== 'won' : st !== 'active' || offer.seen) return
+  // The "new arrivals" window goes first; only on the plain lobby, like it.
+  if (newsSeen() < NEWS.id) return
+  if (!root.classList.contains('on') || root.classList.contains('queued') || modal.classList.contains('on') || loadingEl?.classList.contains('on')) return
+  const reward = rewardPending
+  offerShown = true
+  setTimeout(() => {
+    if (!root.classList.contains('on') || root.classList.contains('queued') || modal.classList.contains('on')) {
+      offerShown = false
+      return
+    }
+    if (reward) rewardPending = false
+    open('offer')
+    sfx.purchase?.()
+  }, 700)
+}
+async function copyText(text, input) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    // Blocked (an iframe without the clipboard permission): select the field and try the old way.
+    try {
+      input?.focus()
+      input?.select()
+      return document.execCommand('copy')
+    } catch {
+      return false
+    }
+  }
+}
+function offerWindow() {
+  const st = offerState()
+  const d = WEAPONS[offer.weapon] || WEAPONS[FRIEND_OFFER.weapon]
+  const pic = `<img alt="" src="${weaponIcon(offer.weapon, 'standard', 360, 150)}">`
+  const link = bloxity.inviteLink(offer.me)
+  let body
+  if (st === 'won') {
+    const eq = profile.loadout.secondary === offer.weapon
+    body = `<div class="of won"><div class="of-hero"><div class="of-pic">${pic}<span class="of-free o">UNLOCKED</span></div><div><div class="of-t o">${esc(d.name)} is yours!</div><div class="of-s">${offer.need} friends joined through your invite. The ${esc(d.name)} is unlocked on your account for good: ${esc(d.desc || '')}</div></div></div><div class="of-act">${eq ? '<button class="of-btn ok o" disabled>Equipped</button>' : '<button class="of-btn go o" data-equip>Equip it now</button>'}<button class="of-btn ok o" data-store>Open the Weapons Store</button><button class="of-btn ok o" data-ok>Close</button></div></div>`
+  } else if (st === 'ended') {
+    body = `<div class="of ended"><div class="of-hero"><div class="of-pic dim">${pic}</div><div><div class="of-t o">This offer has ended</div><div class="of-s">${offer.joined}/${offer.need} friends joined in time. You can still get the ${esc(d.name)} in the Weapons Store with Gems you earn in matches.</div></div></div><div class="of-act"><button class="of-btn go o" data-store>Open the Weapons Store</button><button class="of-btn ok o" data-ok>Close</button></div></div>`
+  } else {
+    const slots = Array.from({ length: offer.need }, (_, i) => `<span class="of-slot${i < offer.joined ? ' on' : ''}">${PERSON_SVG}</span>`).join('')
+    body = `<div class="of"><div class="of-hero"><div class="of-pic">${pic}<span class="of-free o">FREE</span></div><div><div class="of-t o">Invite ${offer.need} friends, get the ${esc(d.name)} free!</div><div class="of-s">${esc(d.desc || '')} Share your link: when ${offer.need} new players join the game through it, the ${esc(d.name)} is unlocked on your account for good.</div></div></div><div class="of-prog"><div class="of-slots">${slots}</div><div class="of-count o"><b>${offer.joined}</b> / ${offer.need} friends joined</div><div class="of-clock">Offer ends in <b class="of-time o">${fmtOfferClock(offerLeft())}</b></div></div><div class="of-link"><input readonly spellcheck="false" value="${esc(link)}" aria-label="Your invite link"><button class="of-btn go o" data-copy>Copy link</button></div><div class="of-act"><button class="of-btn go o" data-share>Invite friends</button><button class="of-btn ok o" data-ok>Maybe later</button></div><div class="of-fine">Only brand-new players count, once each. The offer lasts ${FRIEND_OFFER.hours} hours from your first visit and the weapon is added to your account automatically.</div></div>`
+  }
+  const win = frame('Invite friends', body)
+  win.classList.add('offerwin')
+  win.querySelector('[data-ok]')?.addEventListener('click', () => {
+    sfx.click?.()
+    close()
+  })
+  win.querySelector('[data-store]')?.addEventListener('click', () => {
+    markOfferSeen()
+    wsCat = 'all'
+    wsSel = { type: 'weapon', id: offer.weapon }
+    sfx.click?.()
+    open('weapons', 'weapons')
+  })
+  win.querySelector('[data-equip]')?.addEventListener('click', () => {
+    equipWeapon(offer.weapon)
+    sfx.purchase?.()
+    reopen()
+  })
+  const input = win.querySelector('.of-link input')
+  const copy = async () => {
+    const ok = await copyText(input.value, input)
+    sfx.click?.()
+    party.toast(ok ? 'Invite link copied. Send it to your friends!' : 'Could not copy: select the link and copy it by hand.')
+    return ok
+  }
+  input?.addEventListener('focus', () => input.select())
+  win.querySelector('[data-copy]')?.addEventListener('click', copy)
+  win.querySelector('[data-share]')?.addEventListener('click', async () => {
+    // The phone's share sheet when there is one, else the link is copied.
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: GAME_TITLE, text: `Join me in ${GAME_TITLE}!`, url: input.value })
+        return
+      } catch (err) {
+        if (err?.name === 'AbortError') return
+      }
+    }
+    copy()
+  })
 }
 
 let skinWeapon = null
