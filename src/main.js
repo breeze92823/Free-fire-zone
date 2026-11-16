@@ -551,7 +551,7 @@ bloxity.subscribeAuth((s) => {
     connect()
   } else if (key !== userKey) {
     userKey = key
-    send('auth', { token: bloxity.getToken(), name: bloxity.displayName(), pfp: bloxity.getPfp() })
+    send('auth', { token: bloxity.getToken(), name: bloxity.displayName(), pfp: bloxity.getPfp(), inv: bloxity.inviterId() || undefined })
   }
 })
 bloxity.onAvatarChanged(loadAvatar)

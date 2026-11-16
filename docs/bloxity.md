@@ -172,6 +172,7 @@ The portal draws the chat UI; the game only floats bubbles. `THREE` is passed in
 | `partyJoined(roomId)` | `party.joined(roomId)` | no-op | `net.js connect` |
 | `partyFailed(reason)` | `party.failed(reason)` | no-op | `net.js joinOnce` (`'room-full'` when the join error matches `full|locked`) |
 | `playerJoined(name)` | `game.playerJoined(name)` | no-op | `online.js trackRoster` (a player who arrived after us, reported once, as soon as they have a name) |
+| `social.getInviteFriendsLink({ ref })` | `inviteLink(userId)` | this page's address | friend invite offer (ui.md 3.5): the portal link into the current room, always with `?inv=<userId>` added; the docs do not say how `ref` is read back, so the game reads its own `inv` (and a long `ref`) in `inviterId()` |
 | `playerInRoom(name)` | `game.playerInRoom(name)` | no-op | `online.js trackRoster` (players already in the room when we joined, once each when named; the portal's Esc menu "In this lobby" list is built from these; tracking restarts in every room) |
 
 How `net.js` strings these together (`joinOnce`): `partyLaunch()` -> join options (`token`, `devUser`, `party: roomKey`, plus `main.js` `setJoinOptions`: `name`, `pfp`, `avatar`, `outfitKey`) -> launch room via `locateRoom` + `joinById` -> else `resolve()` -> a new Colyseus `Client(endpoint)` -> `create(..., { private: true })` when `wantsPrivateRoom()` (first time only) or `joinOrCreate`. After `attach`: `reportRoom()`, `registerFeature('play_with_friends')`; `partyJoined` when a party launch was present.

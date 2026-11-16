@@ -316,8 +316,16 @@ Every `button` in the root gets a `pointerenter` handler that plays `sfx.hover()
 | `settings` | `settingsWindow` | Sound (range + Mute pill), Graphics (`QUALITY_OPTIONS` pills + note; Auto shows the running tier), Look sensitivity (range), the key list, the phone hint and the save notice (`account.saved`) | see 3.7 |
 | `mode` | `modeWindow` | a card per `MATCH_MODES` entry (team size, description, minutes, score to win) | `data-mode` -> `setMode(id)`, then `close()` |
 | `news` | `newsWindow` (`.win.news`, orange header with the Gem balance) | the announcement `NEWS` (config.js): a hero line (spinning NEW badge, `tagline`, a sentence) and a `.nw-card` tile per new weapon / grenade (store rarity colour, NEW tag, picture, name, `NEWS.blurb`, Gem price or OWNED; staggered pop-in); "Got it" and "Open the Weapons Store" pinned at the bottom | a tile -> the Weapons Store on that item (its category); the store button -> the store; "Got it" / X / backdrop -> `close()`. Every way out calls `markNewsSeen(NEWS.id)` |
+| `offer` | `offerWindow` (`.win.offerwin`, gold header) | the friend invite offer (`FRIEND_OFFER`, 3.5): active = the weapon picture with FREE, "Invite 2 friends, get the Bulldog Drum free!", `.of-slot` circles + "n / 2 friends joined" + the live countdown (`.of-time`), the player's invite link in a read-only field with **Copy link**, **Invite friends** (the phone share sheet, else copies) and **Maybe later**; won = "Bulldog Drum is yours!" with Equip / Weapons Store / Close; ended = "This offer has ended" | `data-copy`, `data-share`, `data-equip` -> `equipWeapon`, `data-store` -> the Weapons Store on the weapon, `data-ok` -> `close()` |
 
 **The announcement pops up by itself** (`maybeNews`, called from `refresh` and when the loading screen goes): once per visit, 0.7 s after the plain lobby shows, when the profile has loaded (`account.loaded`), the player has not closed this `NEWS.id` yet (`newsSeen()`: the account's `profile.newsSeen` or this browser's copy), and nothing else is in the way (not queued / voting, no other window, no loading screen). To announce a new batch: raise `NEWS.id`, list the items in `NEWS.weapons` / `NEWS.grenades` with a `blurb` each, and change `title` / `tagline`. Phones: two columns, the buttons share the bottom row; short landscape screens drop the hero's sentence.
+
+**3.5 Friend invite offer** (`lobby.js` "Friend invite offer", `save.js offer`, `config.js FRIEND_OFFER` = backend `rules.ts`). Invite `need` (2) brand-new players with your link within `hours` (48) and the server unlocks the Bulldog Drum for good (backend docs/server.md 5.14). Pieces:
+- Top-bar chip `.chip.offer` (gold, pulsing; hidden unless `offerState() === 'active'`): "FREE BULLDOG", `joined/need` and the countdown (`HH:MM:SS`, red border under 6 h); in `.compact` bars only the numbers. Click opens the window.
+- The window (table above). **It pops up by itself only for a player who has not seen it** (`maybeOffer`: `offer.seen` false, account loaded, the news window already closed (`newsSeen() >= NEWS.id`), plain lobby, once per visit); closing it any way sends `offerSeen`. When the server grants the weapon (`inviteOffer.granted`) the "is yours!" window opens once more (`rewardPending`, waits for a free lobby).
+- Live data: `inviteOffer` (after the profile loads, and the answer to `offerPoll`, sent every 20 s while the lobby is up) fills `save.js offer` (`joined`, `need`, `start`, `end`, `skew`, `seen`, `claimed`, `me`); a new friend shows a toast. `offerLeft()` uses the server clock offset, so a wrong device clock does not matter; a 1 s timer (`tickOffer`) updates the chip and window.
+- `offerState()`: `hidden` (guest, not loaded, or the weapon was bought), `active`, `won` (`claimed`), `ended`.
+- The link: `bloxity.inviteLink(offer.me)` = the portal's `Legion.SDK.social.getInviteFriendsLink({ ref })` when the SDK has it, else this page, always with `?inv=<id>`. A page opened through it reads `?inv=` (or a long `?ref=`) with `bloxity.inviterId()`, remembers it in `localStorage` `ffz.inv` and sends it as the `inv` join option / `auth` option (net.js `joinOptions`, main.js).
 
 Tabs exist in the Missions window (Daily / Weekly / Rank rewards, each re-rendered with `current = { kind: 'missions', opt }`) and the skins window (Weapons / Skins); `wireTabs` sets `current = { kind: 'weapons', opt: tab }` so `reopen()` returns to the same tab, and the Weapons tab goes back to the Weapons Store.
 
@@ -424,6 +432,7 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `rankReward` | number | 0 | highest `RANKS` index whose one-time reward was paid |
 | `tutorial` | boolean | false | the first-round tips are done |
 | `newsSeen` | number | 0 | the newest lobby announcement (`NEWS.id`) the player has closed |
+| `offer` | object | `{ start: 0, seen: false, claimed: false, by: '', at: 0 }` | the friend invite offer state kept by the server (section 3.5); the live progress is `save.js offer` |
 | `mode` | string | `clash` | `MATCH_MODES` id sent with `play` |
 
 ### 4.2 Exports
@@ -452,6 +461,7 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `finishTutorial` | `()` | sets `profile.tutorial`, sends `tutorialDone` |
 | `newsSeen` | `()` | the newest announcement closed: the larger of `profile.newsSeen` and this browser's copy (`localStorage` `ffz.newsSeen`, kept for guests and failed saves); a newer local copy is sent to the account |
 | `markNewsSeen` | `(id)` | sets `profile.newsSeen`, stores the local copy, sends `newsSeen { id }` |
+| `offer` / `onOffer` / `offerLeft` / `offerState` / `pollOffer` / `markOfferSeen` | object / `(fn)` / `() -> ms` / `() -> state` / `()` / `()` | the friend invite offer (section 3.5): live progress from `inviteOffer`, listeners get `{ granted, newFriend }`, the server-clock countdown, the state, an `offerPoll` request, and `offerSeen` |
 
 ### 4.3 Server messages
 
@@ -467,6 +477,8 @@ The profile lives on the server (per verified Bloxity account); this module hold
 | `claim { m, i }` / `claimed { m, i, id, coins, gems }` or `{ m, i, error }` | out / in | `claimMission` / `onClaimed` listeners (the profile follows) |
 | `tutorialDone` | out | `finishTutorial` |
 | `newsSeen` | out | `markNewsSeen` |
+| `offerSeen` / `offerPoll` | out | `markOfferSeen` / `pollOffer` |
+| `inviteOffer { me, joined, need, weapon, start, end, now, seen, claimed, granted }` | in | `save.js` -> `onOffer` listeners |
 
 Prices used for the local affordability check come from `config.js`; the server decides with its own table, so a mismatch shows up as an optimistic purchase that is rolled back.
 

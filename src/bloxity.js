@@ -697,3 +697,54 @@ export function requestFullscreen(on) {
     // Ignore.
   }
 }
+
+// --- Friend invites (the invite offer: config.js FRIEND_OFFER) ---------------------------------------
+// A friend's invite link carries the inviter's id as ?inv= (and as the SDK link's `ref`). The page that
+// opens through it sends that id to the server (join options), which credits the inviter when this is a
+// brand-new account. The first id seen is remembered in this browser, so a reload before the account
+// exists still counts.
+const INV_KEY = 'ffz.inv'
+const INV_RE = /^[A-Za-z0-9_-]{1,64}$/
+export function inviterId() {
+  let stored = ''
+  try {
+    stored = localStorage.getItem(INV_KEY) || ''
+  } catch {
+    // Storage blocked: the URL still works for this visit.
+  }
+  if (INV_RE.test(stored)) return stored
+  try {
+    const q = new URLSearchParams(location.search)
+    const inv = q.get('inv') || ''
+    const ref = q.get('ref') || ''
+    // `ref` is shared with the portal's own uses: only a plausibly long id counts.
+    const id = INV_RE.test(inv) ? inv : INV_RE.test(ref) && ref.length >= 8 ? ref : ''
+    if (id) localStorage.setItem(INV_KEY, id)
+    return id
+  } catch {
+    return ''
+  }
+}
+
+// The shareable link to this game that credits `userId` (the player's own id) when a new player opens it.
+// The portal's link (it drops the friend in this room) when the SDK has it, else this page's address.
+export function inviteLink(userId) {
+  if (!userId) return ''
+  let link = ''
+  try {
+    link = sdk()?.social?.getInviteFriendsLink?.({ ref: userId }) || ''
+  } catch {
+    // Older SDK builds.
+  }
+  try {
+    const u = new URL(link || location.href, location.href)
+    if (!link) {
+      u.search = ''
+      u.hash = ''
+    }
+    u.searchParams.set('inv', userId)
+    return u.toString()
+  } catch {
+    return link
+  }
+}
