@@ -49,7 +49,7 @@ export function initLobby(callbacks) {
       <div class="chip coins" title="Coins: earned by playing matches">${coinImg()}<span class="v o">0</span></div>
       <div class="chip gems" title="Gems: earned by eliminating and knocking enemies (never sold)"><img alt="" src="${svgData(SVG.gem)}"><span class="v o">0</span></div>
       <div class="chip rank"><span class="rs"></span><div class="rk"><b class="o rn"></b><span class="rbar"><i></i></span></div></div>
-      <button class="chip offer" hidden title="Invite friends: get the Bulldog Drum free"><span class="gi">${GIFT_SVG}</span><span class="ot"><b class="o">FREE BULLDOG</b><span class="o"><i class="oc">0/${FRIEND_OFFER.need}</i><i class="otm">--:--:--</i></span></span></button>
+      <button class="chip offer" hidden title="Invite 2 brand-new players (never played before) and get the Bulldog Drum free"><span class="gi">${GIFT_SVG}</span><span class="ot"><b class="o">FREE BULLDOG</b><span class="o"><i class="oc">0/${FRIEND_OFFER.need}</i><i class="otm">--:--:--</i></span></span></button>
       <div class="lb-spacer"></div>
       <button class="iconbtn settings" title="Settings">${SVG.gear}</button>
     </div>
@@ -558,7 +558,7 @@ function offerWindow() {
     body = `<div class="of ended"><div class="of-hero"><div class="of-pic dim">${pic}</div><div><div class="of-t o">This offer has ended</div><div class="of-s">${offer.joined}/${offer.need} friends joined in time. You can still get the ${esc(d.name)} in the Weapons Store with Gems you earn in matches.</div></div></div><div class="of-act"><button class="of-btn go o" data-store>Open the Weapons Store</button><button class="of-btn ok o" data-ok>Close</button></div></div>`
   } else {
     const slots = Array.from({ length: offer.need }, (_, i) => `<span class="of-slot${i < offer.joined ? ' on' : ''}">${PERSON_SVG}</span>`).join('')
-    body = `<div class="of"><div class="of-hero"><div class="of-pic">${pic}<span class="of-free o">FREE</span></div><div><div class="of-t o">Invite ${offer.need} friends, get the ${esc(d.name)} free!</div><div class="of-s">${esc(d.desc || '')} Share your link: when ${offer.need} new players join the game through it, the ${esc(d.name)} is unlocked on your account for good.</div></div></div><div class="of-prog"><div class="of-slots">${slots}</div><div class="of-count o"><b>${offer.joined}</b> / ${offer.need} friends joined</div><div class="of-clock">Offer ends in <b class="of-time o">${fmtOfferClock(offerLeft())}</b></div></div><div class="of-link"><input readonly spellcheck="false" value="${esc(link)}" aria-label="Your invite link"><button class="of-btn go o" data-copy>Copy link</button></div><div class="of-act"><button class="of-btn go o" data-share>Invite friends</button><button class="of-btn ok o" data-ok>Maybe later</button></div><div class="of-fine">Only brand-new players count, once each. The offer lasts ${FRIEND_OFFER.hours} hours from your first visit and the weapon is added to your account automatically.</div></div>`
+    body = `<div class="of"><div class="of-hero"><div class="of-pic">${pic}<span class="of-free o">FREE</span></div><div><div class="of-t o">Invite ${offer.need} friends, get the ${esc(d.name)} free!</div><div class="of-s">${esc(d.desc || '')} Share your link: when ${offer.need} <b>brand-new players</b> (people who have never played this game before) join through it, the ${esc(d.name)} is unlocked on your account for good.</div></div></div><div class="of-prog"><div class="of-slots">${slots}</div><div class="of-count o"><b>${offer.joined}</b> / ${offer.need} friends joined</div><div class="of-new o">NEW PLAYERS ONLY</div><div class="of-clock">Offer ends in <b class="of-time o">${fmtOfferClock(offerLeft())}</b></div></div><div class="of-link"><input readonly spellcheck="false" value="${esc(link)}" aria-label="Your invite link"><button class="of-btn go o" data-copy>Copy link</button></div><div class="of-act"><button class="of-btn go o" data-share>Invite friends</button><button class="of-btn ok o" data-ok>Maybe later</button></div><div class="of-fine"><b>Friends who already have a Free Fire Zone account will not count</b>, even if they open your link. Each new player counts once. The offer lasts ${FRIEND_OFFER.hours} hours from your first visit and the weapon is added to your account automatically.</div></div>`
   }
   const win = frame('Invite friends', body)
   win.classList.add('offerwin')
@@ -1045,7 +1045,7 @@ export function showLoading(on, step = '', progress = 0) {
     document.body.appendChild(loadingEl)
   }
   loadingEl.classList.toggle('on', on)
-  if (!on) setTimeout(maybeNews, 0) // the announcement waits for the loading screen to go
+  if (!on) setTimeout(() => { maybeNews(); maybeOffer() }, 0) // the announcements wait for the loading screen to go
   loadingEl.querySelector('.step').textContent = step
   loadingEl.querySelector('.bar i').style.width = `${Math.round(progress * 100)}%`
   if (on && !loadingEl.dataset.tip) loadingEl.dataset.tip = loadingEl.querySelector('.tip').textContent = `Tip: ${TIPS[Math.floor(Math.random() * TIPS.length)]}`
